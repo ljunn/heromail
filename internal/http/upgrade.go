@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -102,6 +103,11 @@ func (s *Server) adminUpgrade(c *gin.Context) {
 		writeError(c, http.StatusConflict, "upgrade_in_progress", "已有升级任务正在执行")
 		return
 	}
+	targetVersion := strings.TrimSpace(c.GetHeader("X-HeroMail-Target-Version"))
+	if targetVersion != "" && targetVersion != "latest" && sameReleaseVersion(buildinfo.Version, targetVersion) {
+		writeError(c, http.StatusConflict, "already_latest", "当前已是最新正式版本")
+		return
+	}
 
 	now := time.Now().UTC()
 	status := upgradeStatus{State: "queued", Message: "升级任务已进入队列", UpdatedAt: now}
@@ -109,7 +115,11 @@ func (s *Server) adminUpgrade(c *gin.Context) {
 		writeError(c, http.StatusInternalServerError, "upgrade_status_failed", "无法写入升级状态")
 		return
 	}
-	request := upgradeRequest{Target: "latest", RequestedAt: now}
+	target := targetVersion
+	if target == "" {
+		target = "latest"
+	}
+	request := upgradeRequest{Target: target, RequestedAt: now}
 	if err := atomicWriteJSON(s.UpgradeRequestPath, request); err != nil {
 		writeError(c, http.StatusInternalServerError, "upgrade_request_failed", "无法创建升级任务")
 		return
@@ -118,6 +128,13 @@ func (s *Server) adminUpgrade(c *gin.Context) {
 		_ = repository.WriteAudit(demoUser(c), "system.upgrade.request", "system", "heromail", "管理员提交在线升级任务", c.ClientIP())
 	}
 	c.JSON(http.StatusAccepted, gin.H{"data": status})
+}
+
+func sameReleaseVersion(current, target string) bool {
+	normalize := func(value string) string {
+		return strings.TrimPrefix(strings.TrimSpace(value), "v")
+	}
+	return normalize(current) != "" && normalize(current) == normalize(target)
 }
 
 func readUpgradeStatus(path string) (upgradeStatus, error) {

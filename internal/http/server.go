@@ -344,7 +344,7 @@ func demoRole(c *gin.Context) string {
 func cors() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-HeroMail-Role, X-HeroMail-User, X-HeroMail-Update-Token")
+		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-HeroMail-Role, X-HeroMail-User, X-HeroMail-Update-Token, X-HeroMail-Target-Version")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)

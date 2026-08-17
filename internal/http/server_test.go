@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ljunn/heromail/internal/buildinfo"
 	"github.com/ljunn/heromail/internal/domain"
 	"github.com/ljunn/heromail/internal/store"
 )
@@ -100,5 +101,26 @@ func TestOnlineUpgradeRequiresIndependentToken(t *testing.T) {
 	status, err := readUpgradeStatus(statusPath)
 	if err != nil || status.State != "queued" {
 		t.Fatalf("升级状态不正确：%+v，错误：%v", status, err)
+	}
+}
+
+func TestOnlineUpgradeRejectsCurrentRelease(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("HEROMAIL_UPGRADE_REQUEST", directory+"/request.json")
+	t.Setenv("HEROMAIL_UPGRADE_STATUS", directory+"/status.json")
+	t.Setenv("HEROMAIL_UPDATE_TOKEN", "update-test-token")
+	originalVersion := buildinfo.Version
+	buildinfo.Version = "v1.0.3"
+	t.Cleanup(func() { buildinfo.Version = originalVersion })
+	server := NewServer(store.New())
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/upgrade", nil)
+	request.Header.Set("X-HeroMail-Role", "admin")
+	request.Header.Set("X-HeroMail-Update-Token", "update-test-token")
+	request.Header.Set("X-HeroMail-Target-Version", "v1.0.3")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("同版本升级返回 %d，期望 %d，响应：%s", response.Code, http.StatusConflict, response.Body.String())
 	}
 }

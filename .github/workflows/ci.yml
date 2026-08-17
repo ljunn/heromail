@@ -159,4 +159,18 @@ jobs:
       - name: 创建正式版本
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" release-assets/* --notes-file release-notes.md --title "HeroMail ${GITHUB_REF_NAME}"
+        run: |
+          retry() {
+            for attempt in 1 2 3 4 5; do
+              if "$@"; then
+                return 0
+              fi
+              sleep $((attempt * 5))
+            done
+            return 1
+          }
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            retry gh release create "${GITHUB_REF_NAME}" --draft --notes-file release-notes.md --title "HeroMail ${GITHUB_REF_NAME}"
+          fi
+          retry gh release upload "${GITHUB_REF_NAME}" release-assets/* --clobber
+          retry gh release edit "${GITHUB_REF_NAME}" --draft=false
