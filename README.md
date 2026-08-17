@@ -1,128 +1,169 @@
 # HeroMail
 
-HeroMail 是一个可自托管的邮箱资源池与注册验证码平台。平台管理员维护 Outlook/Hotmail 邮箱资产和目标平台的收码规则；平台用户选择要注册的目标平台，由系统自动分配一个邮箱，用户把邮箱用于平台注册后，在 HeroMail 中获取验证码。
+HeroMail 是一个可自托管的邮箱资源池与平台注册验证码管理系统。管理员集中维护 Outlook/Hotmail 邮箱、平台规则和余额；用户只需选择目标平台，系统便会分配可用邮箱，并在用户提交注册后自动获取验证码。
 
-它解决的是“多个注册平台、多个邮箱资产、统一收码和统一调度”的问题。使用者不需要把邮箱密码、OAuth Token 或完整收件箱暴露给最终用户，管理员也可以按“邮箱 × 目标平台”追踪占用，避免同一个邮箱在同一平台重复分配。
+与直接共享邮箱凭证相比，HeroMail 只向用户暴露本次任务的邮箱地址和验证码。邮箱密码、OAuth Token 和完整收件箱由平台加密保管；“邮箱 × 目标平台”状态又能防止同一邮箱在同一平台重复分配。
 
-## 主要收益
+## 为什么使用 HeroMail
 
-- **统一入口**：用户只选择目标平台，不需要理解邮箱供应商和收信协议。
-- **资产可控**：管理员可以看到邮箱健康、授权状态、池归属和平台占用。
-- **业务不串号**：平台规则限制发件人、主题和验证码解析范围。
-- **自动结算**：分配时预扣额度，收码成功结算，超时未收到自动退款。
-- **可自托管**：代码、数据和凭证留在自己的服务器，适合内部平台或受控的开发测试环境。
-- **可扩展**：邮箱接入、目标平台规则和订单状态彼此解耦，后续可以增加 Graph、IMAP 或其他渠道。
+- 用户只选择要注册的平台，无需了解邮箱渠道和收信协议。
+- 管理员可查看邮箱池、授权、健康度、平台占用和注册订单。
+- 创建订单时原子预扣余额，收码成功结算，取消或超时未收码自动退款。
+- 支持 Microsoft Graph OAuth2、邮件去重、发件人/主题/正则匹配和 Webhook 通知。
+- 支持易支付和支付宝官方通道，回调验签通过后幂等入账。
+- PostgreSQL 作为最终数据源，Redis 承担跨进程锁、OAuth 状态和协调。
+- 提供 Docker 一键部署、GitHub Actions 多架构镜像和管理端在线升级。
 
-## 当前状态
+## 一键部署
 
-仓库当前提供可运行的 MVP：
-
-- Go + Gin HTTP 服务。
-- 用户端：选择目标平台、申请系统邮箱、提交注册、获取模拟验证码、完成/取消订单、查看订单记录。
-- 管理员端：运行概览、邮箱资源、目标平台和注册订单查询。
-- 领域层包含邮箱状态、邮箱与平台占用状态、订单状态机、余额预扣和超时退款。
-- 默认使用内存存储，便于快速体验；存储接口和 Docker 配置为接入 PostgreSQL/Redis 预留位置。
-
-产品和技术设计见 [`docs/final-product-design.md`](docs/final-product-design.md)。
-
-## 快速开始
-
-需要 Go 1.26 或更高版本：
+在拥有 root 或 sudo 权限的 Linux 服务器执行：
 
 ```bash
-go test ./...
-go run ./cmd/heromail
+curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh | sudo bash
 ```
 
-浏览器打开 <http://localhost:8080>。页面右上角可以切换用户端和管理员端。
+脚本会检查 Git、Docker 和 Docker Compose，自动定位 GitHub 最新正式 Release，将对应标签安装到 `/opt/heromail`，生成数据库密码、管理员密码、加密主密钥、Worker 令牌和升级令牌，然后启动 HeroMail、PostgreSQL、Redis 和升级执行器。已安装的环境不允许通过重跑脚本升级，必须在 GitHub 发布新版本后使用管理后台的在线升级按钮。
 
-使用 Docker Compose 体验完整的本地依赖拓扑：
+自定义安装目录、端口和公网地址：
 
 ```bash
-cp .env.example .env
-docker compose up --build
+curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh | \
+  sudo HEROMAIL_DIR=/srv/heromail HEROMAIL_PORT=9090 \
+  HEROMAIL_PUBLIC_URL=https://mail.example.com bash
 ```
 
-当前 MVP 仍使用内存存储，Compose 中的 PostgreSQL 和 Redis 是后续持久化、锁、队列和限流的开发依赖预留，不会自动写入业务数据。
-
-演示身份通过请求头区分：
-
-```text
-X-HeroMail-Role: user
-X-HeroMail-User: user-001
-X-HeroMail-Role: admin
-X-HeroMail-User: admin-001
-```
-
-这只是演示模式，不能直接用于公网生产环境。生产部署必须接入真实登录、会话、权限和密钥管理。
+部署完成后，使用 `/opt/heromail/.env` 中的 `HEROMAIL_ADMIN_EMAIL` 和 `HEROMAIL_ADMIN_PASSWORD` 登录。请在反向代理中配置 HTTPS，并确保 `HEROMAIL_PUBLIC_URL` 是外部可访问的绝对地址，否则支付回调和 Microsoft OAuth 无法正常工作。
 
 ## 业务流程
 
 ```text
-选择目标平台
-  -> 预扣额度并分配 Outlook/Hotmail 邮箱
-  -> 用户把邮箱填入目标平台注册
-  -> 点击“我已提交注册”
-  -> 邮件 Worker 按平台规则匹配并提取验证码
-  -> 用户完成注册，或任务超时/取消
-  -> 结算订单并更新邮箱的平台占用
+用户选择目标平台
+  -> 系统在事务中预扣余额并分配邮箱
+  -> 用户把邮箱填入目标平台并确认已提交
+  -> Graph Worker 拉取邮件并按平台规则匹配
+  -> 订单写入验证码并通知用户/Webhook
+  -> 用户完成注册，或任务超时后自动退款
 ```
 
-同一个邮箱可以用于不同目标平台；同一个邮箱在某个平台收到验证码后，默认标记为该平台已消费，不再重复分配。用户不能查看邮箱密码、OAuth Token 或完整邮件正文。
+同一邮箱可以服务不同目标平台；同一邮箱在某个平台收到验证码后，该组合默认标记为已消费，不会再次分配。
+
+## 管理端配置
+
+### Microsoft Graph
+
+1. 在 Microsoft Entra 中创建 Web 应用，并配置委托权限 `User.Read`、`Mail.Read` 和 `offline_access`。
+2. 将回调地址设为 `https://你的域名/api/v1/admin/mailboxes/oauth/microsoft/callback`。
+3. 在 `.env` 填写 `MICROSOFT_CLIENT_ID`、`MICROSOFT_CLIENT_SECRET`、`MICROSOFT_TENANT` 和 `MICROSOFT_REDIRECT_URI`。
+4. 重启 HeroMail，先创建邮箱池，再在“接入渠道”中连接 Microsoft 邮箱。
+
+### 易支付
+
+在“支付管理”新建易支付服务商，填写提交 API 地址、PID 和商户密钥。HeroMail 使用 MD5 生成支付参数签名，并对异步回调的 PID、签名、交易状态和金额同时校验。
+
+### 支付宝官方
+
+在“支付管理”新建支付宝官方服务商，填写 AppID、应用 RSA 私钥和支付宝 RSA 公钥。PC 端使用 `alipay.trade.page.pay`，移动端使用 `alipay.trade.wap.pay`，签名算法为 RSA2。私钥和支付服务商配置均使用 AES-256-GCM 加密存储。
+
+## 在线升级
+
+一键部署会启动独立升级执行器。只有创建 `v*` GitHub Release 时，工作流才会更新 `ghcr.io/ljunn/heromail:latest`。管理员可先在“系统设置”查看最新正式版本的完整更新日志，再输入 `.env` 中的 `HEROMAIL_UPDATE_TOKEN` 执行升级。升级器会校验固定官方镜像并仅重建 HeroMail 容器，PostgreSQL 和 Redis 数据卷不会被删除；不支持从网页或环境变量切换任意镜像。
+
+每个正式版本都必须先在 [`CHANGELOG.md`](CHANGELOG.md) 增加同版本章节。发布工作流会使用该章节作为 GitHub Release 正文，缺少对应更新日志时会直接阻止发布。
+
+生产升级前仍应备份数据库：
+
+```bash
+cd /opt/heromail
+docker compose exec -T postgres pg_dump -U heromail heromail | gzip > heromail-backup.sql.gz
+```
+
+## 本地开发
+
+需要 Go 1.26 或更高版本。单元测试使用显式内存存储，不依赖外部服务：
+
+```bash
+go test ./...
+go vet ./...
+HEROMAIL_STORAGE=memory go run ./cmd/heromail
+```
+
+要验证真实持久化链路，使用 Docker Compose：
+
+```bash
+cp .env.example .env
+# 将 .env 中的“请替换”值换成强随机密钥
+docker compose up --build
+```
+
+浏览器打开 <http://localhost:8080>。生产模式不使用伪造身份请求头，页面和 API 都使用 Bearer 会话或 `hm_` 前缀 API Key。
 
 ## API 示例
 
-查看目标平台：`curl http://localhost:8080/api/v1/services`
-
-申请邮箱：
+登录并保存返回的会话令牌：
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/orders -H 'Content-Type: application/json' -H 'X-HeroMail-User: user-001' -d '{"service":"github","request_id":"demo-001"}'
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"user@example.com","password":"你的登录密码"}'
 ```
 
-提交注册并等待验证码：
+使用令牌创建注册订单：
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/orders/ORD001001/submitted -H 'X-HeroMail-User: user-001'
+curl -X POST http://localhost:8080/api/v1/orders \
+  -H 'Authorization: Bearer 会话令牌' \
+  -H 'Content-Type: application/json' \
+  -d '{"service":"github","request_id":"request-001"}'
 ```
 
-MVP 会在提交后生成演示验证码。真实接入时由 Outlook Graph/IMAP Worker 写入相同的订单状态机。
+所有列表接口支持 `page` 和 `page_size`，并返回统一分页信息：
 
-## 技术架构
+```json
+{
+  "data": [],
+  "pagination": {
+    "page": 1,
+    "page_size": 20,
+    "total": 0,
+    "total_pages": 0
+  }
+}
+```
+
+## 架构
 
 ```text
-Vue/原生前端 -> Go/Gin API -> 订单与调度领域层
-                             |
-                 PostgreSQL 最终数据源
-                 Redis 锁、租约、队列和限流
-                             |
-                 Graph/IMAP 邮件适配器
+浏览器 / API Key
+        |
+   Go + Gin API
+        |
+        +-- PostgreSQL：用户、邮箱、订单、余额、支付、Webhook、审计
+        +-- Redis：分配锁、OAuth 一次性状态、跨进程协调
+        +-- Microsoft Graph Worker：Token 刷新、邮件拉取、规则匹配
+        +-- Webhook Worker：HMAC 签名、指数退避、手动重试
+        +-- 支付适配器：易支付 MD5 / 支付宝官方 RSA2
 ```
 
-当前前端使用原生 HTML/CSS/JavaScript 并由 Go 嵌入，减少开源项目初始化成本。后续可以替换为 Vue 3/Vite，不改变 API 和领域层。
+| 目录 | 用途 |
+| --- | --- |
+| `cmd/heromail/` | 服务入口与 Worker 启动 |
+| `internal/domain/` | 订单、邮箱、支付和 Webhook 领域模型 |
+| `internal/store/` | PostgreSQL/Redis 存储、事务和内存测试实现 |
+| `internal/mail/` | Microsoft Graph OAuth 与收码 Worker |
+| `internal/payment/` | 易支付与支付宝官方适配器 |
+| `internal/webhook/` | Webhook 投递 Worker |
+| `internal/http/` | Gin API、认证与权限边界 |
+| `internal/web/static/` | 无构建依赖的用户端与管理端 |
+| `scripts/install.sh` | Linux 正式版本一键安装 |
 
-## 安全边界
+## 安全与合规
 
-- 邮箱凭证必须加密存储，不能写入日志、截图或 Git。
-- OAuth 仅申请读取邮件和离线刷新权限，不向用户暴露 Token。
-- 只匹配目标平台允许的发件人、域名、主题和验证码格式。
-- 验证码和邮件元数据应设置短保留期，默认不保存完整邮件正文。
-- 公网部署前必须增加真实认证、API Key 哈希存储、限流、IP 白名单、审计日志和滥用处置。
-- 本项目只应用于已授权的邮箱和合规的注册测试，不得用于撞库、绕过平台风控或批量滥用。
+- 不要把 `.env`、邮箱凭证、支付私钥或真实邮箱数据提交到 Git。
+- 生产环境使用至少 32 字节随机主密钥，仅通过 HTTPS 暴露服务。
+- Webhook 默认拒绝回环、私网和链路本地地址；仅本地受控测试才应开启私网投递。
+- 本项目只用于已授权邮箱和合规的注册测试，不得用于撞库、绕过平台风控或批量滥用。
 
-## 目录结构
-
-```text
-cmd/heromail/          服务入口
-internal/domain/       领域模型和状态定义
-internal/store/        存储接口的内存实现和单元测试
-internal/http/         Gin API 和权限边界
-internal/web/static/   嵌入式用户端/管理员端页面
-docs/                  产品与技术设计
-AGENTS.md              Agent 协作和修改约束
-```
-
-## 开发与提交
+## 开发与贡献
 
 提交前执行：
 
@@ -132,7 +173,7 @@ go test ./...
 go vet ./...
 ```
 
-提交信息、代码注释和项目文档统一使用中文。每个提交只完成一个可验证的阶段，避免把大批生成文件和业务代码混在一起。
+项目代码注释、提交信息和项目文档使用中文。GitHub Actions 会在每次提交后运行格式、测试和静态检查，生成 Linux amd64/arm64 安装包，并在 push 时发布多架构 GHCR 镜像。
 
 ## 许可证
 
