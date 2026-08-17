@@ -90,6 +90,16 @@ jobs:
             type=sha,format=long
             type=semver,pattern={{version}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+      - name: 生成构建信息
+        id: buildinfo
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="sha-${GITHUB_SHA::12}"
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "build_time=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "${GITHUB_OUTPUT}"
       - name: 构建并推送镜像
         uses: docker/build-push-action@v6
         with:
@@ -99,9 +109,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            VERSION=sha-${{ github.sha }}
+            VERSION=${{ steps.buildinfo.outputs.version }}
             COMMIT=${{ github.sha }}
-            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+            BUILD_TIME=${{ steps.buildinfo.outputs.build_time }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
