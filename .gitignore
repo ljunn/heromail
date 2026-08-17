@@ -1,0 +1,40 @@
+# 操作系统和编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Go 构建与测试产物
+/bin/
+/dist/
+*.test
+*.out
+coverage.out
+
+# 本地配置和密钥
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+/data/
+/tmp/
+
+# 浏览器、截图和生成图片
+/.playwright-cli/
+/output/
+/prototype/
+/prototype/assets/
+/generated_images/
+
+# Agent 本地缓存和安装目录
+/.agents/
+/.codex/
+/.claude/
+.mcp.json
+
+# 临时文件
+*.log
+*.cache

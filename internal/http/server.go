@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"io/fs"
 	"net/http"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/ljunn/heromail/internal/domain"
 	"github.com/ljunn/heromail/internal/store"
+	"github.com/ljunn/heromail/internal/web"
 )
 
 type Server struct {
@@ -26,7 +28,12 @@ func NewServer(st *store.Store) *Server {
 }
 
 func (s *Server) routes() {
-	s.Router.GET("/", func(c *gin.Context) { c.File("web/index.html") })
+	staticFS, err := fs.Sub(web.Files, "static")
+	if err != nil {
+		panic(err)
+	}
+	s.Router.NoRoute(gin.WrapH(http.FileServer(http.FS(staticFS))))
+	s.Router.GET("/favicon.ico", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 	s.Router.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	s.Router.GET("/readyz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ready", "storage": "memory"}) })
 
