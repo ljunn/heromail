@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,6 +67,36 @@ func TestAdminEndpointRequiresRole(t *testing.T) {
 	server.Router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("管理员访问返回 %d，响应：%s", response.Code, response.Body.String())
+	}
+}
+
+func TestStaticAssetsUseBuildVersion(t *testing.T) {
+	originalCommit := buildinfo.Commit
+	buildinfo.Commit = "static-test-commit"
+	t.Cleanup(func() { buildinfo.Commit = originalCommit })
+	server := NewServer(store.New())
+
+	indexRequest := httptest.NewRequest(http.MethodGet, "/", nil)
+	indexResponse := httptest.NewRecorder()
+	server.Router.ServeHTTP(indexResponse, indexRequest)
+	if indexResponse.Code != http.StatusOK {
+		t.Fatalf("入口页面返回 %d，期望 %d", indexResponse.Code, http.StatusOK)
+	}
+	if indexResponse.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("入口页面缓存策略不正确：%s", indexResponse.Header().Get("Cache-Control"))
+	}
+	if !strings.Contains(indexResponse.Body.String(), "/app.js?v=static-test-commit") || !strings.Contains(indexResponse.Body.String(), "/styles.css?v=static-test-commit") {
+		t.Fatal("入口页面没有使用构建版本隔离静态资源缓存")
+	}
+
+	assetRequest := httptest.NewRequest(http.MethodGet, "/app.js?v=static-test-commit", nil)
+	assetResponse := httptest.NewRecorder()
+	server.Router.ServeHTTP(assetResponse, assetRequest)
+	if assetResponse.Code != http.StatusOK {
+		t.Fatalf("静态资源返回 %d，期望 %d", assetResponse.Code, http.StatusOK)
+	}
+	if assetResponse.Header().Get("Cache-Control") != "no-cache" {
+		t.Fatalf("静态资源缓存策略不正确：%s", assetResponse.Header().Get("Cache-Control"))
 	}
 }
 

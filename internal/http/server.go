@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ljunn/heromail/internal/buildinfo"
 	"github.com/ljunn/heromail/internal/domain"
 	"github.com/ljunn/heromail/internal/mail"
 	"github.com/ljunn/heromail/internal/payment"
@@ -59,7 +60,24 @@ func (s *Server) routes() {
 	if err != nil {
 		panic(err)
 	}
-	s.Router.NoRoute(gin.WrapH(http.FileServer(http.FS(staticFS))))
+	indexHTML, err := fs.ReadFile(web.Files, "static/index.html")
+	if err != nil {
+		panic(err)
+	}
+	assetVersion := buildinfo.Commit
+	if assetVersion == "" || assetVersion == "unknown" {
+		assetVersion = buildinfo.Version
+	}
+	indexHTML = []byte(strings.ReplaceAll(string(indexHTML), "__HEROMAIL_ASSET_VERSION__", assetVersion))
+	s.Router.GET("/", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		c.Data(http.StatusOK, "text/html; charset=utf-8", indexHTML)
+	})
+	staticHandler := http.FileServer(http.FS(staticFS))
+	s.Router.NoRoute(gin.WrapH(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		staticHandler.ServeHTTP(w, r)
+	})))
 	s.Router.GET("/favicon.ico", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 	s.Router.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	s.Router.GET("/readyz", s.ready)
