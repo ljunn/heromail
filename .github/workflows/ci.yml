@@ -108,18 +108,34 @@ jobs:
   release:
     name: 发布 GitHub 版本
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [packages, image]
+    needs: [checks, image]
     runs-on: ubuntu-latest
     steps:
       - name: 拉取代码
         uses: actions/checkout@v4
-      - name: 下载安装包
-        uses: actions/download-artifact@v4
+      - name: 设置 Go
+        uses: actions/setup-go@v5
         with:
-          path: release-assets
-          merge-multiple: true
-      - name: 准备一键安装脚本
-        run: cp scripts/install.sh release-assets/install.sh
+          go-version: '1.26'
+          cache: true
+      - name: 构建正式发布包
+        run: |
+          mkdir -p release-assets
+          version="${GITHUB_REF_NAME}"
+          build_time="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          for arch in amd64 arm64; do
+            stage="release-assets/stage-${arch}"
+            mkdir -p "${stage}/scripts"
+            GOOS=linux GOARCH="${arch}" CGO_ENABLED=0 go build -trimpath \
+              -ldflags="-s -w -X github.com/ljunn/heromail/internal/buildinfo.Version=${version} -X github.com/ljunn/heromail/internal/buildinfo.Commit=${GITHUB_SHA} -X github.com/ljunn/heromail/internal/buildinfo.BuildTime=${build_time}" \
+              -o "${stage}/heromail" ./cmd/heromail
+            cp README.md LICENSE docker-compose.yml .env.example "${stage}/"
+            cp scripts/install.sh "${stage}/scripts/"
+            tar -C "${stage}" -czf "release-assets/heromail-linux-${arch}.tar.gz" .
+            sha256sum "release-assets/heromail-linux-${arch}.tar.gz" > "release-assets/heromail-linux-${arch}.tar.gz.sha256"
+            rm -rf "${stage}"
+          done
+          cp scripts/install.sh release-assets/install.sh
       - name: 校验并提取版本日志
         run: |
           version="${GITHUB_REF_NAME#v}"
