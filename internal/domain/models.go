@@ -38,10 +38,13 @@ const (
 )
 
 type User struct {
-	ID      string  `json:"id"`
-	Email   string  `json:"email"`
-	Balance float64 `json:"balance"`
-	Role    string  `json:"role"`
+	ID          string    `json:"id"`
+	Email       string    `json:"email"`
+	Balance     float64   `json:"balance"`
+	Role        string    `json:"role"`
+	Status      string    `json:"status"`
+	DisplayName string    `json:"display_name"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type Service struct {

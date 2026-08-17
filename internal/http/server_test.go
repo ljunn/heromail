@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -64,5 +65,40 @@ func TestAdminEndpointRequiresRole(t *testing.T) {
 	server.Router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("管理员访问返回 %d，响应：%s", response.Code, response.Body.String())
+	}
+}
+
+func TestOnlineUpgradeRequiresIndependentToken(t *testing.T) {
+	directory := t.TempDir()
+	requestPath := directory + "/request.json"
+	statusPath := directory + "/status.json"
+	t.Setenv("HEROMAIL_UPGRADE_REQUEST", requestPath)
+	t.Setenv("HEROMAIL_UPGRADE_STATUS", statusPath)
+	t.Setenv("HEROMAIL_UPDATE_TOKEN", "update-test-token")
+	server := NewServer(store.New())
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/upgrade", nil)
+	request.Header.Set("X-HeroMail-Role", "admin")
+	request.Header.Set("X-HeroMail-Update-Token", "wrong-token")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("错误升级令牌返回 %d，期望 %d", response.Code, http.StatusForbidden)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/upgrade", nil)
+	request.Header.Set("X-HeroMail-Role", "admin")
+	request.Header.Set("X-HeroMail-Update-Token", "update-test-token")
+	response = httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("创建升级任务返回 %d，响应：%s", response.Code, response.Body.String())
+	}
+	if _, err := os.Stat(requestPath); err != nil {
+		t.Fatalf("升级请求文件不存在：%v", err)
+	}
+	status, err := readUpgradeStatus(statusPath)
+	if err != nil || status.State != "queued" {
+		t.Fatalf("升级状态不正确：%+v，错误：%v", status, err)
 	}
 }

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -94,6 +95,32 @@ func (s *Store) ListServices() []domain.Service {
 	return out
 }
 
+func (s *Store) ListServicesPage(page, pageSize int) ([]domain.Service, int64) {
+	items := s.ListServices()
+	return paginate(items, page, pageSize), int64(len(items))
+}
+
+func (s *Store) ServiceUsage(serviceIDs []string) map[string]ServiceUsage {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make(map[string]ServiceUsage, len(serviceIDs))
+	for _, serviceID := range serviceIDs {
+		usage := ServiceUsage{}
+		for _, mailbox := range s.mailboxes {
+			switch mailbox.Services[serviceID].State {
+			case domain.ServiceAvailable:
+				usage.Available++
+			case domain.ServiceLeased:
+				usage.Leased++
+			case domain.ServiceConsumed:
+				usage.Consumed++
+			}
+		}
+		result[serviceID] = usage
+	}
+	return result
+}
+
 func (s *Store) CreateOrder(userID, serviceID, requestID string) (domain.Order, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -178,6 +205,11 @@ func (s *Store) ListOrders(userID string) []domain.Order {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out
+}
+
+func (s *Store) ListOrdersPage(userID string, page, pageSize int) ([]domain.Order, int64) {
+	items := s.ListOrders(userID)
+	return paginate(items, page, pageSize), int64(len(items))
 }
 
 func (s *Store) SubmitOrder(id, userID string) (domain.Order, error) {
@@ -315,6 +347,14 @@ func (s *Store) Mailboxes() []domain.Mailbox {
 	return out
 }
 
+func (s *Store) MailboxesPage(page, pageSize int) ([]domain.Mailbox, int64) {
+	items := s.Mailboxes()
+	return paginate(items, page, pageSize), int64(len(items))
+}
+
+func (s *Store) Ping(context.Context) error { return nil }
+func (s *Store) StorageName() string        { return "memory" }
+
 func (s *Store) refundAndReleaseLocked(order *domain.Order) {
 	if user := s.users[order.UserID]; user != nil && order.Refunded {
 		user.Balance += order.Price
@@ -349,4 +389,17 @@ func cloneMailbox(mailbox domain.Mailbox) domain.Mailbox {
 
 func IsUserVisible(status domain.OrderStatus) bool {
 	return !strings.HasSuffix(string(status), "internal")
+}
+
+func paginate[T any](items []T, page, pageSize int) []T {
+	page, pageSize = normalizePage(page, pageSize)
+	start := (page - 1) * pageSize
+	if start >= len(items) {
+		return []T{}
+	}
+	end := start + pageSize
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[start:end]
 }
