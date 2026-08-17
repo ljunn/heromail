@@ -1,10 +1,13 @@
-name: 中文持续集成
+name: 中文持续集成与打包
 
 on:
   push:
-    branches: [main]
   pull_request:
     branches: [main]
+
+permissions:
+  contents: write
+  packages: write
 
 jobs:
   checks:
@@ -17,9 +20,117 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+          cache: true
       - name: 检查格式
         run: test -z "$(gofmt -l ./cmd ./internal)"
       - name: 运行测试
         run: go test ./...
       - name: 静态检查
         run: go vet ./...
+
+  packages:
+    name: 打包 ${{ matrix.goarch }}
+    needs: checks
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+      - name: 设置 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: 编译服务
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          version="sha-${GITHUB_SHA::12}"
+          build_time="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          go build -trimpath -ldflags="-s -w -X github.com/ljunn/heromail/internal/buildinfo.Version=${version} -X github.com/ljunn/heromail/internal/buildinfo.Commit=${GITHUB_SHA} -X github.com/ljunn/heromail/internal/buildinfo.BuildTime=${build_time}" -o heromail ./cmd/heromail
+          tar -czf "heromail-linux-${GOARCH}.tar.gz" heromail README.md LICENSE scripts/install.sh docker-compose.yml .env.example
+          sha256sum "heromail-linux-${GOARCH}.tar.gz" > "heromail-linux-${GOARCH}.tar.gz.sha256"
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: heromail-linux-${{ matrix.goarch }}
+          path: |
+            heromail-linux-${{ matrix.goarch }}.tar.gz
+            heromail-linux-${{ matrix.goarch }}.tar.gz.sha256
+          retention-days: 30
+
+  image:
+    name: 构建容器镜像
+    if: github.event_name == 'push'
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+      - name: 设置 QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: 设置 Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: 登录 GitHub 容器仓库
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 生成镜像标签
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/ljunn/heromail
+          tags: |
+            type=sha,format=long
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+      - name: 构建并推送镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=sha-${{ github.sha }}
+            COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    name: 发布 GitHub 版本
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [packages, image]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+      - name: 下载安装包
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: 准备一键安装脚本
+        run: cp scripts/install.sh release-assets/install.sh
+      - name: 校验并提取版本日志
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v heading="## [${version}]" '
+            index($0, heading) == 1 { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+            END { if (!found) exit 2 }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+      - name: 创建正式版本
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" release-assets/* --notes-file release-notes.md --title "HeroMail ${GITHUB_REF_NAME}"

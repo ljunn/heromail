@@ -1,15 +1,51 @@
 services:
   heromail:
-    build: .
+    image: ghcr.io/ljunn/heromail:latest
     ports:
-      - "${PORT:-8080}:8080"
+      - "${HEROMAIL_BIND:-0.0.0.0}:${PORT:-8080}:8080"
     environment:
       PORT: "8080"
+      HEROMAIL_IMAGE: ghcr.io/ljunn/heromail:latest
+      HEROMAIL_UPDATE_TOKEN: ${HEROMAIL_UPDATE_TOKEN:-}
+      HEROMAIL_WORKER_TOKEN: ${HEROMAIL_WORKER_TOKEN:?请在 .env 中配置 HEROMAIL_WORKER_TOKEN}
+      HEROMAIL_UPGRADE_REQUEST: /upgrade/request.json
+      HEROMAIL_UPGRADE_STATUS: /upgrade/status.json
+      HEROMAIL_ADMIN_EMAIL: ${HEROMAIL_ADMIN_EMAIL:-admin@heromail.local}
+      HEROMAIL_ADMIN_PASSWORD: ${HEROMAIL_ADMIN_PASSWORD:?请在 .env 中配置 HEROMAIL_ADMIN_PASSWORD}
+      HEROMAIL_ENCRYPTION_KEY: ${HEROMAIL_ENCRYPTION_KEY:?请在 .env 中配置 HEROMAIL_ENCRYPTION_KEY}
+      HEROMAIL_SEED_DEMO: ${HEROMAIL_SEED_DEMO:-false}
+      HEROMAIL_PUBLIC_URL: ${HEROMAIL_PUBLIC_URL:-http://localhost:8080}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_TENANT: ${MICROSOFT_TENANT:-common}
+      MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI:-}
+      HEROMAIL_WEBHOOK_ALLOW_PRIVATE: ${HEROMAIL_WEBHOOK_ALLOW_PRIVATE:-false}
+      DATABASE_URL: postgres://${POSTGRES_USER:-heromail}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-heromail}?sslmode=disable
+      REDIS_ADDR: redis:6379
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - upgrade-state:/upgrade
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  updater:
+    build:
+      context: .
+      dockerfile: docker/updater.Dockerfile
+    environment:
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-heromail}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/workspace:ro
+      - upgrade-state:/upgrade
     restart: unless-stopped
 
   postgres:
@@ -17,7 +53,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-heromail}
       POSTGRES_USER: ${POSTGRES_USER:-heromail}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-仅供本地开发}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中配置 POSTGRES_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -39,3 +75,4 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  upgrade-state:
