@@ -36,6 +36,15 @@ go run ./cmd/heromail
 
 浏览器打开 <http://localhost:8080>。页面右上角可以切换用户端和管理员端。
 
+使用 Docker Compose 体验完整的本地依赖拓扑：
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+当前 MVP 仍使用内存存储，Compose 中的 PostgreSQL 和 Redis 是后续持久化、锁、队列和限流的开发依赖预留，不会自动写入业务数据。
+
 演示身份通过请求头区分：
 
 ```text

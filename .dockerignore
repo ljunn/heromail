@@ -1,0 +1,10 @@
+.git
+.github
+.playwright-cli
+output
+prototype
+data
+tmp
+*.log
+*.test
+coverage.out

@@ -1,0 +1,24 @@
+name: 中文持续集成
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  检查:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+      - name: 设置 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - name: 检查格式
+        run: test -z "$(gofmt -l ./cmd ./internal)"
+      - name: 运行测试
+        run: go test ./...
+      - name: 静态检查
+        run: go vet ./...
