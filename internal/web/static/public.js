@@ -89,6 +89,91 @@ async function resolvePublicSession() {
   }
 }
 
+function initHomeAnimations() {
+  if (!window.gsap) return;
+  const { gsap } = window;
+  const ScrollTrigger = window.ScrollTrigger;
+  if (ScrollTrigger) gsap.registerPlugin(ScrollTrigger);
+
+  const mm = gsap.matchMedia();
+  mm.add({
+    desktop: "(min-width: 761px)",
+    reduced: "(prefers-reduced-motion: reduce)"
+  }, context => {
+    const { desktop, reduced } = context.conditions;
+    const hero = document.querySelector(".public-hero");
+    const stage = document.querySelector(".hero-stage");
+    let cleanupPointer = () => {};
+    if (!hero || !stage) return undefined;
+
+    if (reduced) {
+      gsap.set([".hero-kicker", ".hero-copy h1 > span", ".hero-copy h1 strong", ".hero-copy p", ".hero-actions", ".hero-metrics", ".stage-console", ".stage-float", ".stage-label", ".signal-strip > div", "[data-reveal]"], { autoAlpha: 1, clearProps: "transform" });
+      return undefined;
+    }
+
+    const intro = gsap.timeline({ defaults: { duration: .65, ease: "power3.out" } });
+    intro.from(".hero-kicker", { autoAlpha: 0, y: 16 })
+      .from(".hero-copy h1 > span", { autoAlpha: 0, y: 28 }, "-=.35")
+      .from(".hero-copy h1 strong", { autoAlpha: 0, y: 22 }, "-=.35")
+      .from(".hero-copy p", { autoAlpha: 0, y: 18 }, "-=.35")
+      .from(".hero-actions", { autoAlpha: 0, y: 16 }, "-=.32")
+      .from(".hero-metrics > div", { autoAlpha: 0, y: 14, stagger: .1 }, "-=.28")
+      .from(".stage-console", { autoAlpha: 0, y: 32, rotation: 5, duration: .9 }, "-=.68")
+      .from(".stage-float, .stage-label", { autoAlpha: 0, y: 18, stagger: .12, duration: .45 }, "-=.45");
+
+    gsap.to(".stage-orbit", { rotation: "+=360", duration: 34, ease: "none", repeat: -1 });
+    gsap.to(".stage-float", { y: "-=8", duration: 2.4, ease: "sine.inOut", repeat: -1, yoyo: true, stagger: .32 });
+    gsap.to(".feed-pulse", { scale: 1.45, autoAlpha: .42, duration: .8, ease: "sine.inOut", repeat: -1, yoyo: true, stagger: .2 });
+
+    const code = document.querySelector(".code-digits");
+    if (code) intro.call(() => { code.textContent = "482 916"; }, null, "+=.15");
+
+    if (desktop) {
+      const xTo = gsap.quickTo(stage, "x", { duration: .8, ease: "power3.out" });
+      const yTo = gsap.quickTo(stage, "y", { duration: .8, ease: "power3.out" });
+      const moveStage = event => {
+        const bounds = stage.getBoundingClientRect();
+        xTo((event.clientX - bounds.left - bounds.width / 2) * .018);
+        yTo((event.clientY - bounds.top - bounds.height / 2) * .012);
+      };
+      const resetStage = () => { xTo(0); yTo(0); };
+      stage.addEventListener("pointermove", moveStage);
+      stage.addEventListener("pointerleave", resetStage);
+      cleanupPointer = () => {
+        stage.removeEventListener("pointermove", moveStage);
+        stage.removeEventListener("pointerleave", resetStage);
+      };
+    }
+
+    if (!ScrollTrigger) return cleanupPointer;
+    gsap.from(".signal-strip > div", {
+      autoAlpha: 0,
+      y: 20,
+      stagger: .1,
+      duration: .55,
+      ease: "power2.out",
+      scrollTrigger: { trigger: ".signal-strip", start: "top 86%", once: true }
+    });
+    gsap.utils.toArray("[data-reveal]").forEach(element => {
+      gsap.from(element, {
+        autoAlpha: 0,
+        y: 32,
+        duration: .7,
+        ease: "power3.out",
+        scrollTrigger: { trigger: element, start: "top 84%", once: true }
+      });
+    });
+    gsap.to(stage, {
+      yPercent: -4,
+      ease: "none",
+      scrollTrigger: { trigger: hero, start: "top top", end: "bottom top", scrub: 1 }
+    });
+    window.addEventListener("load", () => ScrollTrigger.refresh(), { once: true });
+    ScrollTrigger.refresh();
+    return cleanupPointer;
+  });
+}
+
 document.addEventListener("click", event => {
   const action = event.target.closest("[data-public-action]");
   if (!action) return;
@@ -106,4 +191,5 @@ else if (path === "/status") renderStatus();
 else if (path === "/open-source") renderOpenSource();
 else if (path === "/login") renderAuth(false);
 else if (path === "/register") renderAuth(true);
+else if (path === "/") initHomeAnimations();
 resolvePublicSession();

@@ -88,6 +88,9 @@ func TestStaticAssetsUseBuildVersion(t *testing.T) {
 	if !strings.Contains(indexResponse.Body.String(), "/public.js?v=static-test-commit") || !strings.Contains(indexResponse.Body.String(), "/public.css?v=static-test-commit") {
 		t.Fatal("公开站没有使用构建版本隔离静态资源缓存")
 	}
+	if !strings.Contains(indexResponse.Body.String(), "gsap@3.15.0/dist/gsap.min.js") || !strings.Contains(indexResponse.Body.String(), "gsap@3.15.0/dist/ScrollTrigger.min.js") {
+		t.Fatal("公开站没有加载固定版本的 GSAP 和 ScrollTrigger")
+	}
 	workspaceRequest := httptest.NewRequest(http.MethodGet, "/app/tasks", nil)
 	workspaceResponse := httptest.NewRecorder()
 	server.Router.ServeHTTP(workspaceResponse, workspaceRequest)

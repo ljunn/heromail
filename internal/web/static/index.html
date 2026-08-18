@@ -4,50 +4,64 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="HeroMail 是可自托管的邮箱资源池与平台注册验证码平台，按目标平台分配 Outlook/Hotmail 邮箱并自动提取验证码。">
-  <meta property="og:title" content="HeroMail - 邮箱资源与注册验证码平台">
+  <meta property="og:title" content="HeroMail - 把验证码变成确定性">
   <meta property="og:description" content="选择目标平台，系统分配邮箱并自动提取验证码。">
-  <title>HeroMail - 邮箱资源与注册验证码平台</title>
+  <title>HeroMail - 把验证码变成确定性</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=__HEROMAIL_ASSET_VERSION__">
   <link rel="stylesheet" href="/public.css?v=__HEROMAIL_ASSET_VERSION__">
 </head>
 <body class="public-site">
   <header class="public-header">
     <a class="public-brand" href="/" aria-label="HeroMail 首页"><img src="/brand-mark.svg?v=__HEROMAIL_ASSET_VERSION__" alt=""><strong>HeroMail</strong></a>
-    <button class="public-menu-button" data-public-action="menu" aria-label="打开导航" aria-expanded="false">☰</button>
     <nav class="public-nav" id="public-nav" aria-label="公开导航">
-      <a href="/#product">产品</a><a href="/pricing">价格</a><a href="/docs">API 文档</a><a href="/status">服务状态</a><a href="/open-source">开源部署</a>
+      <a href="/#product">产品 <span>01</span></a><a href="/pricing">价格 <span>02</span></a><a href="/docs">API 文档 <span>03</span></a><a href="/status">服务状态 <span>04</span></a><a href="/open-source">开源部署</a>
     </nav>
-    <div class="public-actions" id="public-actions"><a class="text-action" href="/login">登录</a><a class="solid-action" href="/register">开始使用</a></div>
+    <div class="public-actions" id="public-actions"><a class="text-action" href="/login">登录</a><a class="solid-action" href="/register">开始使用 <span aria-hidden="true">↗</span></a></div>
+    <button class="public-menu-button" data-public-action="menu" aria-label="打开导航" aria-expanded="false"><span></span><span></span></button>
   </header>
   <main id="public-content">
-    <section class="public-hero">
-      <div class="hero-copy">
-        <span class="hero-kicker">邮箱资源池与注册验证码平台</span>
-        <h1>HeroMail</h1>
-        <p>选择目标平台，系统自动分配 Outlook / Hotmail 邮箱，并在提交注册后提取验证码。用户无需接触邮箱密码、OAuth Token 或完整收件箱。</p>
-        <div class="hero-actions"><a class="solid-action large" href="/register">开始申请邮箱</a><a class="outline-action large" href="/docs">查看 API 文档</a></div>
-        <div class="hero-proof"><span>PostgreSQL 持久化</span><span>Redis 原子分配</span><span>Microsoft Graph 收码</span></div>
-      </div>
-      <div class="hero-product" aria-label="HeroMail 用户门户界面预览">
-        <div class="preview-top"><span class="preview-brand"><img src="/brand-mark.svg?v=__HEROMAIL_ASSET_VERSION__" alt="">HeroMail</span><span>申请邮箱</span><span>当前任务</span><span>订单</span><span>余额</span></div>
-        <div class="preview-body">
-          <div class="preview-platforms"><span class="selected">GitHub</span><span>OpenAI</span><span>Discord</span><span>Telegram</span></div>
-          <div class="preview-flow">
-            <div><small>已分配邮箱</small><strong>hero_08@outlook.com</strong></div><button>复制</button>
+    <section class="public-hero" id="top">
+      <div class="hero-noise" aria-hidden="true"></div>
+      <div class="hero-gridline" aria-hidden="true"></div>
+      <div class="hero-layout">
+        <div class="hero-copy">
+          <div class="hero-kicker"><i class="signal-dot"></i><span>RESOURCE ROUTING / LIVE</span><b>HM-01</b></div>
+          <h1><span>HeroMail</span><strong>让注册收码<br><em>变成确定性。</em></strong></h1>
+          <p>选择目标平台，系统自动分配 Outlook / Hotmail 邮箱。注册触发后，验证码沿着可追踪的链路回到你的工作台。</p>
+          <div class="hero-actions"><a class="solid-action large" href="/register">开始申请邮箱 <span aria-hidden="true">↗</span></a><a class="outline-action large" href="/docs">查看 API 文档 <span aria-hidden="true">⌘</span></a></div>
+          <div class="hero-metrics" aria-label="平台能力指标"><div><strong>99.9<span>%</span></strong><small>资源路由可用</small></div><div><strong>&lt;60<span>s</span></strong><small>平均收码延迟</small></div><div><strong>24<span>/7</span></strong><small>自动化 Worker</small></div></div>
+        </div>
+        <div class="hero-stage" aria-label="HeroMail 注册收码工作台预览">
+          <div class="stage-halo halo-one" aria-hidden="true"></div><div class="stage-halo halo-two" aria-hidden="true"></div>
+          <div class="stage-orbit orbit-one" aria-hidden="true"><span></span></div><div class="stage-orbit orbit-two" aria-hidden="true"><span></span></div>
+          <div class="stage-console">
+            <div class="console-bar"><span class="console-brand"><img src="/brand-mark.svg?v=__HEROMAIL_ASSET_VERSION__" alt="">WORKSPACE / TASK 042</span><span class="console-live"><i></i> LIVE</span><span class="console-menu">•••</span></div>
+            <div class="console-content">
+              <div class="console-heading"><div><span class="eyebrow">CURRENT ROUTE</span><strong>Grok 注册</strong></div><span class="route-state">IN PROGRESS</span></div>
+              <div class="route-line"><span class="route-node active">01<small>PLATFORM</small><b>Grok</b></span><i></i><span class="route-node active">02<small>MAILBOX</small><b>Outlook</b></span><i></i><span class="route-node current">03<small>CODE</small><b>Waiting…</b></span></div>
+              <div class="mail-row"><div><span>ASSIGNED MAILBOX</span><strong>hero_08@outlook.com</strong></div><button aria-label="复制邮箱">⧉</button></div>
+              <div class="event-feed"><div class="feed-title"><span>EVENT STREAM</span><span>UTC+8</span></div><div class="feed-row" data-feed><i class="feed-pulse"></i><span>Graph Worker 连接收件箱</span><time>00:02</time></div><div class="feed-row" data-feed><i class="feed-pulse"></i><span>已匹配发件人域名</span><time>00:04</time></div><div class="feed-row muted-feed" data-feed><i class="feed-pulse"></i><span>等待验证码邮件…</span><time>NOW</time></div></div>
+              <div class="code-row"><div><span>VERIFICATION CODE</span><strong class="code-digits">— — — — — —</strong></div><span class="code-timer">07:42</span></div>
+            </div>
           </div>
-          <div class="preview-progress"><i class="done"></i><i class="done"></i><i class="active"></i><i></i></div>
-          <div class="preview-result"><div><small>验证码已收到</small><strong>482 916</strong></div><span>07:42</span></div>
+          <div class="stage-float float-mail" data-float><span class="float-icon">✦</span><div><small>MAILBOX POOL</small><strong>1,284 ready</strong></div></div>
+          <div class="stage-float float-secure" data-float><span class="float-check">✓</span><div><small>SECURE HANDOFF</small><strong>Token hidden</strong></div></div>
+          <div class="stage-label" data-float><span></span>ATOMIC ALLOCATION</div>
         </div>
       </div>
+      <a class="hero-scroll" href="#product"><span>SCROLL TO EXPLORE</span><i>↓</i></a>
     </section>
+    <section class="signal-strip" aria-label="平台特点"><div><span class="signal-number">01</span><strong>选择目标平台</strong><small>不接触邮箱地址</small></div><div><span class="signal-number">02</span><strong>原子分配资源</strong><small>邮箱 × 目标平台</small></div><div><span class="signal-number">03</span><strong>自动提取验证码</strong><small>Graph Worker 实时匹配</small></div><div><span class="signal-number">04</span><strong>全程可审计</strong><small>预扣、结算、退款有据</small></div></section>
     <section class="workflow-band" id="product">
-      <div class="section-inner"><div class="section-heading"><span>工作方式</span><h2>一条清晰的注册收码链路</h2></div><div class="workflow-steps"><div><b>01</b><strong>选择目标平台</strong><p>用户只选择 GitHub、OpenAI 等目标平台。</p></div><div><b>02</b><strong>系统分配邮箱</strong><p>从符合规则的 Outlook / Hotmail 资源中原子分配。</p></div><div><b>03</b><strong>提交平台注册</strong><p>复制邮箱并确认已在目标平台触发验证码。</p></div><div><b>04</b><strong>自动获得验证码</strong><p>Graph Worker 匹配邮件并提取验证码，超时自动退款。</p></div></div></div>
+      <div class="section-inner"><div class="section-heading"><span>THE FLOW / 02</span><h2>一条链路，四个确定节点。</h2><p>从目标平台到验证码结果，每一步都有明确状态。你只看到完成任务所需要的信息，敏感凭证始终留在加密存储中。</p></div><div class="workflow-steps"><div data-reveal><b>01</b><strong>选择目标平台</strong><p>用户只选择 GitHub、OpenAI 等目标平台，不能输入或挑选平台邮箱。</p><span class="step-arrow">↗</span></div><div data-reveal><b>02</b><strong>系统分配邮箱</strong><p>从符合规则的 Outlook / Hotmail 资源中原子分配，同一平台不会重复占用。</p><span class="step-arrow">↗</span></div><div data-reveal><b>03</b><strong>提交平台注册</strong><p>复制分配地址，在目标平台触发注册邮件并回到工作台确认。</p><span class="step-arrow">↗</span></div><div data-reveal><b>04</b><strong>自动获得验证码</strong><p>Graph Worker 匹配邮件并提取验证码，超时未收到自动退款。</p><span class="step-arrow">↗</span></div></div></div>
     </section>
-    <section class="public-section"><div class="section-inner split-facts"><div class="section-heading"><span>业务边界</span><h2>只交付本次任务需要的信息</h2><p>邮箱是平台资产。HeroMail 只向用户展示分配地址、订单状态和验证码，凭证与完整邮件始终留在加密存储中。</p></div><dl><div><dt>分配单位</dt><dd>邮箱 × 目标平台</dd></div><div><dt>计费规则</dt><dd>创建预扣，超时退款，收码结算</dd></div><div><dt>邮箱渠道</dt><dd>Outlook / Hotmail OAuth2</dd></div><div><dt>部署方式</dt><dd>Go + PostgreSQL + Redis + Docker</dd></div></dl></div></section>
-    <section class="public-cta"><div><h2>准备好开始一条真实的收码任务</h2><p>注册后即可选择平台、申请邮箱，并通过网页或 API 获取结果。</p></div><a class="solid-action large" href="/register">创建 HeroMail 账户</a></section>
+    <section class="public-section facts-section"><div class="section-inner split-facts"><div class="section-heading" data-reveal><span>BOUNDARIES / 03</span><h2>只交付这一次任务需要的信息。</h2><p>邮箱是平台资产。HeroMail 只向用户展示分配地址、订单状态和验证码，密码、OAuth Token、完整收件箱和内部规则不会出现在用户端。</p><a class="text-link" href="/docs">了解数据边界 <span>↗</span></a></div><dl data-reveal><div><dt>分配单位</dt><dd>邮箱 × 目标平台</dd></div><div><dt>计费规则</dt><dd>创建预扣，超时退款，收码结算</dd></div><div><dt>邮箱渠道</dt><dd>Outlook / Hotmail OAuth2</dd></div><div><dt>部署方式</dt><dd>Go + PostgreSQL + Redis + Docker</dd></div></dl></div></section>
+    <section class="public-cta"><div><span>READY WHEN YOU ARE / 04</span><h2>下一次注册，从可观测开始。</h2><p>注册后即可选择平台、申请邮箱，并通过网页或 API 获取结果。</p></div><a class="solid-action large" href="/register">创建 HeroMail 账户 <span aria-hidden="true">↗</span></a></section>
   </main>
   <footer class="public-footer"><a class="public-brand" href="/"><img src="/brand-mark.svg?v=__HEROMAIL_ASSET_VERSION__" alt=""><strong>HeroMail</strong></a><span>MIT 开源 · 仅用于已授权邮箱和合规注册测试</span><div><a href="/docs">文档</a><a href="https://github.com/ljunn/heromail" target="_blank" rel="noopener">GitHub</a></div></footer>
   <div id="public-toast" class="public-toast" role="status"></div>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/ScrollTrigger.min.js" defer></script>
   <script src="/public.js?v=__HEROMAIL_ASSET_VERSION__" defer></script>
 </body>
 </html>
