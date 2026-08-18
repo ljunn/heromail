@@ -76,19 +76,52 @@ func (s *Server) updateProfile(c *gin.Context) {
 	}
 	var request struct {
 		DisplayName string `json:"display_name"`
-		Password    string `json:"password"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		writeError(c, http.StatusBadRequest, "invalid_request", "请求格式不正确")
 		return
 	}
-	user, err := repository.UpdateProfile(demoUser(c), request.DisplayName, request.Password)
+	user, err := repository.UpdateProfile(demoUser(c), request.DisplayName)
 	if err != nil {
 		writeError(c, http.StatusBadRequest, "profile_update_failed", err.Error())
 		return
 	}
 	_ = repository.WriteAudit(user.ID, "user.profile.update", "user", user.ID, "用户更新个人设置", c.ClientIP())
 	c.JSON(http.StatusOK, gin.H{"data": user})
+}
+
+func (s *Server) changePassword(c *gin.Context) {
+	repository, ok := s.Store.(store.AccountRepository)
+	if !ok {
+		writeError(c, http.StatusServiceUnavailable, "password_change_unavailable", "密码修改服务不可用")
+		return
+	}
+	var request struct {
+		CurrentPassword string `json:"current_password" binding:"required,max=128"`
+		NewPassword     string `json:"new_password" binding:"required,min=10,max=128"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_request", "当前密码不能为空，新密码至少需要 10 位")
+		return
+	}
+	user, _ := authenticatedUser(c)
+	token, err := repository.ChangePassword(user.ID, request.CurrentPassword, request.NewPassword)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, store.ErrPasswordMismatch) || errors.Is(err, store.ErrInvalidCredentials) {
+			status = http.StatusUnauthorized
+		}
+		writeError(c, status, "password_change_failed", err.Error())
+		return
+	}
+	action := "user.password.change"
+	detail := "用户修改登录密码并撤销旧会话"
+	if user.Role == "admin" {
+		action = "admin.password.change"
+		detail = "管理员修改登录密码并撤销旧会话"
+	}
+	_ = repository.WriteAudit(user.ID, action, "user", user.ID, detail, c.ClientIP())
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"token": token}})
 }
 
 func (s *Server) listAPIKeys(c *gin.Context) {

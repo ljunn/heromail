@@ -97,19 +97,8 @@ func (s *PostgresStore) Logout(token string) error {
 	return s.db.Model(&sqlSession{}).Where("token_hash = ? AND revoked_at IS NULL", hashToken(token)).Update("revoked_at", now).Error
 }
 
-func (s *PostgresStore) UpdateProfile(userID, displayName, password string) (domain.User, error) {
-	updates := map[string]any{"display_name": strings.TrimSpace(displayName)}
-	if password != "" {
-		if len(password) < 10 {
-			return domain.User{}, ErrInvalidCredentials
-		}
-		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-		if err != nil {
-			return domain.User{}, err
-		}
-		updates["password_hash"] = string(hash)
-	}
-	if err := s.db.Model(&sqlUser{}).Where("id = ?", userID).Updates(updates).Error; err != nil {
+func (s *PostgresStore) UpdateProfile(userID, displayName string) (domain.User, error) {
+	if err := s.db.Model(&sqlUser{}).Where("id = ?", userID).Update("display_name", strings.TrimSpace(displayName)).Error; err != nil {
 		return domain.User{}, err
 	}
 	user, ok := s.User(userID)
@@ -117,6 +106,36 @@ func (s *PostgresStore) UpdateProfile(userID, displayName, password string) (dom
 		return domain.User{}, errors.New("用户不存在")
 	}
 	return user, nil
+}
+
+func (s *PostgresStore) ChangePassword(userID, currentPassword, newPassword string) (string, error) {
+	if len(newPassword) < 10 {
+		return "", ErrPasswordTooShort
+	}
+	var token string
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var user sqlUser
+		if err := tx.Where("id = ? AND status = ?", userID, "active").First(&user).Error; err != nil {
+			return ErrInvalidCredentials
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)); err != nil {
+			return ErrPasswordMismatch
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&sqlUser{}).Where("id = ?", userID).Update("password_hash", string(hash)).Error; err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		if err := tx.Model(&sqlSession{}).Where("user_id = ? AND revoked_at IS NULL", userID).Update("revoked_at", now).Error; err != nil {
+			return err
+		}
+		token, err = createSession(tx, userID)
+		return err
+	})
+	return token, err
 }
 
 func (s *PostgresStore) ListUsersPage(page, pageSize int) ([]domain.User, int64) {
