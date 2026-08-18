@@ -163,6 +163,14 @@ textarea.field { resize: vertical; }
 .provider-badge.alipay { color: #1769e8; background: #eaf2ff; }
 .table-actions { display: flex; gap: 12px; }
 .payment-modal { max-height: min(820px, calc(100vh - 40px)); overflow: auto; }
+.service-modal { display: grid; max-height: min(760px, calc(100dvh - 32px)); grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; }
+.service-modal-body { overflow-y: auto; overscroll-behavior: contain; }
+.service-modal-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 20px; border-top: 1px solid var(--line); background: #fafbfd; }
+.service-modal-footer .primary-btn { min-width: 190px; }
+.provider-options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0; padding: 0; border: 0; }
+.provider-options legend { grid-column: 1 / -1; margin-bottom: -3px; padding: 0; color: var(--muted); font-size: 12px; font-weight: 600; }
+.provider-options label { display: flex; min-height: 40px; flex: 1; grid-template-columns: none; align-items: center; gap: 9px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: #fafbfd; }
+.provider-options input { width: 16px; height: 16px; margin: 0; accent-color: var(--blue); }
 .modal-subtitle { margin-top: 4px; color: var(--muted); font-size: 12px; }
 .provider-fields { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #fafbfd; }
 .provider-fields[hidden] { display: none; }
@@ -256,6 +264,11 @@ textarea.field { resize: vertical; }
   .stat-value { font-size: 20px; }
   .service-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
   .provider-guidance { grid-template-columns: 1fr; }
+  .modal-backdrop { padding: 10px; }
+  .service-modal { max-height: calc(100dvh - 20px); }
+  .service-modal-footer { align-items: stretch; flex-direction: column; padding: 12px 15px; }
+  .service-modal-footer .primary-btn { width: 100%; min-width: 0; }
+  .service-modal .form-columns { grid-template-columns: 1fr; }
   .card-body { padding: 15px; }
   .filter-bar { padding: 12px; }
   .select, .search { width: 100%; }

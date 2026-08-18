@@ -88,7 +88,6 @@ func TestStaticAssetsUseBuildVersion(t *testing.T) {
 	if !strings.Contains(indexResponse.Body.String(), "/public.js?v=static-test-commit") || !strings.Contains(indexResponse.Body.String(), "/public.css?v=static-test-commit") {
 		t.Fatal("公开站没有使用构建版本隔离静态资源缓存")
 	}
-
 	workspaceRequest := httptest.NewRequest(http.MethodGet, "/app/tasks", nil)
 	workspaceResponse := httptest.NewRecorder()
 	server.Router.ServeHTTP(workspaceResponse, workspaceRequest)
@@ -205,6 +204,67 @@ func TestOnlineUpgradeRejectsCurrentRelease(t *testing.T) {
 	server.Router.ServeHTTP(response, request)
 	if response.Code != http.StatusConflict {
 		t.Fatalf("同版本升级返回 %d，期望 %d，响应：%s", response.Code, http.StatusConflict, response.Body.String())
+	}
+}
+
+type resourceRepositoryStub struct {
+	store.Repository
+	store.ResourceRepository
+	savedService domain.Service
+}
+
+func (s *resourceRepositoryStub) SaveService(_ string, service domain.Service, _ string) (domain.Service, error) {
+	s.savedService = service
+	return service, nil
+}
+
+func TestAdminSaveServiceValidatesConfigPrecisely(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		wantStatus  int
+		wantMessage string
+	}{
+		{
+			name:        "缺少发件人域名",
+			body:        `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","hotmail"],"price":0.02,"ttl_seconds":600,"sender_domains":[],"subject_keywords":[],"regex":"\\b(\\d{6})\\b"}`,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "至少填写一个发件人域名",
+		},
+		{
+			name:        "不支持的邮箱供应商",
+			body:        `{"code":"grok","name":"Grok 注册","enabled":true,"allowed_providers":["gmail"],"price":0.02,"ttl_seconds":600,"sender_domains":["x.ai"],"regex":"\\b(\\d{6})\\b"}`,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "只允许 outlook 和 hotmail",
+		},
+		{
+			name:       "有效配置",
+			body:       `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","hotmail"],"price":0.02,"ttl_seconds":600,"sender_domains":["x.ai"],"subject_keywords":[],"regex":"\\b(\\d{6})\\b"}`,
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repository := &resourceRepositoryStub{Repository: store.New()}
+			server := NewServer(repository)
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/services", bytes.NewBufferString(tt.body))
+			request.Header.Set("X-HeroMail-Role", "admin")
+			request.Header.Set("X-HeroMail-User", "admin-001")
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			server.Router.ServeHTTP(response, request)
+
+			if response.Code != tt.wantStatus {
+				t.Fatalf("保存目标平台返回 %d，期望 %d，响应：%s", response.Code, tt.wantStatus, response.Body.String())
+			}
+			if tt.wantMessage != "" && !strings.Contains(response.Body.String(), tt.wantMessage) {
+				t.Fatalf("错误提示不准确：%s", response.Body.String())
+			}
+			if tt.wantStatus == http.StatusOK && repository.savedService.Code != "grok" {
+				t.Fatalf("平台代码没有标准化：%q", repository.savedService.Code)
+			}
+		})
 	}
 }
 

@@ -99,7 +99,18 @@ func (s *Server) adminSaveService(c *gin.Context) {
 		return
 	}
 	var request domain.Service
-	if err := c.ShouldBindJSON(&request); err != nil || request.Code == "" || request.Name == "" || request.Regex == "" {
+	if err := c.ShouldBindJSON(&request); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_request", "目标平台配置格式无效")
+		return
+	}
+	request.Code = strings.ToLower(strings.TrimSpace(request.Code))
+	request.Name = strings.TrimSpace(request.Name)
+	request.Description = strings.TrimSpace(request.Description)
+	request.Regex = strings.TrimSpace(request.Regex)
+	request.AllowedProviders = normalizeServiceList(request.AllowedProviders)
+	request.SenderDomains = normalizeServiceList(request.SenderDomains)
+	request.SubjectKeywords = normalizeServiceList(request.SubjectKeywords)
+	if request.Code == "" || request.Name == "" || request.Regex == "" {
 		writeError(c, http.StatusBadRequest, "invalid_request", "平台代码、名称和验证码正则不能为空")
 		return
 	}
@@ -107,8 +118,26 @@ func (s *Server) adminSaveService(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "invalid_code_regex", "验证码正则表达式无效")
 		return
 	}
-	if request.Price < 0 || request.TTLSeconds < 60 || request.TTLSeconds > 86400 || len(request.AllowedProviders) == 0 || len(request.SenderDomains) == 0 {
-		writeError(c, http.StatusBadRequest, "invalid_service_config", "价格、有效期或允许的邮箱供应商无效")
+	if request.Price < 0 {
+		writeError(c, http.StatusBadRequest, "invalid_service_config", "单价不能小于 0")
+		return
+	}
+	if request.TTLSeconds < 60 || request.TTLSeconds > 86400 {
+		writeError(c, http.StatusBadRequest, "invalid_service_config", "有效期必须在 60 到 86400 秒之间")
+		return
+	}
+	if len(request.AllowedProviders) == 0 {
+		writeError(c, http.StatusBadRequest, "invalid_service_config", "至少选择一个允许的邮箱供应商")
+		return
+	}
+	for _, provider := range request.AllowedProviders {
+		if provider != "outlook" && provider != "hotmail" {
+			writeError(c, http.StatusBadRequest, "invalid_service_config", "邮箱供应商只允许 outlook 和 hotmail")
+			return
+		}
+	}
+	if len(request.SenderDomains) == 0 {
+		writeError(c, http.StatusBadRequest, "invalid_service_config", "至少填写一个发件人域名")
 		return
 	}
 	service, err := repository.SaveService(demoUser(c), request, c.ClientIP())
@@ -117,6 +146,23 @@ func (s *Server) adminSaveService(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": service})
+}
+
+func normalizeServiceList(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func (s *Server) adminDeleteService(c *gin.Context) {
