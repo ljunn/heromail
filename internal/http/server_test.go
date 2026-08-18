@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -187,6 +189,14 @@ func TestOnlineUpgradeCreatesRequestForAdmin(t *testing.T) {
 	t.Setenv("HEROMAIL_UPGRADE_REQUEST", requestPath)
 	t.Setenv("HEROMAIL_UPGRADE_STATUS", statusPath)
 	server := NewServer(store.New())
+	backupCalled := false
+	server.UpgradeBackup = func(_ context.Context) (string, error) {
+		backupCalled = true
+		if _, err := os.Stat(requestPath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("备份完成前不应创建升级请求：%v", err)
+		}
+		return directory + "/backup.sql.gz", nil
+	}
 
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/upgrade", nil)
 	request.Header.Set("X-HeroMail-Role", "admin")
@@ -195,12 +205,58 @@ func TestOnlineUpgradeCreatesRequestForAdmin(t *testing.T) {
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("创建升级任务返回 %d，响应：%s", response.Code, response.Body.String())
 	}
+	if !backupCalled {
+		t.Fatal("创建升级任务前没有执行数据库备份")
+	}
 	if _, err := os.Stat(requestPath); err != nil {
 		t.Fatalf("升级请求文件不存在：%v", err)
 	}
 	status, err := readUpgradeStatus(statusPath)
 	if err != nil || status.State != "queued" {
 		t.Fatalf("升级状态不正确：%+v，错误：%v", status, err)
+	}
+}
+
+func TestOnlineUpgradeStopsWhenBackupFails(t *testing.T) {
+	directory := t.TempDir()
+	requestPath := directory + "/request.json"
+	statusPath := directory + "/status.json"
+	t.Setenv("HEROMAIL_UPGRADE_REQUEST", requestPath)
+	t.Setenv("HEROMAIL_UPGRADE_STATUS", statusPath)
+	server := NewServer(store.New())
+	server.UpgradeBackup = func(_ context.Context) (string, error) {
+		return "", errors.New("备份命令失败")
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/upgrade", nil)
+	request.Header.Set("X-HeroMail-Role", "admin")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("备份失败返回 %d，期望 %d，响应：%s", response.Code, http.StatusServiceUnavailable, response.Body.String())
+	}
+	if _, err := os.Stat(requestPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("备份失败后不应创建升级请求：%v", err)
+	}
+	status, err := readUpgradeStatus(statusPath)
+	if err != nil || status.State != "failed" {
+		t.Fatalf("备份失败状态不正确：%+v，错误：%v", status, err)
+	}
+}
+
+func TestOnlineUpgradeRequiresConfiguredBackup(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("HEROMAIL_UPGRADE_REQUEST", directory+"/request.json")
+	t.Setenv("HEROMAIL_UPGRADE_STATUS", directory+"/status.json")
+	t.Setenv("DATABASE_URL", "")
+	server := NewServer(store.New())
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/upgrade", nil)
+	request.Header.Set("X-HeroMail-Role", "admin")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "upgrade_backup_unavailable") {
+		t.Fatalf("未配置备份时返回 %d，响应：%s", response.Code, response.Body.String())
 	}
 }
 

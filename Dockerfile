@@ -12,7 +12,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/ljunn/heromai
 
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates su-exec && addgroup -S heromail && adduser -S -G heromail heromail
+RUN apk add --no-cache ca-certificates postgresql-client su-exec && addgroup -S heromail && adduser -S -G heromail heromail
 COPY --from=build-stage /heromail /usr/local/bin/heromail
 COPY docker/entrypoint.sh /usr/local/bin/heromail-entrypoint
 RUN chmod +x /usr/local/bin/heromail-entrypoint

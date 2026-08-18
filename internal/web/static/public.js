@@ -43,7 +43,7 @@ function renderDocs() {
 }
 
 function renderOpenSource() {
-  publicContent.innerHTML = pageShell("开源与自托管", "数据、邮箱资产和升级流程由你掌控", "HeroMail 使用 MIT 许可证发布，正式镜像、安装脚本和版本日志均来自 GitHub Release。", `<div class="docs-content"><section><h2>一行命令安装</h2><pre class="public-code">curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh | sudo bash</pre></section><section><h2>默认技术栈</h2><p>Go + Gin 提供 API 和内嵌前端，PostgreSQL 保存业务事实，Redis 负责跨进程锁与协调，Microsoft Graph Worker 拉取并匹配验证码邮件。</p></section><section><h2>正式升级</h2><p>首次安装绑定 GitHub 正式 Release。后续版本在管理后台检查更新并点击在线升级，升级器只允许官方 <code>ghcr.io/ljunn/heromail:latest</code> 镜像。</p><a class="solid-action" href="https://github.com/ljunn/heromail" target="_blank" rel="noopener">查看 GitHub 仓库</a></section></div>`);
+  publicContent.innerHTML = pageShell("开源与自托管", "数据、邮箱资产和升级流程由你掌控", "HeroMail 使用 MIT 许可证发布，正式镜像、安装脚本和版本日志均来自 GitHub Release。", `<div class="docs-content"><section><h2>一行命令安装</h2><pre class="public-code">curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh | sudo bash</pre></section><section><h2>默认技术栈</h2><p>Go + Gin 提供 API 和内嵌前端，PostgreSQL 保存业务事实，Redis 负责跨进程锁与协调，Microsoft Graph Worker 拉取并匹配验证码邮件。</p></section><section><h2>正式升级</h2><p>首次安装绑定 GitHub 正式 Release。后续版本在管理后台检查更新，系统会先创建并校验 PostgreSQL 备份，再通过官方 <code>ghcr.io/ljunn/heromail:latest</code> 镜像完成升级。</p><a class="solid-action" href="https://github.com/ljunn/heromail" target="_blank" rel="noopener">查看 GitHub 仓库</a></section></div>`);
 }
 
 function renderAuth(register) {

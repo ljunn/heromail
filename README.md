@@ -70,11 +70,11 @@ curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh
 
 ## 在线升级
 
-一键部署会启动独立升级执行器。只有创建 `v*` GitHub Release 时，工作流才会更新 `ghcr.io/ljunn/heromail:latest`。已登录管理员可在“系统设置”检查最新正式版本、阅读完整更新日志并确认在线升级。升级器会校验固定官方镜像并仅重建 HeroMail 容器，PostgreSQL 和 Redis 数据卷不会被删除；不支持从网页或环境变量切换任意镜像。
+一键部署会启动独立升级执行器。只有创建 `v*` GitHub Release 时，工作流才会更新 `ghcr.io/ljunn/heromail:latest`。已登录管理员可在“系统设置”检查最新正式版本、阅读完整更新日志并确认在线升级。服务会先创建并校验 PostgreSQL 压缩备份，备份失败则不会写入升级任务；升级器随后校验固定官方镜像并仅重建 HeroMail 容器，PostgreSQL 和 Redis 数据卷不会被删除；不支持从网页或环境变量切换任意镜像。
 
 每个正式版本都必须先在 [`CHANGELOG.md`](CHANGELOG.md) 增加同版本章节。发布工作流会使用该章节作为 GitHub Release 正文，缺少对应更新日志时会直接阻止发布。
 
-生产升级前仍应备份数据库：
+系统会在在线升级前自动备份数据库；也可以在维护窗口手动执行备份：
 
 ```bash
 cd /opt/heromail

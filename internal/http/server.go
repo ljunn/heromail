@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ type Server struct {
 	Router             *gin.Engine
 	UpgradeRequestPath string
 	UpgradeStatusPath  string
+	UpgradeBackup      upgradeBackupFunc
 	Payment            *payment.Service
 	Microsoft          *mail.MicrosoftClient
 	PublicURL          string
@@ -33,11 +35,17 @@ func NewServer(st store.Repository) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery(), cors())
+	upgradeRequestPath := os.Getenv("HEROMAIL_UPGRADE_REQUEST")
+	upgradeBackupDir := strings.TrimSpace(os.Getenv("HEROMAIL_UPGRADE_BACKUP_DIR"))
+	if upgradeBackupDir == "" && upgradeRequestPath != "" {
+		upgradeBackupDir = filepath.Join(filepath.Dir(upgradeRequestPath), "backups")
+	}
 	s := &Server{
 		Store:              st,
 		Router:             r,
-		UpgradeRequestPath: os.Getenv("HEROMAIL_UPGRADE_REQUEST"),
+		UpgradeRequestPath: upgradeRequestPath,
 		UpgradeStatusPath:  os.Getenv("HEROMAIL_UPGRADE_STATUS"),
+		UpgradeBackup:      newPostgresUpgradeBackup(os.Getenv("DATABASE_URL"), upgradeBackupDir, "pg_dump"),
 		PublicURL:          os.Getenv("HEROMAIL_PUBLIC_URL"),
 		WorkerToken:        os.Getenv("HEROMAIL_WORKER_TOKEN"),
 	}
