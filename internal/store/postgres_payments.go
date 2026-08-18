@@ -65,6 +65,7 @@ func (s *PostgresStore) SavePaymentProvider(actorID string, provider domain.Paym
 	if err != nil {
 		return domain.PaymentProvider{}, err
 	}
+	isUpdate := provider.ID != ""
 	if provider.ID == "" {
 		provider.ID = uuid.NewString()
 	}
@@ -73,13 +74,26 @@ func (s *PostgresStore) SavePaymentProvider(actorID string, provider domain.Paym
 		if err := tx.Save(&row).Error; err != nil {
 			return err
 		}
-		return tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: actorID, Action: "payment_provider.save", ResourceType: "payment_provider", ResourceID: row.ID, Detail: "保存支付服务商配置", IP: ip}).Error
+		action := "payment_provider.create"
+		detail := "新增支付服务商"
+		if isUpdate {
+			action = "payment_provider.update"
+			detail = "编辑支付服务商"
+		}
+		return tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: actorID, Action: action, ResourceType: "payment_provider", ResourceID: row.ID, Detail: detail, IP: ip}).Error
 	})
 	return mapPaymentProvider(row), err
 }
 
 func (s *PostgresStore) DeletePaymentProvider(actorID, providerID, ip string) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		var pendingOrders int64
+		if err := tx.Model(&sqlPaymentOrder{}).Where("provider_id = ? AND status = ?", providerID, "pending").Count(&pendingOrders).Error; err != nil {
+			return err
+		}
+		if pendingOrders > 0 {
+			return ErrPaymentProviderInUse
+		}
 		result := tx.Delete(&sqlPaymentProvider{}, "id = ?", providerID)
 		if result.Error != nil {
 			return result.Error

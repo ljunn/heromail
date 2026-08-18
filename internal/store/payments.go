@@ -28,6 +28,7 @@ type PaymentRepository interface {
 
 var (
 	ErrPaymentProviderNotFound = errors.New("支付服务商不存在")
+	ErrPaymentProviderInUse    = errors.New("服务商存在待支付订单，请先停用并等待订单结束")
 	ErrPaymentOrderNotFound    = errors.New("支付订单不存在")
 	ErrPaymentAmountMismatch   = errors.New("支付金额不一致")
 )
