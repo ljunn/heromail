@@ -211,16 +211,28 @@ func canonical(values url.Values, excludeSignType bool) string {
 }
 
 func parsePrivateKey(value string) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode([]byte(value))
-	if block == nil {
-		return nil, errors.New("支付宝应用私钥不是有效 PEM")
+	keyBytes := []byte(strings.TrimSpace(value))
+	if block, _ := pem.Decode(keyBytes); block != nil {
+		keyBytes = block.Bytes
+	} else {
+		// 支付宝控制台常见的私钥是去掉 PEM 头尾的 Base64 字符串。
+		encoded := strings.Join(strings.Fields(value), "")
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return nil, errors.New("支付宝应用私钥不是有效 PEM 或 Base64")
+		}
+		keyBytes = decoded
 	}
-	if key, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+	if key, err := x509.ParsePKCS8PrivateKey(keyBytes); err == nil {
 		if privateKey, ok := key.(*rsa.PrivateKey); ok {
 			return privateKey, nil
 		}
 	}
-	return x509.ParsePKCS1PrivateKey(block.Bytes)
+	privateKey, err := x509.ParsePKCS1PrivateKey(keyBytes)
+	if err != nil {
+		return nil, errors.New("支付宝应用私钥不是有效 RSA 私钥")
+	}
+	return privateKey, nil
 }
 
 func parsePublicKey(value string) (*rsa.PublicKey, error) {

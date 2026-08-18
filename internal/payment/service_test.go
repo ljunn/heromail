@@ -73,8 +73,29 @@ func TestParseAlipayPrivateKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("序列化测试私钥失败：%v", err)
 	}
-	parsed, err := parsePrivateKey(string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8})))
-	if err != nil || parsed.N.Cmp(privateKey.N) != 0 {
-		t.Fatalf("解析 PKCS8 私钥失败：%v", err)
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{
+			name:  "PKCS8 PEM",
+			value: string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8})),
+		},
+		{
+			name:  "PKCS8 Base64",
+			value: base64.StdEncoding.EncodeToString(pkcs8),
+		},
+		{
+			name:  "PKCS1 PEM",
+			value: string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := parsePrivateKey(tt.value)
+			if err != nil || parsed.N.Cmp(privateKey.N) != 0 {
+				t.Fatalf("解析 %s 私钥失败：%v", tt.name, err)
+			}
+		})
 	}
 }
