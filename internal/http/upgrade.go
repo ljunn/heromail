@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -56,7 +55,7 @@ func (s *Server) adminVersion(c *gin.Context) {
 		Commit:               buildinfo.Commit,
 		BuildTime:            buildinfo.BuildTime,
 		Image:                "ghcr.io/ljunn/heromail:latest",
-		OnlineUpgradeEnabled: s.UpgradeRequestPath != "" && s.UpdateToken != "",
+		OnlineUpgradeEnabled: s.UpgradeRequestPath != "" && s.UpgradeStatusPath != "",
 		Upgrade:              status,
 		LatestRelease:        latestGitHubRelease(c.Request.Context()),
 	}})
@@ -90,13 +89,8 @@ func latestGitHubRelease(ctx context.Context) releaseView {
 }
 
 func (s *Server) adminUpgrade(c *gin.Context) {
-	if s.UpgradeRequestPath == "" || s.UpgradeStatusPath == "" || s.UpdateToken == "" {
+	if s.UpgradeRequestPath == "" || s.UpgradeStatusPath == "" {
 		writeError(c, http.StatusServiceUnavailable, "online_upgrade_disabled", "在线升级未启用")
-		return
-	}
-	provided := c.GetHeader("X-HeroMail-Update-Token")
-	if subtle.ConstantTimeCompare([]byte(provided), []byte(s.UpdateToken)) != 1 {
-		writeError(c, http.StatusForbidden, "invalid_update_token", "升级令牌无效")
 		return
 	}
 	if current, err := readUpgradeStatus(s.UpgradeStatusPath); err == nil && (current.State == "queued" || current.State == "updating") {

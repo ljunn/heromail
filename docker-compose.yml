@@ -6,7 +6,6 @@ services:
     environment:
       PORT: "8080"
       HEROMAIL_IMAGE: ghcr.io/ljunn/heromail:latest
-      HEROMAIL_UPDATE_TOKEN: ${HEROMAIL_UPDATE_TOKEN:-}
       HEROMAIL_WORKER_TOKEN: ${HEROMAIL_WORKER_TOKEN:?请在 .env 中配置 HEROMAIL_WORKER_TOKEN}
       HEROMAIL_UPGRADE_REQUEST: /upgrade/request.json
       HEROMAIL_UPGRADE_STATUS: /upgrade/status.json

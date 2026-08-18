@@ -23,7 +23,6 @@ type Server struct {
 	Router             *gin.Engine
 	UpgradeRequestPath string
 	UpgradeStatusPath  string
-	UpdateToken        string
 	Payment            *payment.Service
 	Microsoft          *mail.MicrosoftClient
 	PublicURL          string
@@ -39,7 +38,6 @@ func NewServer(st store.Repository) *Server {
 		Router:             r,
 		UpgradeRequestPath: os.Getenv("HEROMAIL_UPGRADE_REQUEST"),
 		UpgradeStatusPath:  os.Getenv("HEROMAIL_UPGRADE_STATUS"),
-		UpdateToken:        os.Getenv("HEROMAIL_UPDATE_TOKEN"),
 		PublicURL:          os.Getenv("HEROMAIL_PUBLIC_URL"),
 		WorkerToken:        os.Getenv("HEROMAIL_WORKER_TOKEN"),
 	}
@@ -94,6 +92,7 @@ func (s *Server) routes() {
 	protected.POST("/auth/logout", s.logout)
 	protected.GET("/me", s.me)
 	protected.PUT("/me", s.updateProfile)
+	protected.PUT("/me/password", s.changePassword)
 	protected.GET("/services", s.services)
 	protected.GET("/orders", s.listUserOrders)
 	protected.POST("/orders", s.createOrder)
@@ -134,6 +133,7 @@ func (s *Server) routes() {
 	admin.GET("/wallet/ledgers", s.adminLedgers)
 	admin.GET("/audit-logs", s.adminAuditLogs)
 	admin.GET("/payment/providers", s.adminPaymentProviders)
+	admin.GET("/payment/providers/:id", s.adminPaymentProvider)
 	admin.POST("/payment/providers", s.adminSavePaymentProvider)
 	admin.DELETE("/payment/providers/:id", s.adminDeletePaymentProvider)
 	admin.GET("/payment/orders", s.adminPaymentOrders)
@@ -362,7 +362,7 @@ func demoRole(c *gin.Context) string {
 func cors() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-HeroMail-Role, X-HeroMail-User, X-HeroMail-Update-Token, X-HeroMail-Target-Version")
+		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-HeroMail-Role, X-HeroMail-User, X-HeroMail-Target-Version")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)

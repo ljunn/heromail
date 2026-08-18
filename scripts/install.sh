@@ -96,19 +96,17 @@ generate_config() {
   fi
 
   database_password="$(od -An -N 24 -tx1 /dev/urandom | tr -d ' \n')"
-  update_token="$(od -An -N 32 -tx1 /dev/urandom | tr -d ' \n')"
   worker_token="$(od -An -N 32 -tx1 /dev/urandom | tr -d ' \n')"
   admin_password="$(od -An -N 16 -tx1 /dev/urandom | tr -d ' \n')"
   encryption_key="$(od -An -N 32 -tx1 /dev/urandom | tr -d ' \n')"
   detected_host="$(hostname -I 2>/dev/null | awk '{print $1}')"
   [ -n "${detected_host}" ] || detected_host="127.0.0.1"
   public_url="${HEROMAIL_PUBLIC_URL:-http://${detected_host}:${service_port}}"
-  log "正在生成数据库密码、管理员密码、升级令牌和加密主密钥……"
+  log "正在生成数据库密码、管理员密码、Worker 令牌和加密主密钥……"
   "${sudo_cmd[@]}" tee "${install_dir}/.env" >/dev/null <<EOF
 PORT=${service_port}
 HEROMAIL_BIND=${bind_address}
 COMPOSE_PROJECT_NAME=heromail
-HEROMAIL_UPDATE_TOKEN=${update_token}
 HEROMAIL_WORKER_TOKEN=${worker_token}
 HEROMAIL_ADMIN_EMAIL=admin@heromail.local
 HEROMAIL_ADMIN_PASSWORD=${admin_password}
