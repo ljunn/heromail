@@ -9,7 +9,7 @@
   --green: #159b68;
   --violet: #6558c7;
   --amber: #b86e16;
-  font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   color: var(--ink);
   background: var(--surface);
 }
@@ -176,11 +176,6 @@ button { cursor: pointer; }
 .docs-content h2 { margin: 0 0 14px; font-size: 23px; }
 .docs-content p, .docs-content li { color: #59677e; font-size: 14px; line-height: 1.8; }
 .public-code { overflow: auto; padding: 18px; border-radius: 6px; color: #dbe8f8; background: #12233a; font: 12px/1.8 ui-monospace, monospace; white-space: pre-wrap; }
-.status-panel { border-top: 1px solid var(--line); }
-.status-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 0; border-bottom: 1px solid var(--line); }
-.status-row div { display: flex; align-items: center; gap: 11px; }
-.status-indicator { width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
-.status-label { padding: 5px 8px; border-radius: 4px; color: var(--green); background: #eaf8f1; font-size: 11px; }
 .auth-page { display: grid; min-height: calc(100vh - 188px); place-items: center; padding: 44px 24px; color: var(--ink); background: #edf3fa; }
 .auth-box { width: min(460px, 100%); padding: 30px; border: 1px solid var(--line); border-radius: 7px; background: white; box-shadow: 0 20px 55px rgba(33,59,96,.12); }
 .auth-box .public-brand { color: var(--ink); }

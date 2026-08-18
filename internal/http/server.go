@@ -77,9 +77,10 @@ func (s *Server) routes() {
 			c.Data(http.StatusOK, "text/html; charset=utf-8", content)
 		}
 	}
-	for _, path := range []string{"/", "/pricing", "/docs", "/status", "/open-source", "/login", "/register"} {
+	for _, path := range []string{"/", "/pricing", "/docs", "/open-source", "/login", "/register"} {
 		s.Router.GET(path, serveEntry(publicHTML))
 	}
+	s.Router.GET("/status", func(c *gin.Context) { c.Redirect(http.StatusFound, "/") })
 	s.Router.GET("/docs/*path", serveEntry(publicHTML))
 	s.Router.GET("/app", serveEntry(workspaceHTML))
 	s.Router.GET("/app/*path", serveEntry(workspaceHTML))

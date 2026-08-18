@@ -13,7 +13,7 @@
   --red: #db4453;
   --red-soft: #fff0f1;
   --sidebar: #0c1b2e;
-  font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   color: var(--ink);
   background: var(--canvas);
 }

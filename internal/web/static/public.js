@@ -36,19 +36,10 @@ async function renderPricing() {
 }
 
 function renderDocs() {
-  const createExample = `POST /api/v1/orders\nContent-Type: application/json\n\n{\n  "service": "github",\n  "request_id": "client-request-001"\n}`;
-  publicContent.innerHTML = pageShell("开发者文档", "从 API 创建注册收码任务", "文档公开可读。API Key、Webhook 配置和调用记录需要登录后在用户门户管理。", `<div class="docs-layout"><nav class="docs-nav"><a href="#concept">核心概念</a><a href="#auth">鉴权</a><a href="#create">创建订单</a><a href="#status-api">查询状态</a><a href="#webhook">Webhook</a><a href="#errors">错误处理</a></nav><div class="docs-content"><section id="concept"><h2>核心概念</h2><p>用户提交目标平台代码，HeroMail 从允许的 Outlook / Hotmail 邮箱池中原子分配资源。返回结果只包含本次任务所需的邮箱地址、状态、过期时间和验证码。</p></section><section id="auth"><h2>鉴权</h2><p>网页使用 Bearer 会话，服务端集成使用只展示一次的 <code>hm_</code> API Key。密钥按范围授权并只保存哈希。</p><pre class="public-code">Authorization: Bearer hm_your_api_key</pre></section><section id="create"><h2>创建订单</h2><pre class="public-code">${escPublic(createExample)}</pre><p><code>request_id</code> 用于幂等创建。同一用户重复提交相同值不会产生重复扣款。</p></section><section id="status-api"><h2>查询订单</h2><pre class="public-code">GET /api/v1/orders/{id}</pre><p>状态依次为 <code>assigned</code>、<code>waiting_code</code>、<code>code_received</code> 和 <code>completed</code>。所有列表使用 <code>page</code> 与 <code>page_size</code> 服务端分页。</p></section><section id="webhook"><h2>Webhook</h2><p>订单状态变化可使用 HMAC 签名 Webhook 推送。投递失败会指数退避，用户可在门户查看记录并手动重试。</p></section><section id="errors"><h2>错误处理</h2><p>接口错误统一返回 <code>error</code> 与 <code>message</code>。分配失败不会扣款；等待验证码超时会自动退款并生成资金流水。</p></section></div></div>`);
-}
-
-async function renderStatus() {
-  publicContent.innerHTML = pageShell("服务状态", "HeroMail 当前运行状态", "公开状态仅展示整体可用性，不公开邮箱库存、渠道凭证或内部规则。", `<div class="public-empty">正在检查服务…</div>`);
-  try {
-    const result = (await publicAPI("/api/v1/public/status")).data;
-    const rows = [["HTTP API", result.api], ["邮箱分配服务", result.allocation], ["Microsoft Graph 收码", result.mail_worker]];
-    publicContent.innerHTML = pageShell("服务状态", result.status === "operational" ? "所有公开服务运行正常" : "部分服务性能下降", `最后检查时间：${new Date(result.updated_at).toLocaleString("zh-CN")}`, `<div class="status-panel">${rows.map(([name, status]) => `<div class="status-row"><div><i class="status-indicator"></i><strong>${name}</strong></div><span class="status-label">${status === "operational" ? "运行正常" : "性能下降"}</span></div>`).join("")}</div>`);
-  } catch (error) {
-    publicToast(error.message);
-  }
+  const serviceExample = `GET /api/v1/services?page=1&page_size=20\nAuthorization: Bearer hm_your_api_key`;
+  const createExample = `POST /api/v1/orders\nAuthorization: Bearer hm_your_api_key\nContent-Type: application/json\n\n{\n  "service": "github",\n  "request_id": "client-request-001"\n}`;
+  const responseExample = `{\n  "data": {\n    "id": "ord_01J...",\n    "service_name": "GitHub",\n    "mailbox_address": "assigned@outlook.com",\n    "status": "assigned",\n    "code": "",\n    "expires_at": "2026-08-18T12:10:00Z"\n  }\n}`;
+  publicContent.innerHTML = pageShell("开发者文档", "用 API 管理注册收码任务", "所有接口均返回 JSON。API Key 只在用户门户创建并展示一次；邮箱凭证、完整邮件和内部规则永不通过 API 返回。", `<div class="docs-layout"><nav class="docs-nav"><a href="#concept">接口约定</a><a href="#auth">鉴权</a><a href="#services">服务列表</a><a href="#create">创建订单</a><a href="#status-api">查询验证码</a><a href="#webhook">Webhook</a><a href="#errors">错误处理</a></nav><div class="docs-content"><section id="concept"><h2>接口约定</h2><p>基础路径为 <code>/api/v1</code>。列表接口统一使用 <code>page</code> 和 <code>page_size</code> 服务端分页，并返回 <code>data</code> 与 <code>pagination</code>。创建订单会预扣余额，分配失败不扣款；超时未收到验证码自动退款。</p></section><section id="auth"><h2>鉴权</h2><p>在用户门户的“开发者”页面创建 API Key。每次请求都要携带 Bearer 令牌，也兼容登录后的会话令牌。</p><pre class="public-code">Authorization: Bearer hm_your_api_key</pre></section><section id="services"><h2>服务列表</h2><p>获取当前可申请的目标平台。公开服务接口只返回平台代码、名称、说明、允许的邮箱类型、价格和有效期；库存与邮箱地址仅在登录后的申请页面按需展示。</p><pre class="public-code">${escPublic(serviceExample)}</pre><p>响应示例：</p><pre class="public-code">${escPublic(`{\n  "data": [{\n    "code": "github",\n    "name": "GitHub",\n    "description": "GitHub 注册验证码",\n    "allowed_providers": ["outlook", "hotmail"],\n    "price": 1.50,\n    "ttl_seconds": 600\n  }],\n  "pagination": { "page": 1, "page_size": 20, "total": 1, "total_pages": 1 }\n}`)}</pre></section><section id="create"><h2>创建订单</h2><p>只提交目标平台代码，系统会自动从合规邮箱池原子分配一个邮箱。不能指定邮箱地址或邮箱供应商。</p><pre class="public-code">${escPublic(createExample)}</pre><p>成功响应：</p><pre class="public-code">${escPublic(responseExample)}</pre><p><code>request_id</code> 用于幂等创建；同一用户重复提交相同值不会重复扣款。</p></section><section id="status-api"><h2>查询订单与验证码</h2><pre class="public-code">GET /api/v1/orders/{id}\nAuthorization: Bearer hm_your_api_key</pre><p>轮询订单详情即可获取最新验证码：当 <code>status</code> 为 <code>code_received</code> 时读取 <code>code</code> 字段。状态流转为 <code>assigned</code> → <code>waiting_code</code> → <code>code_received</code> → <code>completed</code>。用户确认已提交注册、完成或取消分别调用 <code>/submitted</code>、<code>/complete</code>、<code>/cancel</code>。</p></section><section id="webhook"><h2>Webhook</h2><p>在用户门户创建 Webhook 端点后，订单状态变化会通过 HMAC 签名推送。投递失败会指数退避，可在门户查看记录并手动重试。</p></section><section id="errors"><h2>错误处理</h2><p>失败响应统一为 <code>{ "error": "错误码", "message": "可读说明" }</code>。常见错误包括 <code>401</code> 未授权、<code>402</code> 余额不足、<code>404</code> 订单或服务不存在、<code>409</code> 请求重复或订单状态冲突、<code>503</code> 暂无可分配邮箱。</p></section></div></div>`);
 }
 
 function renderOpenSource() {
@@ -57,7 +48,7 @@ function renderOpenSource() {
 
 function renderAuth(register) {
   const title = register ? "创建 HeroMail 账户" : "登录 HeroMail";
-  publicContent.innerHTML = `<section class="auth-page"><div class="auth-box"><a class="public-brand" href="/"><img src="/brand-mark.svg" alt=""><strong>HeroMail</strong></a><h1>${title}</h1><p>${register ? "注册后即可选择目标平台、申请邮箱并配置 API 能力。" : "进入用户门户申请邮箱、查看任务和管理余额。"}</p><form id="public-auth-form" class="auth-form"><label>邮箱<input name="email" type="email" autocomplete="email" required></label>${register ? `<label>显示名称<input name="display_name" autocomplete="name"></label>` : ""}<label>密码<input name="password" type="password" minlength="10" autocomplete="${register ? "new-password" : "current-password"}" required></label><button type="submit">${register ? "注册并进入门户" : "登录"}</button></form><div class="auth-switch">${register ? `已有账户？<a href="/login">返回登录</a>` : `还没有账户？<a href="/register">创建账户</a>`}</div></div></section>`;
+  publicContent.innerHTML = `<section class="auth-page"><div class="auth-box"><a class="public-brand" href="/"><img src="/brand-mark.svg" alt=""><strong>HeroMail</strong></a><h1>${title}</h1><p>${register ? "注册后即可申请邮箱，并按需创建 API Key 与 Webhook。" : "登录后申请邮箱、查看收码任务并管理账户余额。"}</p><form id="public-auth-form" class="auth-form"><label>邮箱<input name="email" type="email" autocomplete="email" required></label>${register ? `<label>显示名称<input name="display_name" autocomplete="name"></label>` : ""}<label>密码<input name="password" type="password" minlength="10" autocomplete="${register ? "new-password" : "current-password"}" required></label><button type="submit">${register ? "注册并进入门户" : "登录"}</button></form><div class="auth-switch">${register ? `已有账户？<a href="/login">返回登录</a>` : `还没有账户？<a href="/register">创建账户</a>`}</div></div></section>`;
   document.querySelector("#public-auth-form").addEventListener("submit", event => submitAuth(event, register));
 }
 
@@ -187,7 +178,6 @@ document.addEventListener("click", event => {
 const path = location.pathname;
 if (path === "/pricing") renderPricing();
 else if (path === "/docs" || path.startsWith("/docs/")) renderDocs();
-else if (path === "/status") renderStatus();
 else if (path === "/open-source") renderOpenSource();
 else if (path === "/login") renderAuth(false);
 else if (path === "/register") renderAuth(true);

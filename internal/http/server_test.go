@@ -115,6 +115,19 @@ func TestStaticAssetsUseBuildVersion(t *testing.T) {
 	}
 }
 
+func TestRemovedStatusPageRedirectsHome(t *testing.T) {
+	server := NewServer(store.New())
+	request := httptest.NewRequest(http.MethodGet, "/status", nil)
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusFound {
+		t.Fatalf("旧服务状态页面返回 %d，期望 %d", response.Code, http.StatusFound)
+	}
+	if location := response.Header().Get("Location"); location != "/" {
+		t.Fatalf("旧服务状态页面跳转到 %q，期望首页", location)
+	}
+}
+
 func TestPublicServicesArePaginatedAndHideInternalRules(t *testing.T) {
 	server := NewServer(store.New())
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/public/services?page=1&page_size=2", nil)
@@ -150,7 +163,7 @@ func TestPublicServicesArePaginatedAndHideInternalRules(t *testing.T) {
 
 func TestPublicAndAdminPagesUseSeparateEntries(t *testing.T) {
 	server := NewServer(store.New())
-	for _, path := range []string{"/pricing", "/docs/api", "/status", "/open-source", "/login", "/register"} {
+	for _, path := range []string{"/pricing", "/docs/api", "/open-source", "/login", "/register"} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		response := httptest.NewRecorder()
 		server.Router.ServeHTTP(response, request)
