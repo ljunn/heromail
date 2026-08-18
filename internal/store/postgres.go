@@ -182,6 +182,20 @@ func (s *PostgresStore) ListServicesPage(page, pageSize int) ([]domain.Service, 
 	return items, total
 }
 
+func (s *PostgresStore) ListEnabledServicesPage(page, pageSize int) ([]domain.Service, int64) {
+	page, pageSize = normalizePage(page, pageSize)
+	var total int64
+	var rows []sqlService
+	query := s.db.Model(&sqlService{}).Where("enabled = ?", true)
+	query.Count(&total)
+	query.Order("name ASC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&rows)
+	items := make([]domain.Service, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, mapService(row))
+	}
+	return items, total
+}
+
 func (s *PostgresStore) ServiceUsage(serviceIDs []string) map[string]ServiceUsage {
 	type usageRow struct {
 		ServiceID string

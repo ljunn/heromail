@@ -58,19 +58,33 @@ func (s *Server) routes() {
 	if err != nil {
 		panic(err)
 	}
-	indexHTML, err := fs.ReadFile(web.Files, "static/index.html")
-	if err != nil {
-		panic(err)
-	}
 	assetVersion := buildinfo.Commit
 	if assetVersion == "" || assetVersion == "unknown" {
 		assetVersion = buildinfo.Version
 	}
-	indexHTML = []byte(strings.ReplaceAll(string(indexHTML), "__HEROMAIL_ASSET_VERSION__", assetVersion))
-	s.Router.GET("/", func(c *gin.Context) {
-		c.Header("Cache-Control", "no-store")
-		c.Data(http.StatusOK, "text/html; charset=utf-8", indexHTML)
-	})
+	readEntry := func(name string) []byte {
+		content, readErr := fs.ReadFile(web.Files, "static/"+name)
+		if readErr != nil {
+			panic(readErr)
+		}
+		return []byte(strings.ReplaceAll(string(content), "__HEROMAIL_ASSET_VERSION__", assetVersion))
+	}
+	publicHTML := readEntry("index.html")
+	workspaceHTML := readEntry("workspace.html")
+	serveEntry := func(content []byte) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			c.Header("Cache-Control", "no-store")
+			c.Data(http.StatusOK, "text/html; charset=utf-8", content)
+		}
+	}
+	for _, path := range []string{"/", "/pricing", "/docs", "/status", "/open-source", "/login", "/register"} {
+		s.Router.GET(path, serveEntry(publicHTML))
+	}
+	s.Router.GET("/docs/*path", serveEntry(publicHTML))
+	s.Router.GET("/app", serveEntry(workspaceHTML))
+	s.Router.GET("/app/*path", serveEntry(workspaceHTML))
+	s.Router.GET("/admin", serveEntry(workspaceHTML))
+	s.Router.GET("/admin/*path", serveEntry(workspaceHTML))
 	staticHandler := http.FileServer(http.FS(staticFS))
 	s.Router.NoRoute(gin.WrapH(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
@@ -83,6 +97,8 @@ func (s *Server) routes() {
 	api := s.Router.Group("/api/v1")
 	api.POST("/auth/register", s.register)
 	api.POST("/auth/login", s.login)
+	api.GET("/public/services", s.publicServices)
+	api.GET("/public/status", s.publicStatus)
 	api.POST("/internal/mail-events", s.receiveMailEvent)
 	api.GET("/oauth/microsoft/callback", s.microsoftOAuthCallback)
 	api.GET("/payment/webhook/:type", s.paymentWebhook)

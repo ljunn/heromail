@@ -85,8 +85,21 @@ func TestStaticAssetsUseBuildVersion(t *testing.T) {
 	if indexResponse.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("入口页面缓存策略不正确：%s", indexResponse.Header().Get("Cache-Control"))
 	}
-	if !strings.Contains(indexResponse.Body.String(), "/app.js?v=static-test-commit") || !strings.Contains(indexResponse.Body.String(), "/styles.css?v=static-test-commit") {
-		t.Fatal("入口页面没有使用构建版本隔离静态资源缓存")
+	if !strings.Contains(indexResponse.Body.String(), "/public.js?v=static-test-commit") || !strings.Contains(indexResponse.Body.String(), "/public.css?v=static-test-commit") {
+		t.Fatal("公开站没有使用构建版本隔离静态资源缓存")
+	}
+
+	workspaceRequest := httptest.NewRequest(http.MethodGet, "/app/tasks", nil)
+	workspaceResponse := httptest.NewRecorder()
+	server.Router.ServeHTTP(workspaceResponse, workspaceRequest)
+	if workspaceResponse.Code != http.StatusOK {
+		t.Fatalf("工作台深层路由返回 %d，期望 %d", workspaceResponse.Code, http.StatusOK)
+	}
+	if workspaceResponse.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("工作台入口缓存策略不正确：%s", workspaceResponse.Header().Get("Cache-Control"))
+	}
+	if !strings.Contains(workspaceResponse.Body.String(), "/app.js?v=static-test-commit") || !strings.Contains(workspaceResponse.Body.String(), "/styles.css?v=static-test-commit") {
+		t.Fatal("工作台没有使用构建版本隔离静态资源缓存")
 	}
 
 	assetRequest := httptest.NewRequest(http.MethodGet, "/app.js?v=static-test-commit", nil)
@@ -97,6 +110,58 @@ func TestStaticAssetsUseBuildVersion(t *testing.T) {
 	}
 	if assetResponse.Header().Get("Cache-Control") != "no-cache" {
 		t.Fatalf("静态资源缓存策略不正确：%s", assetResponse.Header().Get("Cache-Control"))
+	}
+}
+
+func TestPublicServicesArePaginatedAndHideInternalRules(t *testing.T) {
+	server := NewServer(store.New())
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/public/services?page=1&page_size=2", nil)
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("公开平台列表返回 %d，响应：%s", response.Code, response.Body.String())
+	}
+
+	var body struct {
+		Data       []map[string]any `json:"data"`
+		Pagination struct {
+			Page       int   `json:"page"`
+			PageSize   int   `json:"page_size"`
+			Total      int64 `json:"total"`
+			TotalPages int   `json:"total_pages"`
+		} `json:"pagination"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("解析公开平台列表失败：%v", err)
+	}
+	if len(body.Data) > 2 || body.Pagination.Page != 1 || body.Pagination.PageSize != 2 || body.Pagination.Total < int64(len(body.Data)) {
+		t.Fatalf("公开平台分页不正确：%+v", body.Pagination)
+	}
+	for _, service := range body.Data {
+		for _, field := range []string{"available_mailboxes", "leased_mailboxes", "consumed_mailboxes", "sender_domains", "subject_keywords", "regex", "enabled"} {
+			if _, exists := service[field]; exists {
+				t.Fatalf("公开平台响应泄露内部字段 %s：%+v", field, service)
+			}
+		}
+	}
+}
+
+func TestPublicAndAdminPagesUseSeparateEntries(t *testing.T) {
+	server := NewServer(store.New())
+	for _, path := range []string{"/pricing", "/docs/api", "/status", "/open-source", "/login", "/register"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		response := httptest.NewRecorder()
+		server.Router.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "public-content") {
+			t.Fatalf("公开路由 %s 没有返回公开站入口：%d", path, response.Code)
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/admin/settings", nil)
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "user-nav") || strings.Contains(response.Body.String(), "public-content") {
+		t.Fatalf("管理后台深层路由没有返回独立工作台入口：%d", response.Code)
 	}
 }
 

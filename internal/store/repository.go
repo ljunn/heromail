@@ -10,6 +10,7 @@ type Repository interface {
 	User(id string) (domain.User, bool)
 	ListServices() []domain.Service
 	ListServicesPage(page, pageSize int) ([]domain.Service, int64)
+	ListEnabledServicesPage(page, pageSize int) ([]domain.Service, int64)
 	ServiceUsage(serviceIDs []string) map[string]ServiceUsage
 	CreateOrder(userID, serviceID, requestID string) (domain.Order, error)
 	GetOrder(id string) (domain.Order, bool)

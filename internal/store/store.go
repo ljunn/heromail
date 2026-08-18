@@ -100,6 +100,17 @@ func (s *Store) ListServicesPage(page, pageSize int) ([]domain.Service, int64) {
 	return paginate(items, page, pageSize), int64(len(items))
 }
 
+func (s *Store) ListEnabledServicesPage(page, pageSize int) ([]domain.Service, int64) {
+	services := s.ListServices()
+	items := make([]domain.Service, 0, len(services))
+	for _, service := range services {
+		if service.Enabled {
+			items = append(items, service)
+		}
+	}
+	return paginate(items, page, pageSize), int64(len(items))
+}
+
 func (s *Store) ServiceUsage(serviceIDs []string) map[string]ServiceUsage {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
