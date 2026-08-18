@@ -22,7 +22,7 @@ HeroMail 是一个可自托管的邮箱资源池与平台注册验证码管理�
 curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh | sudo bash
 ```
 
-脚本会检查 Git、Docker 和 Docker Compose，自动定位 GitHub 最新正式 Release，将对应标签安装到 `/opt/heromail`，生成数据库密码、管理员密码、加密主密钥、Worker 令牌和升级令牌，然后启动 HeroMail、PostgreSQL、Redis 和升级执行器。已安装的环境不允许通过重跑脚本升级，必须在 GitHub 发布新版本后使用管理后台的在线升级按钮。
+脚本会检查 Git、Docker 和 Docker Compose，自动定位 GitHub 最新正式 Release，将对应标签安装到 `/opt/heromail`，生成数据库密码、管理员密码、加密主密钥和 Worker 令牌，然后启动 HeroMail、PostgreSQL、Redis 和升级执行器。已安装的环境不允许通过重跑脚本升级，必须在 GitHub 发布新版本后使用管理后台的在线升级按钮。
 
 自定义安装目录、端口和公网地址：
 
@@ -32,7 +32,7 @@ curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh
   HEROMAIL_PUBLIC_URL=https://mail.example.com bash
 ```
 
-部署完成后，使用 `/opt/heromail/.env` 中的 `HEROMAIL_ADMIN_EMAIL` 和 `HEROMAIL_ADMIN_PASSWORD` 登录。请在反向代理中配置 HTTPS，并确保 `HEROMAIL_PUBLIC_URL` 是外部可访问的绝对地址，否则支付回调和 Microsoft OAuth 无法正常工作。
+部署完成后，使用 `/opt/heromail/.env` 中的 `HEROMAIL_ADMIN_EMAIL` 和 `HEROMAIL_ADMIN_PASSWORD` 登录。管理员可在“管理员账户”中修改登录密码，修改后旧会话会全部失效。请在反向代理中配置 HTTPS，并确保 `HEROMAIL_PUBLIC_URL` 是外部可访问的绝对地址，否则支付回调和 Microsoft OAuth 无法正常工作。
 
 ## 业务流程
 
@@ -58,15 +58,15 @@ curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh
 
 ### 易支付
 
-在“支付管理”新建易支付服务商，填写提交 API 地址、PID 和商户密钥。HeroMail 使用 MD5 生成支付参数签名，并对异步回调的 PID、签名、交易状态和金额同时校验。
+在“支付管理”新建易支付服务商，填写提交 API 地址、PID、商户密钥和可选的支付宝通道 ID。HeroMail 使用 MD5 生成支付参数签名，并对异步回调的 PID、签名、交易状态和金额同时校验。
 
 ### 支付宝官方
 
-在“支付管理”新建支付宝官方服务商，填写 AppID、应用 RSA 私钥和支付宝 RSA 公钥。PC 端使用 `alipay.trade.page.pay`，移动端使用 `alipay.trade.wap.pay`，签名算法为 RSA2。私钥和支付服务商配置均使用 AES-256-GCM 加密存储。
+在“支付管理”新建支付宝官方服务商，填写 AppID、应用 RSA 私钥和支付宝 RSA 公钥。官方网关固定为 `https://openapi.alipay.com/gateway.do`，无需手动填写。PC 端使用 `alipay.trade.page.pay`，移动端使用 `alipay.trade.wap.pay`，签名算法为 RSA2。私钥和支付服务商配置均使用 AES-256-GCM 加密存储；编辑时敏感字段留空会保留原值。
 
 ## 在线升级
 
-一键部署会启动独立升级执行器。只有创建 `v*` GitHub Release 时，工作流才会更新 `ghcr.io/ljunn/heromail:latest`。管理员可先在“系统设置”查看最新正式版本的完整更新日志，再输入 `.env` 中的 `HEROMAIL_UPDATE_TOKEN` 执行升级。升级器会校验固定官方镜像并仅重建 HeroMail 容器，PostgreSQL 和 Redis 数据卷不会被删除；不支持从网页或环境变量切换任意镜像。
+一键部署会启动独立升级执行器。只有创建 `v*` GitHub Release 时，工作流才会更新 `ghcr.io/ljunn/heromail:latest`。已登录管理员可在“系统设置”检查最新正式版本、阅读完整更新日志并确认在线升级。升级器会校验固定官方镜像并仅重建 HeroMail 容器，PostgreSQL 和 Redis 数据卷不会被删除；不支持从网页或环境变量切换任意镜像。
 
 每个正式版本都必须先在 [`CHANGELOG.md`](CHANGELOG.md) 增加同版本章节。发布工作流会使用该章节作为 GitHub Release 正文，缺少对应更新日志时会直接阻止发布。
 

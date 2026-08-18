@@ -25,18 +25,54 @@ const state = {
   health: null
 };
 
+const iconPaths = {
+  logo: `<path d="M4 7.5 12 13l8-5.5"/><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M16.5 16.5 18 18l3-3"/>`,
+  inbox: `<path d="M4 4h16v12H4z"/><path d="m4 5 8 6 8-6"/><path d="M8 20h8"/>`,
+  clock: `<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>`,
+  receipt: `<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/>`,
+  fileCode: `<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M10 12l-2 2 2 2M14 12l2 2-2 2"/>`,
+  key: `<circle cx="8" cy="15" r="4"/><path d="m11 12 8-8M16 7l2 2M14 9l2 2"/>`,
+  webhook: `<path d="M8.5 6a4 4 0 1 1 7 2.7L12 15"/><path d="M15.5 18a4 4 0 1 1-4.7-5.9L16 12"/><path d="M5.5 14a4 4 0 1 1 2.6-5.7L12 15"/>`,
+  chart: `<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>`,
+  wallet: `<path d="M4 6h15a2 2 0 0 1 2 2v10H4a2 2 0 0 1-2-2V6a3 3 0 0 1 3-3h13"/><path d="M16 11h5v4h-5z"/>`,
+  userCog: `<circle cx="10" cy="8" r="4"/><path d="M3 21a7 7 0 0 1 14 0M19 12v5M16.5 14.5h5"/>`,
+  activity: `<path d="M3 12h4l2-6 4 12 2-6h6"/>`,
+  dashboard: `<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>`,
+  mail: `<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>`,
+  database: `<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>`,
+  plug: `<path d="M8 3v5M16 3v5M6 8h12v2a6 6 0 0 1-6 6v5M8 21h8"/>`,
+  globe: `<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/>`,
+  scan: `<path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/><path d="M8 12h8M12 8v8"/>`,
+  route: `<circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h3a3 3 0 0 0 3-3V9a3 3 0 0 1 3-3"/>`,
+  users: `<circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 20a6 6 0 0 1 12 0M14 15a5 5 0 0 1 7 4.5"/>`,
+  ledger: `<path d="M5 4h14v16H5z"/><path d="M9 4v16M12 8h4M12 12h4M12 16h3"/>`,
+  creditCard: `<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>`,
+  bell: `<path d="M6 9a6 6 0 0 1 12 0c0 7 3 7 3 7H3s3 0 3-7M10 20h4"/>`,
+  audit: `<path d="M8 4h8M9 2h6v4H9z"/><path d="M6 4H4v17h16V4h-2M8 11h8M8 15h8"/>`,
+  settings: `<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>`,
+  shieldUser: `<path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6z"/><circle cx="12" cy="10" r="2"/><path d="M8.8 16a3.5 3.5 0 0 1 6.4 0"/>`,
+  code: `<path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14"/>`,
+  sparkle: `<path d="m12 3 1.2 4.8L18 9l-4.8 1.2L12 15l-1.2-4.8L6 9l4.8-1.2zM18 16l.6 2.4L21 19l-2.4.6L18 22l-.6-2.4L15 19l2.4-.6z"/>`,
+  message: `<path d="M4 5h16v11H9l-5 4z"/><path d="M8 10h8M8 13h5"/>`,
+  send: `<path d="m3 11 18-8-8 18-2-8zM11 13l5-5"/>`
+};
+
+function icon(name, className = "") {
+  return `<svg class="ui-icon ${className}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${iconPaths[name] || iconPaths.globe}</svg>`;
+}
+
 const userNav = [
-  ["工作台", [["apply", "申请邮箱", "✉"], ["current", "当前任务", "◷"], ["orders", "订单记录", "▤"]]],
-  ["开发者", [["docs", "API 文档", "▥"], ["keys", "API 密钥", "⌕"], ["webhooks", "Webhook", "⌁"]]],
-  ["账户", [["usage", "用量与账单", "▥"], ["balance", "余额充值", "▣"], ["settings", "个人设置", "⚙"], ["status", "服务状态", "♢"]]]
+  ["工作台", [["apply", "申请邮箱", "inbox"], ["current", "当前任务", "clock"], ["orders", "订单记录", "receipt"]]],
+  ["开发者", [["docs", "API 文档", "fileCode"], ["keys", "API 密钥", "key"], ["webhooks", "Webhook", "webhook"]]],
+  ["账户", [["usage", "用量与账单", "chart"], ["balance", "余额充值", "wallet"], ["settings", "个人设置", "userCog"], ["status", "服务状态", "activity"]]]
 ];
 
 const adminNav = [
-  ["运行", [["admin-overview", "运行概览", "▣"]]],
-  ["资源管理", [["admin-mailboxes", "邮箱资源", "✉"], ["admin-pools", "邮箱池", "▤"], ["admin-channels", "接入渠道", "⌁"]]],
-  ["业务配置", [["admin-services", "目标平台", "◈"], ["admin-rules", "收码规则", "⌘"], ["admin-routing", "调度策略", "◇"]]],
-  ["订单与用户", [["admin-orders", "注册订单", "▤"], ["admin-users", "平台用户", "♙"], ["admin-ledger", "余额与流水", "▣"], ["admin-payments", "支付管理", "¥"]]],
-  ["系统", [["admin-alerts", "告警中心", "♢"], ["admin-audit", "审计日志", "▤"], ["admin-settings", "系统设置", "⚙"]]]
+  ["运行", [["admin-overview", "运行概览", "dashboard"]]],
+  ["资源管理", [["admin-mailboxes", "邮箱资源", "mail"], ["admin-pools", "邮箱池", "database"], ["admin-channels", "接入渠道", "plug"]]],
+  ["业务配置", [["admin-services", "目标平台", "globe"], ["admin-rules", "收码规则", "scan"], ["admin-routing", "调度策略", "route"]]],
+  ["订单与用户", [["admin-orders", "注册订单", "receipt"], ["admin-users", "平台用户", "users"], ["admin-ledger", "余额与流水", "ledger"], ["admin-payments", "支付管理", "creditCard"]]],
+  ["系统", [["admin-alerts", "告警中心", "bell"], ["admin-audit", "审计日志", "audit"], ["admin-settings", "系统设置", "settings"], ["admin-account", "管理员账户", "shieldUser"]]]
 ];
 
 async function api(path, options = {}) {
@@ -65,7 +101,7 @@ function toast(message) {
 function renderLogin(mode = "login") {
   document.body.classList.add("auth-mode");
   const register = mode === "register";
-  document.querySelector("#content").innerHTML = `<div class="auth-panel"><div class="auth-brand"><span class="brand-mark">✉</span><div><strong>HeroMail</strong><span>邮箱资源与注册验证码平台</span></div></div><h1>${register ? "创建账户" : "登录 HeroMail"}</h1><p>${register ? "创建用户账户后即可申请邮箱和配置开发者能力。" : "使用管理员或用户账户进入工作台。"}</p><form id="auth-form" class="form-grid"><label>邮箱<input class="field" name="email" type="email" autocomplete="email" required></label>${register ? `<label>显示名称<input class="field" name="display_name" autocomplete="name"></label>` : ""}<label>密码<input class="field" name="password" type="password" minlength="10" autocomplete="${register ? "new-password" : "current-password"}" required></label><button class="primary-btn" type="submit">${register ? "注册并登录" : "登录"}</button></form><button class="link-btn auth-switch" data-action="auth-mode" data-mode="${register ? "login" : "register"}">${register ? "已有账户，返回登录" : "没有账户，创建新账户"}</button></div>`;
+  document.querySelector("#content").innerHTML = `<div class="auth-panel"><div class="auth-brand"><span class="brand-mark">${icon("logo")}</span><div><strong>HeroMail</strong><span>邮箱资源与注册验证码平台</span></div></div><h1>${register ? "创建账户" : "登录 HeroMail"}</h1><p>${register ? "创建用户账户后即可申请邮箱和配置开发者能力。" : "使用管理员或用户账户进入工作台。"}</p><form id="auth-form" class="form-grid"><label>邮箱<input class="field" name="email" type="email" autocomplete="email" required></label>${register ? `<label>显示名称<input class="field" name="display_name" autocomplete="name"></label>` : ""}<label>密码<input class="field" name="password" type="password" minlength="10" autocomplete="${register ? "new-password" : "current-password"}" required></label><button class="primary-btn" type="submit">${register ? "注册并登录" : "登录"}</button></form><button class="link-btn auth-switch" data-action="auth-mode" data-mode="${register ? "login" : "register"}">${register ? "已有账户，返回登录" : "没有账户，创建新账户"}</button></div>`;
   document.querySelector("#auth-form").addEventListener("submit", event => authenticate(event, register));
 }
 
@@ -81,10 +117,11 @@ async function authenticate(event, register) {
 
 function renderNav() {
   const groups = state.role === "admin" ? adminNav : userNav;
+  document.querySelector(".brand > .brand-mark").innerHTML = icon("logo");
   document.querySelector("#role-label").textContent = state.role === "admin" ? "管理员端" : "用户端";
   document.querySelector("#role-action").textContent = state.role === "admin" ? "切换用户端" : "切换管理员端";
   document.querySelector(".role-switch").style.display = state.user?.role === "admin" ? "inline-flex" : "none";
-  document.querySelector("#nav").innerHTML = groups.map(([title, items]) => `<div class="nav-group"><div class="nav-title">${title}</div>${items.map(([view, label, icon]) => `<button class="nav-item ${state.view === view ? "active" : ""}" data-action="view" data-view="${view}"><span class="nav-icon">${icon}</span>${label}</button>`).join("")}</div>`).join("");
+  document.querySelector("#nav").innerHTML = groups.map(([title, items]) => `<div class="nav-group"><div class="nav-title">${title}</div>${items.map(([view, label, iconName]) => `<button class="nav-item ${state.view === view ? "active" : ""}" data-action="view" data-view="${view}"><span class="nav-icon">${icon(iconName)}</span>${label}</button>`).join("")}</div>`).join("");
 }
 
 function stat(label, value, note = "") { return `<div class="stat"><div class="stat-label">${label}</div><div class="stat-value">${value}</div><div class="stat-note">${note}</div></div>`; }
@@ -92,7 +129,8 @@ function pageHead(title, subtitle, action = "") { return `<div class="page-head"
 
 function serviceCard(service) {
   const selected = service.code === state.selectedService;
-  return `<button class="service-card ${selected ? "selected" : ""}" data-action="service" data-service="${esc(service.code)}"><span class="service-logo">${esc(service.name.slice(0, 1))}</span><span class="service-name">${esc(service.name)}</span><span class="service-desc">${esc(service.description)}</span>${selected ? `<span class="selected-mark">✓</span>` : ""}</button>`;
+  const serviceIcons = { github: "code", openai: "sparkle", discord: "message", telegram: "send" };
+  return `<button class="service-card ${selected ? "selected" : ""}" data-action="service" data-service="${esc(service.code)}"><span class="service-logo">${icon(serviceIcons[service.code] || "globe")}</span><span class="service-name">${esc(service.name)}</span><span class="service-desc">${esc(service.description)}</span>${selected ? `<span class="selected-mark">✓</span>` : ""}</button>`;
 }
 
 function selectedService() { return state.services.find(service => service.code === state.selectedService) || state.services[0] || { name: "目标平台", price: 0, ttl_seconds: 600, allowed_providers: [] }; }
@@ -129,7 +167,7 @@ function renderCurrent() {
 function renderAdminOverview() {
   const data = state.overview || {}; const services = state.services; const orders = state.orders.slice(0, 6);
   const maxInventory = Math.max(1, ...services.map(service => Number(service.available_mailboxes || 0)));
-  return pageHead("运行概览", "邮箱库存、平台注册任务与收码服务的实时状态。", `<button class="ghost-btn" data-action="refresh">刷新数据</button>`) + `<div class="stat-grid">${stat("可分配邮箱", data.available_mailboxes ?? 0, "全局健康可用")}${stat("活跃租约", data.active_leases ?? 0, "正在进行的任务")}${stat("今日注册订单", data.today_orders ?? 0, "UTC 自然日")}${stat("收码成功率", `${Number(data.success_rate ?? 0).toFixed(2)}%`, "今日实时统计")}${stat("平均收码时间", `${Number(data.average_code_seconds ?? 0).toFixed(1)} 秒`, "今日实时统计")}</div><div class="admin-grid"><div class="card"><div class="card-head"><h2>目标平台库存</h2><button class="link-btn" data-action="view" data-view="admin-services">管理平台 →</button></div><div class="card-body"><div class="bar-list">${services.map(service => { const count = Number(service.available_mailboxes || 0); return `<div class="bar-row"><span>${esc(service.name)}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.round(count / maxInventory * 100)}%"></div></div><strong>${count}</strong></div>`; }).join("") || `<div class="empty">暂无平台</div>`}</div></div></div><div class="card"><div class="card-head"><h2>邮箱渠道健康</h2></div><div class="card-body"><div class="status-list"><div class="status-item"><i class="status-dot"></i> 可用邮箱 <strong style="margin-left:auto">${data.available_mailboxes ?? 0}</strong></div><div class="status-item"><i class="status-dot ${data.auth_errors ? "orange" : ""}"></i> 授权异常 <strong style="margin-left:auto">${data.auth_errors ?? 0}</strong></div><div class="status-item"><i class="status-dot ${data.blocked_mailboxes ? "red" : ""}"></i> 已隔离 <strong style="margin-left:auto">${data.blocked_mailboxes ?? 0}</strong></div></div></div></div></div><div class="admin-grid"><div class="card"><div class="card-head"><h2>最近注册订单</h2><button class="link-btn" data-action="view" data-view="admin-orders">查看全部 →</button></div><div class="table-wrap">${orders.length ? `<table><thead><tr><th>订单号</th><th>用户</th><th>平台</th><th>邮箱</th><th>状态</th><th>有效期</th></tr></thead><tbody>${orders.map(order => `<tr><td>${esc(order.id)}</td><td>${esc(order.user_id)}</td><td>${esc(order.service_name)}</td><td>${esc(order.mailbox_address)}</td><td>${statusChip(order.status)}</td><td>${order.status === "completed" ? "—" : time(order.expires_at)}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">暂无订单</div>`}</div></div><div class="card"><div class="card-head"><h2>快捷操作</h2></div><div class="card-body"><div class="service-grid"><button class="service-card" data-action="view" data-view="admin-mailboxes"><span class="service-logo">✉</span><span class="service-name">邮箱资源</span><span class="service-desc">检查授权与库存</span></button><button class="service-card" data-action="view" data-view="admin-services"><span class="service-logo">◈</span><span class="service-name">目标平台</span><span class="service-desc">配置规则和价格</span></button></div></div></div></div>`;
+  return pageHead("运行概览", "邮箱库存、平台注册任务与收码服务的实时状态。", `<button class="ghost-btn" data-action="refresh">刷新数据</button>`) + `<div class="stat-grid">${stat("可分配邮箱", data.available_mailboxes ?? 0, "全局健康可用")}${stat("活跃租约", data.active_leases ?? 0, "正在进行的任务")}${stat("今日注册订单", data.today_orders ?? 0, "UTC 自然日")}${stat("收码成功率", `${Number(data.success_rate ?? 0).toFixed(2)}%`, "今日实时统计")}${stat("平均收码时间", `${Number(data.average_code_seconds ?? 0).toFixed(1)} 秒`, "今日实时统计")}</div><div class="admin-grid"><div class="card"><div class="card-head"><h2>目标平台库存</h2><button class="link-btn" data-action="view" data-view="admin-services">管理平台 →</button></div><div class="card-body"><div class="bar-list">${services.map(service => { const count = Number(service.available_mailboxes || 0); return `<div class="bar-row"><span>${esc(service.name)}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.round(count / maxInventory * 100)}%"></div></div><strong>${count}</strong></div>`; }).join("") || `<div class="empty">暂无平台</div>`}</div></div></div><div class="card"><div class="card-head"><h2>邮箱渠道健康</h2></div><div class="card-body"><div class="status-list"><div class="status-item"><i class="status-dot"></i> 可用邮箱 <strong style="margin-left:auto">${data.available_mailboxes ?? 0}</strong></div><div class="status-item"><i class="status-dot ${data.auth_errors ? "orange" : ""}"></i> 授权异常 <strong style="margin-left:auto">${data.auth_errors ?? 0}</strong></div><div class="status-item"><i class="status-dot ${data.blocked_mailboxes ? "red" : ""}"></i> 已隔离 <strong style="margin-left:auto">${data.blocked_mailboxes ?? 0}</strong></div></div></div></div></div><div class="admin-grid"><div class="card"><div class="card-head"><h2>最近注册订单</h2><button class="link-btn" data-action="view" data-view="admin-orders">查看全部 →</button></div><div class="table-wrap">${orders.length ? `<table><thead><tr><th>订单号</th><th>用户</th><th>平台</th><th>邮箱</th><th>状态</th><th>有效期</th></tr></thead><tbody>${orders.map(order => `<tr><td>${esc(order.id)}</td><td>${esc(order.user_id)}</td><td>${esc(order.service_name)}</td><td>${esc(order.mailbox_address)}</td><td>${statusChip(order.status)}</td><td>${order.status === "completed" ? "—" : time(order.expires_at)}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">暂无订单</div>`}</div></div><div class="card"><div class="card-head"><h2>快捷操作</h2></div><div class="card-body"><div class="service-grid"><button class="service-card" data-action="view" data-view="admin-mailboxes"><span class="service-logo">${icon("mail")}</span><span class="service-name">邮箱资源</span><span class="service-desc">检查授权与库存</span></button><button class="service-card" data-action="view" data-view="admin-services"><span class="service-logo">${icon("globe")}</span><span class="service-name">目标平台</span><span class="service-desc">配置规则和价格</span></button></div></div></div></div>`;
 }
 
 function renderAdminMailboxes() {
@@ -163,8 +201,16 @@ function renderBalance() {
   return pageHead("余额充值", "通过管理员配置的支付宝官方或易支付通道充值。") + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>创建充值订单</h2><strong>${money(state.user.balance)}</strong></div><div class="card-body form-grid"><label>充值金额<input id="topup-amount" class="field" type="number" min="1" max="100000" step="0.01" value="50"></label><label>支付方式<select id="topup-method" class="field">${state.paymentMethods.map(method => `<option value="${esc(method)}">${method === "alipay" ? "支付宝" : esc(method)}</option>`).join("")}</select></label><button class="primary-btn" data-action="create-payment" ${state.paymentMethods.length ? "" : "disabled"}>前往支付</button>${state.paymentMethods.length ? "" : `<div class="notice warning">管理员尚未启用支付服务商。</div>`}</div></div><div class="card"><div class="card-head"><h2>充值记录</h2></div><div class="table-wrap"><table><thead><tr><th>支付单</th><th>通道</th><th>金额</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${state.paymentOrders.map(order => `<tr><td>${esc(order.id)}</td><td>${esc(order.provider_name)}</td><td>${money(order.amount)}</td><td>${statusChip(order.status)}</td><td>${time(order.created_at)}</td><td>${order.status === "pending" && order.pay_url ? `<a class="link-btn" href="${esc(order.pay_url)}" target="_blank" rel="noopener">继续支付</a>` : "—"}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">暂无充值记录</td></tr>`}</tbody></table></div>${renderPager("payments")}</div></div>`;
 }
 
+function renderAccountSettings(title, subtitle) {
+  return pageHead(title, subtitle) + `<div class="account-grid"><div class="card"><div class="card-head"><h2>账户资料</h2>${icon("userCog", "section-icon")}</div><div class="card-body form-grid"><label>登录邮箱<input class="field" value="${esc(state.user.email)}" disabled></label><label>显示名称<input id="profile-name" class="field" value="${esc(state.user.display_name || "")}" maxlength="120" autocomplete="name"></label><button class="primary-btn" data-action="save-profile">保存账户资料</button></div></div><div class="card"><div class="card-head"><h2>登录密码</h2>${icon("shieldUser", "section-icon")}</div><div class="card-body form-grid"><label>当前密码<input id="current-password" class="field" type="password" maxlength="128" autocomplete="current-password"></label><label>新密码<input id="new-password" class="field" type="password" minlength="10" maxlength="128" autocomplete="new-password" placeholder="至少 10 位"></label><label>确认新密码<input id="confirm-password" class="field" type="password" minlength="10" maxlength="128" autocomplete="new-password"></label><button class="primary-btn" data-action="change-password">修改登录密码</button><div class="notice">修改后会撤销该账户的全部旧会话，当前浏览器将自动切换到新会话。</div></div></div></div><button class="danger-btn account-logout" data-action="logout">退出登录</button>`;
+}
+
 function renderSettings() {
-  return pageHead("个人设置", "更新显示名称和登录密码。") + `<div class="card narrow-card"><div class="card-body form-grid"><label>登录邮箱<input class="field" value="${esc(state.user.email)}" disabled></label><label>显示名称<input id="profile-name" class="field" value="${esc(state.user.display_name || "")}"></label><label>新密码<input id="profile-password" class="field" type="password" minlength="10" placeholder="不修改请留空"></label><button class="primary-btn" data-action="save-profile">保存设置</button><button class="danger-btn" data-action="logout">退出登录</button></div></div>`;
+  return renderAccountSettings("个人设置", "维护账户资料和登录密码。");
+}
+
+function renderAdminAccount() {
+  return renderAccountSettings("管理员账户", "修改管理员显示名称、登录密码和当前会话。");
 }
 
 function renderDocs() {
@@ -188,7 +234,27 @@ function renderAdminLedger() { return pageHead("余额与流水", "查看全平�
 function renderAdminAudit() { return pageHead("审计日志", "追踪管理操作、资金变动、配置和升级行为。") + `<div class="card"><div class="table-wrap"><table><thead><tr><th>操作者</th><th>动作</th><th>资源</th><th>详情</th><th>IP</th><th>时间</th></tr></thead><tbody>${state.auditLogs.map(item => `<tr><td>${esc(item.actor_id)}</td><td><code>${esc(item.action)}</code></td><td>${esc(item.resource_type)} · ${esc(item.resource_id)}</td><td>${esc(item.detail)}</td><td>${esc(item.ip || "—")}</td><td>${time(item.created_at)}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">暂无审计记录</td></tr>`}</tbody></table></div>${renderPager("audit")}</div>`; }
 
 function renderAdminPayments() {
-  return pageHead("支付管理", "配置易支付或支付宝官方，并检查充值订单。") + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>服务商</h2></div><div class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>方式</th><th>优先级</th><th>状态</th></tr></thead><tbody>${state.paymentProviders.map(item => `<tr><td>${esc(item.name)}</td><td>${esc(item.type)}</td><td>${esc(item.methods.join(", "))}</td><td>${item.priority}</td><td>${item.enabled ? `<span class="chip green">启用</span>` : `<span class="chip red">停用</span>`}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">暂无支付服务商</td></tr>`}</tbody></table></div>${renderPager("payment-providers")}</div><div class="card"><div class="card-head"><h2>新增服务商</h2></div><div class="card-body form-grid"><label>名称<input id="pay-provider-name" class="field"></label><label>类型<select id="pay-provider-type" class="field"><option value="easypay">易支付</option><option value="alipay">支付宝官方</option></select></label><label>API 地址 / 网关<input id="pay-api-base" class="field"></label><label>PID / AppID<input id="pay-app-id" class="field"></label><label>商户密钥 / 应用私钥<textarea id="pay-private-key" class="field" rows="4"></textarea></label><label>支付宝公钥<textarea id="pay-public-key" class="field" rows="4"></textarea></label><button class="primary-btn" data-action="create-payment-provider">保存并启用</button></div></div></div><div class="card" style="margin-top:16px"><div class="card-head"><h2>充值订单</h2></div><div class="table-wrap"><table><thead><tr><th>支付单</th><th>用户</th><th>服务商</th><th>金额</th><th>状态</th><th>上游流水</th><th>创建时间</th></tr></thead><tbody>${state.paymentOrders.map(item => `<tr><td>${esc(item.id)}</td><td>${esc(item.user_id)}</td><td>${esc(item.provider_name)}</td><td>${money(item.amount)}</td><td>${statusChip(item.status)}</td><td>${esc(item.provider_trade_no || "—")}</td><td>${time(item.created_at)}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">暂无支付订单</td></tr>`}</tbody></table></div>${renderPager("admin-payments")}</div>`;
+  const providerRows = state.paymentProviders.map(item => `<tr><td><strong>${esc(item.name)}</strong></td><td>${item.type === "easypay" ? "易支付" : "支付宝官方"}</td><td>${esc(item.methods.map(method => method === "alipay" ? "支付宝" : method).join(", "))}</td><td>${item.priority}</td><td>${item.enabled ? `<span class="chip green">启用</span>` : `<span class="chip red">停用</span>`}</td><td><div class="table-actions"><button class="link-btn" data-action="edit-payment-provider" data-id="${esc(item.id)}">编辑</button><button class="link-btn danger-text" data-action="delete-payment-provider" data-id="${esc(item.id)}" data-name="${esc(item.name)}">删除</button></div></td></tr>`).join("");
+  const orderRows = state.paymentOrders.map(item => `<tr><td>${esc(item.id)}</td><td>${esc(item.user_id)}</td><td>${esc(item.provider_name)}</td><td>${money(item.amount)}</td><td>${statusChip(item.status)}</td><td>${esc(item.provider_trade_no || "—")}</td><td>${time(item.created_at)}</td></tr>`).join("");
+  return pageHead("支付管理", "分别配置易支付和支付宝官方通道，并管理充值订单。", `<button class="primary-btn" data-action="edit-payment-provider">新增服务商</button>`) + `<div class="card"><div class="card-head"><h2>支付服务商</h2><span class="muted">敏感凭证使用 AES-256-GCM 加密保存</span></div><div class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>支付方式</th><th>优先级</th><th>状态</th><th>操作</th></tr></thead><tbody>${providerRows || `<tr><td colspan="6" class="empty">暂无支付服务商</td></tr>`}</tbody></table></div>${renderPager("payment-providers")}</div><div class="provider-guidance"><div><span class="provider-badge easypay">易</span><strong>易支付</strong><p>需要 API 地址、商户 ID（PID）和商户密钥（PKey）。</p></div><div><span class="provider-badge alipay">支</span><strong>支付宝官方</strong><p>官方网关已内置，只需 AppID、应用私钥和支付宝公钥。</p></div></div><div class="card" style="margin-top:16px"><div class="card-head"><h2>充值订单</h2></div><div class="table-wrap"><table><thead><tr><th>支付单</th><th>用户</th><th>服务商</th><th>金额</th><th>状态</th><th>上游流水</th><th>创建时间</th></tr></thead><tbody>${orderRows || `<tr><td colspan="7" class="empty">暂无支付订单</td></tr>`}</tbody></table></div>${renderPager("admin-payments")}</div>`;
+}
+
+async function showPaymentProviderEditor(providerID = "") {
+  const provider = state.paymentProviders.find(item => item.id === providerID) || { id: "", name: "", type: "easypay", enabled: true, priority: 100 };
+  const editing = Boolean(provider.id);
+  const details = editing ? (await api(`/api/v1/admin/payment/providers/${provider.id}`)).data : { config: {}, configured: {} };
+  const providerConfig = details.config || {};
+  const configured = details.configured || {};
+  document.querySelector("#secret-modal")?.remove();
+  document.body.insertAdjacentHTML("beforeend", `<div id="secret-modal" class="modal-backdrop"><div class="modal payment-modal"><div class="card-head"><div><h2>${editing ? "编辑" : "新增"}支付服务商</h2><div class="modal-subtitle">选择服务商类型后填写对应凭证</div></div><button class="icon-btn" data-action="close-modal" title="关闭">×</button></div><div class="card-body form-grid"><input id="pay-provider-id" type="hidden" value="${esc(provider.id)}"><div class="form-columns"><label>服务商名称<input id="pay-provider-name" class="field" value="${esc(provider.name)}" placeholder="主支付通道"></label><label>服务商类型<select id="pay-provider-type" class="field" ${editing ? "disabled" : ""}><option value="easypay" ${provider.type === "easypay" ? "selected" : ""}>易支付</option><option value="alipay" ${provider.type === "alipay" ? "selected" : ""}>支付宝官方</option></select></label></div><div id="easypay-fields" class="provider-fields"><div class="provider-form-title"><span class="provider-badge easypay">易</span><div><strong>易支付配置</strong><span>兼容易支付协议的聚合支付服务商</span></div></div><label>API 地址<input id="pay-easypay-api-base" class="field" type="url" value="${esc(providerConfig.api_base || "")}" placeholder="https://pay.example.com/submit.php"></label><div class="form-columns"><label>商户 ID（PID）<input id="pay-easypay-pid" class="field" value="${esc(providerConfig.pid || "")}" autocomplete="off"></label><label>支付宝通道 ID（可选）<input id="pay-easypay-channel" class="field" value="${esc(providerConfig.channel_id || "")}" autocomplete="off"></label></div><label>商户密钥（PKey）<input id="pay-easypay-pkey" class="field" type="password" autocomplete="new-password" placeholder="${configured.pkey ? "已配置，留空则保留" : "请输入商户密钥"}"></label></div><div id="alipay-fields" class="provider-fields"><div class="provider-form-title"><span class="provider-badge alipay">支</span><div><strong>支付宝官方配置</strong><span>直接接入支付宝开放平台 RSA2</span></div></div><label>API 网关<input class="field" value="https://openapi.alipay.com/gateway.do" disabled></label><label>应用 AppID<input id="pay-alipay-app-id" class="field" value="${esc(providerConfig.app_id || "")}" autocomplete="off"></label><label>应用私钥<textarea id="pay-alipay-private-key" class="field" rows="5" autocomplete="off" placeholder="${configured.private_key ? "已配置，留空则保留" : "-----BEGIN PRIVATE KEY-----"}"></textarea></label><label>支付宝公钥<textarea id="pay-alipay-public-key" class="field" rows="5" autocomplete="off" placeholder="${configured.public_key ? "已配置，留空则保留" : "-----BEGIN PUBLIC KEY-----"}"></textarea></label></div><div class="form-columns"><label>优先级<input id="pay-provider-priority" class="field" type="number" min="1" value="${Number(provider.priority || 100)}"></label><label class="check-label provider-enabled"><input id="pay-provider-enabled" type="checkbox" ${provider.enabled ? "checked" : ""}> 启用该服务商</label></div><button class="primary-btn" data-action="save-payment-provider">${editing ? "保存修改" : "创建服务商"}</button></div></div></div>`);
+  const typeSelect = document.querySelector("#pay-provider-type");
+  const toggleFields = () => {
+    const type = typeSelect.value;
+    document.querySelector("#easypay-fields").hidden = type !== "easypay";
+    document.querySelector("#alipay-fields").hidden = type !== "alipay";
+  };
+  typeSelect.addEventListener("change", toggleFields);
+  toggleFields();
 }
 
 function renderAdminSettings() {
@@ -197,7 +263,7 @@ function renderAdminSettings() {
   const normalizeReleaseVersion = value => String(value || "").trim().replace(/^v/i, "");
   const upgradeAvailable = hasRelease && normalizeReleaseVersion(version.current_version) !== normalizeReleaseVersion(release.tag);
   const upgradeLabel = upgradeAvailable ? `升级到 ${esc(release.tag)}` : hasRelease ? "已是最新版本" : "暂无可用版本";
-  return pageHead("系统设置", "只允许升级到 GitHub 正式发布的 HeroMail 版本。") + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>版本信息</h2>${statusChip(version.upgrade.state)}</div><div class="card-body"><dl class="config-list"><div class="config-row"><dt>当前版本</dt><dd>${esc(version.current_version)}</dd></div><div class="config-row"><dt>提交</dt><dd><code>${esc(version.commit)}</code></dd></div><div class="config-row"><dt>构建时间</dt><dd>${esc(version.build_time)}</dd></div><div class="config-row"><dt>固定镜像</dt><dd><code>${esc(version.image)}</code></dd></div><div class="config-row"><dt>升级状态</dt><dd>${esc(version.upgrade.message)}</dd></div></dl></div></div><div class="card"><div class="card-head"><h2>在线升级</h2></div><div class="card-body form-grid"><label>升级令牌<input id="upgrade-token" class="field" type="password" autocomplete="off"></label><button class="primary-btn" data-action="upgrade" ${version.online_upgrade_enabled && upgradeAvailable ? "" : "disabled"}>${upgradeLabel}</button><div class="notice warning">只会拉取 <code>ghcr.io/ljunn/heromail:latest</code>，该标签仅由 GitHub 正式 Release 工作流更新。升级令牌不会保存在浏览器。</div></div></div></div><div class="card" style="margin-top:16px"><div class="card-head"><h2>最新版本日志 · ${esc(release.tag || "暂无")}</h2>${release.url ? `<a class="link-btn" href="${esc(release.url)}" target="_blank" rel="noopener">查看 GitHub Release</a>` : ""}</div><div class="card-body">${hasRelease ? `<pre class="release-notes">${esc(release.notes || "该版本未提供更新日志。")}</pre>` : `<div class="empty">无法获取 GitHub 最新正式版本，已禁用升级按钮。</div>`}</div></div>`;
+  return pageHead("系统设置", "检查 GitHub 正式版本并从管理后台完成升级。", `<button class="ghost-btn" data-action="check-updates">检查更新</button>`) + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>版本信息</h2>${statusChip(version.upgrade.state)}</div><div class="card-body"><dl class="config-list"><div class="config-row"><dt>当前版本</dt><dd>${esc(version.current_version)}</dd></div><div class="config-row"><dt>最新版本</dt><dd>${esc(release.tag || "暂未获取")}</dd></div><div class="config-row"><dt>提交</dt><dd><code>${esc(version.commit)}</code></dd></div><div class="config-row"><dt>构建时间</dt><dd>${esc(version.build_time)}</dd></div><div class="config-row"><dt>升级状态</dt><dd>${esc(version.upgrade.message)}</dd></div></dl></div></div><div class="card"><div class="card-head"><h2>在线升级</h2>${icon("activity", "section-icon")}</div><div class="card-body form-grid"><button class="primary-btn" data-action="upgrade" ${version.online_upgrade_enabled && upgradeAvailable ? "" : "disabled"}>${upgradeLabel}</button><div class="notice warning">升级前请阅读下方更新日志。确认后仅拉取 GitHub Release 工作流发布的 <code>ghcr.io/ljunn/heromail:latest</code>，不会更改 PostgreSQL 和 Redis 数据卷。</div></div></div></div><div class="card" style="margin-top:16px"><div class="card-head"><h2>最新版本日志 · ${esc(release.tag || "暂无")}</h2>${release.url ? `<a class="link-btn" href="${esc(release.url)}" target="_blank" rel="noopener">查看 GitHub Release</a>` : ""}</div><div class="card-body">${hasRelease ? `<pre class="release-notes">${esc(release.notes || "该版本未提供更新日志。")}</pre>` : `<div class="empty">无法获取 GitHub 最新正式版本，已禁用升级按钮。</div>`}</div></div>`;
 }
 
 function renderAdminChannels() { return pageHead("接入渠道", "通过 Microsoft OAuth2 接入 Outlook 和 Hotmail。") + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>Microsoft Graph OAuth2</h2></div><div class="card-body"><div class="status-list"><div class="status-item"><i class="status-dot"></i> OAuth 授权流程 <span class="status-ok">服务端验证</span></div><div class="status-item"><i class="status-dot"></i> Token 存储 <span class="status-ok">AES-256-GCM</span></div><div class="status-item"><i class="status-dot"></i> 已接入邮箱 <strong style="margin-left:auto">${state.pagination.mailboxes?.total || 0}</strong></div></div></div></div><div class="card"><div class="card-head"><h2>连接邮箱</h2></div><div class="card-body form-grid"><label>目标邮箱池<select id="oauth-pool" class="field">${state.pools.map(pool => `<option value="${esc(pool.name)}">${esc(pool.name)} · ${esc(pool.provider)}</option>`).join("")}</select></label><button class="primary-btn" data-action="microsoft-oauth" ${state.pools.length ? "" : "disabled"}>连接 Microsoft 邮箱</button>${state.pools.length ? `<div class="notice">OAuth 完成后会自动识别 Outlook/Hotmail 地址并加入所选邮箱池。</div>` : `<div class="notice warning">请先在“邮箱池”页面创建邮箱池。</div>`}</div></div></div>`; }
@@ -213,7 +279,7 @@ function renderServiceStatus() { return pageHead("服务状态", "检查 API、�
 function render() {
   if (!state.user) { renderLogin(); return Promise.resolve(); }
   renderNav();
-  const views = { apply: renderApply, current: renderCurrent, orders: () => renderOrders() + renderPager("orders"), docs: renderDocs, keys: renderAPIKeys, webhooks: renderWebhooks, usage: renderUsage, balance: renderBalance, settings: renderSettings, status: renderServiceStatus, "admin-overview": renderAdminOverview, "admin-mailboxes": renderAdminMailboxes, "admin-pools": renderAdminPools, "admin-channels": renderAdminChannels, "admin-services": renderAdminServices, "admin-rules": renderAdminRules, "admin-routing": renderAdminRouting, "admin-orders": renderAdminOrders, "admin-users": renderAdminUsers, "admin-ledger": renderAdminLedger, "admin-payments": renderAdminPayments, "admin-alerts": renderAdminAlerts, "admin-audit": renderAdminAudit, "admin-settings": renderAdminSettings };
+  const views = { apply: renderApply, current: renderCurrent, orders: () => renderOrders() + renderPager("orders"), docs: renderDocs, keys: renderAPIKeys, webhooks: renderWebhooks, usage: renderUsage, balance: renderBalance, settings: renderSettings, status: renderServiceStatus, "admin-overview": renderAdminOverview, "admin-mailboxes": renderAdminMailboxes, "admin-pools": renderAdminPools, "admin-channels": renderAdminChannels, "admin-services": renderAdminServices, "admin-rules": renderAdminRules, "admin-routing": renderAdminRouting, "admin-orders": renderAdminOrders, "admin-users": renderAdminUsers, "admin-ledger": renderAdminLedger, "admin-payments": renderAdminPayments, "admin-alerts": renderAdminAlerts, "admin-audit": renderAdminAudit, "admin-settings": renderAdminSettings, "admin-account": renderAdminAccount };
   document.querySelector("#content").innerHTML = (views[state.view] || views.apply)();
   document.querySelector("#balance").textContent = `余额 ${money(state.user.balance)}`;
   document.querySelector(".avatar").textContent = (state.user.display_name || state.user.email || "U").slice(0, 1).toUpperCase();
@@ -289,15 +355,65 @@ async function deleteMailbox(id) { if (!window.confirm("确定删除该邮箱及
 async function deletePool(id) { if (!window.confirm("确定删除该邮箱池？仅空邮箱池可删除。")) return; await api(`/api/v1/admin/mailbox-pools/${id}`, { method: "DELETE" }); await refresh(); toast("邮箱池已删除"); }
 
 async function createKey() { const name = document.querySelector("#key-name")?.value.trim(); if (!name) return toast("请输入密钥名称"); const scope = document.querySelector("#key-scope")?.value; const scopes = scope === "read" ? ["orders:read"] : ["orders:read", "orders:write"]; const result = await api("/api/v1/api-keys", { method: "POST", body: JSON.stringify({ name, scopes }) }); showSecret("API Key", result.data.secret); await refresh(); }
-async function saveProfile() { const result = await api("/api/v1/me", { method: "PUT", body: JSON.stringify({ display_name: document.querySelector("#profile-name")?.value || "", password: document.querySelector("#profile-password")?.value || "" }) }); state.user = result.data; await render(); toast("个人设置已保存"); }
+async function saveProfile() {
+  const result = await api("/api/v1/me", { method: "PUT", body: JSON.stringify({ display_name: document.querySelector("#profile-name")?.value || "" }) });
+  state.user = result.data; await render(); toast("账户资料已保存");
+}
+async function changePassword() {
+  const currentPassword = document.querySelector("#current-password")?.value || "";
+  const newPassword = document.querySelector("#new-password")?.value || "";
+  const confirmPassword = document.querySelector("#confirm-password")?.value || "";
+  if (!currentPassword) return toast("请输入当前密码");
+  if (newPassword.length < 10) return toast("新密码至少需要 10 位");
+  if (newPassword !== confirmPassword) return toast("两次输入的新密码不一致");
+  const result = await api("/api/v1/me/password", { method: "PUT", body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) });
+  state.token = result.data.token; localStorage.setItem("heromail_token", state.token);
+  await refresh(); toast("密码已修改，旧会话已全部撤销");
+}
 async function logout() { try { await api("/api/v1/auth/logout", { method: "POST" }); } finally { state.token = ""; state.user = null; localStorage.removeItem("heromail_token"); renderLogin(); } }
 async function createPayment() { const amount = Number(document.querySelector("#topup-amount")?.value); const method = document.querySelector("#topup-method")?.value; const result = await api("/api/v1/payment/orders", { method: "POST", body: JSON.stringify({ amount, method, mobile: /Android|iPhone|iPad/i.test(navigator.userAgent) }) }); location.href = result.data.pay_url; }
 async function createWebhook() { const url = document.querySelector("#webhook-url")?.value.trim(); const result = await api("/api/v1/webhooks", { method: "POST", body: JSON.stringify({ url }) }); showSecret("Webhook 签名密钥", result.data.secret); await refresh(); }
 async function createPool() { const name = document.querySelector("#pool-name")?.value.trim(); if (!name) return toast("请输入邮箱池名称"); await api("/api/v1/admin/mailbox-pools", { method: "POST", body: JSON.stringify({ name, provider: document.querySelector("#pool-provider")?.value, region: document.querySelector("#pool-region")?.value, enabled: true, daily_limit: Number(document.querySelector("#pool-limit")?.value), cooldown_seconds: Number(document.querySelector("#pool-cooldown")?.value) }) }); await refresh(); toast("邮箱池已保存"); }
 async function adjustBalance(target) { const amount = Number(window.prompt(`调整 ${target.dataset.email} 的余额，正数充值、负数扣减：`, "10")); if (!amount) return; const description = window.prompt("请输入调整原因：", "管理员人工补偿"); if (!description) return; await api(`/api/v1/admin/users/${target.dataset.id}/balance`, { method: "POST", body: JSON.stringify({ amount, description }) }); await refresh(); toast("余额已调整并写入审计"); }
-async function createPaymentProvider() { const type = document.querySelector("#pay-provider-type")?.value; const apiBase = document.querySelector("#pay-api-base")?.value.trim(); const appID = document.querySelector("#pay-app-id")?.value.trim(); const privateKey = document.querySelector("#pay-private-key")?.value.trim(); const publicKey = document.querySelector("#pay-public-key")?.value.trim(); const config = type === "easypay" ? { api_base: apiBase, pid: appID, pkey: privateKey } : { gateway: apiBase, app_id: appID, private_key: privateKey, public_key: publicKey }; await api("/api/v1/admin/payment/providers", { method: "POST", body: JSON.stringify({ name: document.querySelector("#pay-provider-name")?.value, type, methods: ["alipay"], enabled: true, priority: 100, config }) }); await refresh(); toast("支付服务商已保存"); }
+async function savePaymentProvider() {
+  const id = document.querySelector("#pay-provider-id")?.value || "";
+  const name = document.querySelector("#pay-provider-name")?.value.trim() || "";
+  const type = document.querySelector("#pay-provider-type")?.value;
+  if (!name) return toast("请输入服务商名称");
+  const config = type === "easypay" ? {
+    api_base: document.querySelector("#pay-easypay-api-base")?.value.trim() || "",
+    pid: document.querySelector("#pay-easypay-pid")?.value.trim() || "",
+    pkey: document.querySelector("#pay-easypay-pkey")?.value.trim() || "",
+    channel_id: document.querySelector("#pay-easypay-channel")?.value.trim() || ""
+  } : {
+    gateway: "https://openapi.alipay.com/gateway.do",
+    app_id: document.querySelector("#pay-alipay-app-id")?.value.trim() || "",
+    private_key: document.querySelector("#pay-alipay-private-key")?.value.trim() || "",
+    public_key: document.querySelector("#pay-alipay-public-key")?.value.trim() || ""
+  };
+  await api("/api/v1/admin/payment/providers", { method: "POST", body: JSON.stringify({ id, name, type, methods: ["alipay"], enabled: document.querySelector("#pay-provider-enabled")?.checked, priority: Number(document.querySelector("#pay-provider-priority")?.value || 100), config }) });
+  document.querySelector("#secret-modal")?.remove(); await refresh(); toast(id ? "支付服务商已更新" : "支付服务商已创建");
+}
+async function deletePaymentProvider(target) {
+  if (!window.confirm(`确定删除支付服务商“${target.dataset.name}”？`)) return;
+  await api(`/api/v1/admin/payment/providers/${target.dataset.id}`, { method: "DELETE" });
+  await refresh(); toast("支付服务商已删除");
+}
 async function startMicrosoftOAuth() { const pool = document.querySelector("#oauth-pool")?.value || state.pools[0]?.name; if (!pool) { state.view = "admin-pools"; await refresh(); return toast("请先创建邮箱池"); } const result = await api("/api/v1/admin/mailboxes/oauth/microsoft", { method: "POST", body: JSON.stringify({ pool }) }); location.href = result.data.authorization_url; }
-async function requestUpgrade() { const token = document.querySelector("#upgrade-token")?.value; if (!token) return toast("请输入升级令牌"); const target = state.version?.latest_release?.tag || "latest"; await api("/api/v1/admin/system/upgrade", { method: "POST", headers: { "X-HeroMail-Update-Token": token, "X-HeroMail-Target-Version": target } }); toast("升级任务已提交，服务将短暂重启"); startUpgradePolling(); }
+async function checkUpdates() {
+  state.version = (await api("/api/v1/admin/system/version")).data;
+  await render();
+  const current = String(state.version.current_version || "").replace(/^v/i, "");
+  const latest = String(state.version.latest_release?.tag || "").replace(/^v/i, "");
+  toast(current && current === latest ? "当前已是最新正式版本" : latest ? `发现新版本 ${state.version.latest_release.tag}` : "暂时无法获取最新版本");
+}
+async function requestUpgrade() {
+  const target = state.version?.latest_release?.tag;
+  if (!target) return toast("请先检查更新");
+  if (!window.confirm(`确认升级到 ${target}？升级期间服务会短暂重启。`)) return;
+  await api("/api/v1/admin/system/upgrade", { method: "POST", headers: { "X-HeroMail-Target-Version": target } });
+  toast("升级任务已提交，服务将短暂重启"); startUpgradePolling();
+}
 function startUpgradePolling() { clearInterval(state.upgradePolling); state.upgradePolling = setInterval(async () => { try { state.version = (await api("/api/v1/admin/system/version")).data; await render(); if (["success", "failed"].includes(state.version.upgrade.state)) clearInterval(state.upgradePolling); } catch (_) {} }, 3000); }
 
 document.addEventListener("click", async event => {
@@ -319,6 +435,7 @@ document.addEventListener("click", async event => {
   if (action === "create-key") { await createKey(); return; }
   if (action === "revoke-key") { await api(`/api/v1/api-keys/${target.dataset.id}`, { method: "DELETE" }); await refresh(); return; }
   if (action === "save-profile") { await saveProfile(); return; }
+  if (action === "change-password") { await changePassword(); return; }
   if (action === "logout") { await logout(); return; }
   if (action === "create-payment") { await createPayment(); return; }
   if (action === "create-webhook") { await createWebhook(); return; }
@@ -331,8 +448,11 @@ document.addEventListener("click", async event => {
   if (action === "save-service") { await saveService(); return; }
   if (action === "delete-service") { await deleteService(target.dataset.id); return; }
   if (action === "adjust-balance") { await adjustBalance(target); return; }
-  if (action === "create-payment-provider") { await createPaymentProvider(); return; }
+  if (action === "edit-payment-provider") { await showPaymentProviderEditor(target.dataset.id || ""); return; }
+  if (action === "save-payment-provider") { await savePaymentProvider(); return; }
+  if (action === "delete-payment-provider") { await deletePaymentProvider(target); return; }
   if (action === "microsoft-oauth") { await startMicrosoftOAuth(); return; }
+  if (action === "check-updates") { await checkUpdates(); return; }
   if (action === "upgrade") { await requestUpgrade(); return; }
   if (action === "close-modal") { document.querySelector("#secret-modal")?.remove(); return; }
 });
