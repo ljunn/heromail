@@ -195,11 +195,44 @@ textarea.field { resize: vertical; }
 .status-dot.orange { background: var(--orange); }
 .status-dot.red { background: var(--red); }
 
+/* 用户门户和管理员后台使用不同的信息密度与导航骨架。 */
+.brand { color: #fff; text-decoration: none; }
+.brand-logo { width: 36px; height: 36px; flex: 0 0 36px; }
+.portal-brand { display: none; align-items: center; gap: 9px; color: var(--ink); font-size: 18px; font-weight: 750; text-decoration: none; }
+.portal-brand img { width: 34px; height: 34px; }
+.user-nav { display: none; align-items: center; gap: 4px; margin-left: 28px; }
+.user-nav-item { display: inline-flex; align-items: center; gap: 7px; padding: 9px 10px; border: 0; border-radius: 7px; color: #5b687c; background: transparent; font-size: 12px; text-decoration: none; }
+.user-nav-item:hover, .user-nav-item.active { color: var(--blue); background: var(--blue-soft); }
+.user-nav-item .ui-icon { width: 16px; height: 16px; }
+.mobile-nav { display: none; }
+.user-shell .sidebar { display: none; }
+.user-shell .shell { margin-left: 0; }
+.user-shell .portal-brand, .user-shell .user-nav { display: inline-flex; }
+.user-shell .topbar { position: sticky; top: 0; z-index: 10; background: rgba(255,255,255,.96); }
+.admin-shell .portal-brand, .admin-shell .user-nav, .admin-shell .mobile-nav { display: none; }
+.admin-shell .topbar { justify-content: flex-end; }
+.portal-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 28px; }
+.portal-intro > div > span { color: var(--blue); font-size: 12px; font-weight: 750; }
+.portal-intro h1 { margin: 8px 0 7px; font-size: 30px; letter-spacing: 0; }
+.portal-intro p { max-width: 620px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
+.portal-service-section { padding: 22px 0 28px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.portal-section-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+.portal-section-head h2 { margin: 0 0 5px; font-size: 17px; }
+.portal-section-head p { margin: 0; color: var(--muted); font-size: 12px; }
+.portal-balance { color: var(--green); font-size: 13px; font-weight: 700; }
+.portal-layout { display: grid; grid-template-columns: minmax(300px, .8fr) minmax(440px, 1.4fr); gap: 16px; margin-top: 20px; align-items: start; }
+.portal-order-tool .portal-submit { width: 100%; margin-top: 20px; }
+.portal-policy { margin: 13px 0 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.portal-empty-task { display: grid; min-height: 250px; place-items: center; align-content: center; gap: 10px; color: var(--muted); text-align: center; }
+.portal-empty-task .ui-icon { width: 30px; height: 30px; color: #9aa9bc; }
+.portal-empty-task strong { color: var(--ink); font-size: 15px; }
+.portal-empty-task span { max-width: 260px; font-size: 12px; line-height: 1.7; }
+
 @media (max-width: 1180px) {
   .sidebar { width: 220px; }
   .shell { margin-left: 220px; }
   .stat-grid { grid-template-columns: repeat(3, minmax(0,1fr)); }
-  .work-grid, .admin-grid, .drawer-grid, .account-grid { grid-template-columns: 1fr; }
+  .work-grid, .admin-grid, .drawer-grid, .account-grid, .portal-layout { grid-template-columns: 1fr; }
   .drawer { position: static; }
 }
 
@@ -229,4 +262,17 @@ textarea.field { resize: vertical; }
   .bar-row { grid-template-columns: 72px 1fr 42px; }
   .pager { justify-content: center; }
   .auth-panel { padding: 22px; }
+  .user-shell .topbar { min-height: 64px; padding: 0 14px; }
+  .user-shell .portal-brand { display: inline-flex; margin-right: auto; font-size: 17px; }
+  .user-shell .portal-brand img { width: 30px; height: 30px; }
+  .user-shell .user-nav { display: none; }
+  .user-shell .content { padding-bottom: 92px; }
+  .user-shell .mobile-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 20; display: grid; grid-template-columns: repeat(4, 1fr); padding: 7px 8px calc(7px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: rgba(255,255,255,.98); }
+  .mobile-nav-item { display: grid; min-height: 48px; place-items: center; gap: 3px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; font-size: 10px; }
+  .mobile-nav-item .ui-icon { width: 18px; height: 18px; }
+  .mobile-nav-item.active { color: var(--blue); background: var(--blue-soft); font-weight: 700; }
+  .portal-intro { display: block; }
+  .portal-intro .ghost-btn { margin-top: 16px; }
+  .portal-section-head { align-items: flex-start; flex-direction: column; }
+  .portal-balance { align-self: flex-start; }
 }

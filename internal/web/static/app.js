@@ -61,11 +61,8 @@ function icon(name, className = "") {
   return `<svg class="ui-icon ${className}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${iconPaths[name] || iconPaths.globe}</svg>`;
 }
 
-const userNav = [
-  ["工作台", [["apply", "申请邮箱", "inbox"], ["current", "当前任务", "clock"], ["orders", "订单记录", "receipt"]]],
-  ["开发者", [["docs", "API 文档", "fileCode"], ["keys", "API 密钥", "key"], ["webhooks", "Webhook", "webhook"]]],
-  ["账户", [["usage", "用量与账单", "chart"], ["balance", "余额充值", "wallet"], ["settings", "个人设置", "userCog"], ["status", "服务状态", "activity"]]]
-];
+const userNav = [["apply", "申请邮箱", "inbox"], ["current", "当前任务", "clock"], ["orders", "订单", "receipt"], ["balance", "余额", "wallet"], ["keys", "开发者", "key"], ["settings", "账户", "userCog"]];
+const mobileUserNav = [["apply", "申请", "inbox"], ["current", "任务", "clock"], ["orders", "订单", "receipt"], ["settings", "账户", "userCog"]];
 
 const adminNav = [
   ["运行", [["admin-overview", "运行概览", "dashboard"]]],
@@ -75,13 +72,36 @@ const adminNav = [
   ["系统", [["admin-alerts", "告警中心", "bell"], ["admin-audit", "审计日志", "audit"], ["admin-settings", "系统设置", "settings"], ["admin-account", "管理员账户", "shieldUser"]]]
 ];
 
+const userRoutes = { apply: "/app", current: "/app/tasks", orders: "/app/orders", keys: "/app/developer/keys", webhooks: "/app/developer/webhooks", usage: "/app/usage", balance: "/app/wallet", settings: "/app/account" };
+const adminRoutes = { "admin-overview": "/admin", "admin-mailboxes": "/admin/mailboxes", "admin-pools": "/admin/pools", "admin-channels": "/admin/channels", "admin-services": "/admin/services", "admin-rules": "/admin/rules", "admin-routing": "/admin/routing", "admin-orders": "/admin/orders", "admin-users": "/admin/users", "admin-ledger": "/admin/ledger", "admin-payments": "/admin/payments", "admin-alerts": "/admin/alerts", "admin-audit": "/admin/audit", "admin-settings": "/admin/settings", "admin-account": "/admin/account" };
+
+function routeView(role, pathname = location.pathname) {
+  const routes = role === "admin" ? adminRoutes : userRoutes;
+  return Object.entries(routes).find(([, path]) => path === pathname)?.[0] || (role === "admin" ? "admin-overview" : "apply");
+}
+
+function redirectToLogin() {
+  const redirect = `${location.pathname}${location.search}`;
+  location.replace(`/login?redirect=${encodeURIComponent(redirect)}`);
+}
+
+async function navigate(view, replace = false) {
+  const routes = state.role === "admin" ? adminRoutes : userRoutes;
+  const path = routes[view];
+  if (!path) return;
+  stopPolling();
+  state.view = view;
+  history[replace ? "replaceState" : "pushState"]({ view }, "", path);
+  await refresh();
+}
+
 async function api(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
   const response = await fetch(path, { ...options, headers });
   const body = await response.json().catch(() => ({}));
   if (response.status === 401 && state.token) {
-    state.token = ""; state.user = null; localStorage.removeItem("heromail_token"); renderLogin();
+    state.token = ""; state.user = null; localStorage.removeItem("heromail_token"); redirectToLogin();
   }
   if (!response.ok) throw new Error(body.message || "请求失败");
   return body;
@@ -98,30 +118,16 @@ function toast(message) {
   clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove("show"), 2600);
 }
 
-function renderLogin(mode = "login") {
-  document.body.classList.add("auth-mode");
-  const register = mode === "register";
-  document.querySelector("#content").innerHTML = `<div class="auth-panel"><div class="auth-brand"><span class="brand-mark">${icon("logo")}</span><div><strong>HeroMail</strong><span>邮箱资源与注册验证码平台</span></div></div><h1>${register ? "创建账户" : "登录 HeroMail"}</h1><p>${register ? "创建用户账户后即可申请邮箱和配置开发者能力。" : "使用管理员或用户账户进入工作台。"}</p><form id="auth-form" class="form-grid"><label>邮箱<input class="field" name="email" type="email" autocomplete="email" required></label>${register ? `<label>显示名称<input class="field" name="display_name" autocomplete="name"></label>` : ""}<label>密码<input class="field" name="password" type="password" minlength="10" autocomplete="${register ? "new-password" : "current-password"}" required></label><button class="primary-btn" type="submit">${register ? "注册并登录" : "登录"}</button></form><button class="link-btn auth-switch" data-action="auth-mode" data-mode="${register ? "login" : "register"}">${register ? "已有账户，返回登录" : "没有账户，创建新账户"}</button></div>`;
-  document.querySelector("#auth-form").addEventListener("submit", event => authenticate(event, register));
-}
-
-async function authenticate(event, register) {
-  event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  try {
-    const result = await api(`/api/v1/auth/${register ? "register" : "login"}`, { method: "POST", body: JSON.stringify({ email: form.get("email"), password: form.get("password"), display_name: form.get("display_name") || "" }) });
-    state.token = result.data.token; state.user = result.data.user; state.role = state.user.role === "admin" ? "admin" : "user"; state.view = state.role === "admin" ? "admin-overview" : "apply";
-    localStorage.setItem("heromail_token", state.token); document.body.classList.remove("auth-mode"); await refresh();
-  } catch (error) { toast(error.message); }
-}
-
 function renderNav() {
-  const groups = state.role === "admin" ? adminNav : userNav;
-  document.querySelector(".brand > .brand-mark").innerHTML = icon("logo");
   document.querySelector("#role-label").textContent = state.role === "admin" ? "管理员端" : "用户端";
-  document.querySelector("#role-action").textContent = state.role === "admin" ? "切换用户端" : "切换管理员端";
-  document.querySelector(".role-switch").style.display = state.user?.role === "admin" ? "inline-flex" : "none";
-  document.querySelector("#nav").innerHTML = groups.map(([title, items]) => `<div class="nav-group"><div class="nav-title">${title}</div>${items.map(([view, label, iconName]) => `<button class="nav-item ${state.view === view ? "active" : ""}" data-action="view" data-view="${view}"><span class="nav-icon">${icon(iconName)}</span>${label}</button>`).join("")}</div>`).join("");
+  document.querySelector("#role-action").textContent = state.role === "admin" ? "用户门户" : "管理后台";
+  const roleSwitch = document.querySelector("#role-switch");
+  roleSwitch.style.display = state.user?.role === "admin" ? "inline-flex" : "none";
+  roleSwitch.href = state.role === "admin" ? "/app" : "/admin";
+  document.querySelector(".avatar").dataset.view = state.role === "admin" ? "admin-account" : "settings";
+  document.querySelector("#nav").innerHTML = adminNav.map(([title, items]) => `<div class="nav-group"><div class="nav-title">${title}</div>${items.map(([view, label, iconName]) => `<button class="nav-item ${state.view === view ? "active" : ""}" data-action="view" data-view="${view}" aria-label="${label}"><span class="nav-icon">${icon(iconName)}</span><span>${label}</span></button>`).join("")}</div>`).join("");
+  document.querySelector("#user-nav").innerHTML = userNav.map(([view, label, iconName]) => `<button class="user-nav-item ${state.view === view ? "active" : ""}" data-action="view" data-view="${view}" aria-label="${label}">${icon(iconName)}<span>${label}</span></button>`).join("") + `<a class="user-nav-item" href="/docs">${icon("fileCode")}<span>文档</span></a>`;
+  document.querySelector("#mobile-nav").innerHTML = mobileUserNav.map(([view, label, iconName]) => `<button class="mobile-nav-item ${state.view === view ? "active" : ""}" data-action="view" data-view="${view}" aria-label="${label}">${icon(iconName)}<span>${label}</span></button>`).join("");
 }
 
 function stat(label, value, note = "") { return `<div class="stat"><div class="stat-label">${label}</div><div class="stat-value">${value}</div><div class="stat-note">${note}</div></div>`; }
@@ -139,7 +145,7 @@ function renderApply() {
   const service = selectedService();
   const current = state.currentOrder;
   const inventory = Number(service.available_mailboxes || 0); const ttlMinutes = Math.max(1, Math.round(Number(service.ttl_seconds || 600) / 60)); const providers = (service.allowed_providers || []).map(item => item[0].toUpperCase() + item.slice(1)).join(" / ") || "未配置";
-  return pageHead("申请邮箱", "选择目标平台，系统自动分配临时邮箱并提取注册验证码。", `<button class="ghost-btn" data-action="view" data-view="orders">查看订单记录</button>`) + `<div class="card" style="margin-bottom:16px"><div class="card-head"><h2>1. 选择目标平台</h2><span class="muted">平台邮箱由系统自动分配</span></div><div class="card-body"><div class="service-grid">${state.services.map(serviceCard).join("") || `<div class="empty">管理员尚未启用目标平台</div>`}</div></div></div><div class="work-grid"><div class="card"><div class="card-head"><h2>2. 订单配置</h2></div><div class="card-body"><dl class="config-list"><div class="config-row"><dt>目标平台</dt><dd>${esc(service.name)}</dd></div><div class="config-row"><dt>邮箱类型</dt><dd>${esc(providers)}</dd></div><div class="config-row"><dt>可用库存</dt><dd>${inventory} 个</dd></div><div class="config-row"><dt>有效期</dt><dd>${ttlMinutes} 分钟</dd></div><div class="config-row"><dt>单价</dt><dd>${money(service.price)} / 次</dd></div></dl><button class="primary-btn" style="width:100%;margin-top:18px" data-action="create" ${state.busy || !inventory ? "disabled" : ""}>${state.busy ? "正在分配…" : inventory ? "申请邮箱" : "库存不足"}</button></div></div><div class="card task-card"><div class="card-head"><h2>3. 当前任务</h2>${current ? statusChip(current.status) : ""}</div><div class="card-body">${current ? renderTask(current) : `<div class="empty">提交申请后，已分配邮箱和验证码会显示在这里。</div>`}</div></div><div class="card"><div class="card-head"><h2>链路保障</h2></div><div class="card-body"><div class="status-list"><div class="status-item"><i class="status-dot"></i> PostgreSQL <span class="status-ok">就绪</span></div><div class="status-item"><i class="status-dot"></i> Redis 分配锁 <span class="status-ok">就绪</span></div><div class="status-item"><i class="status-dot"></i> 超时退款 <span class="status-ok">已启用</span></div></div><div class="notice">邮箱仅用于本次平台注册，凭证不会提供。有效期内未收到匹配验证码会自动退款。</div></div></div></div>${renderRecentOrders()}`;
+  return `<section class="portal-intro"><div><span>邮箱申请</span><h1>选择平台，开始收码任务</h1><p>系统自动分配可用邮箱。你只会看到本次任务需要的邮箱地址和验证码。</p></div><button class="ghost-btn" data-action="view" data-view="orders">查看订单</button></section><section class="portal-service-section"><div class="portal-section-head"><div><h2>目标平台</h2><p>价格、库存和有效期由管理员统一配置</p></div><span class="portal-balance">当前余额 ${money(state.user?.balance)}</span></div><div class="service-grid">${state.services.map(serviceCard).join("") || `<div class="empty">管理员尚未启用目标平台</div>`}</div></section><div class="portal-layout"><section class="card portal-order-tool"><div class="card-head"><h2>确认申请</h2><span class="muted">系统自动选择邮箱</span></div><div class="card-body"><dl class="config-list"><div class="config-row"><dt>目标平台</dt><dd>${esc(service.name)}</dd></div><div class="config-row"><dt>邮箱类型</dt><dd>${esc(providers)}</dd></div><div class="config-row"><dt>可用库存</dt><dd>${inventory} 个</dd></div><div class="config-row"><dt>任务有效期</dt><dd>${ttlMinutes} 分钟</dd></div><div class="config-row"><dt>本次费用</dt><dd>${money(service.price)}</dd></div></dl><button class="primary-btn portal-submit" data-action="create" ${state.busy || !inventory ? "disabled" : ""}>${state.busy ? "正在分配…" : inventory ? "申请邮箱" : "库存不足"}</button><p class="portal-policy">创建时预扣余额。分配失败不扣款，超时未收码自动退款。</p></div></section><section class="card task-card portal-task-tool"><div class="card-head"><h2>当前任务</h2>${current ? statusChip(current.status) : ""}</div><div class="card-body">${current ? renderTask(current) : `<div class="portal-empty-task">${icon("clock")}<strong>暂无进行中的任务</strong><span>申请成功后，邮箱、倒计时和验证码会集中显示在这里。</span></div>`}</div></section></div>${renderRecentOrders()}`;
 }
 
 function renderTask(order) {
@@ -277,7 +283,10 @@ function renderAdminAlerts() { const overview = state.overview || {}; const aler
 function renderServiceStatus() { return pageHead("服务状态", "检查 API、数据库、Redis、Graph 收码和支付通道。") + `<div class="card"><div class="card-body status-list"><div class="status-item"><i class="status-dot"></i> HTTP API <span class="status-ok">正常</span></div><div class="status-item"><i class="status-dot"></i> PostgreSQL 与 Redis <span class="status-ok">就绪</span></div><div class="status-item"><i class="status-dot"></i> Microsoft Graph <span class="status-ok">按配置运行</span></div><div class="status-item"><i class="status-dot"></i> Webhook Worker <span class="status-ok">运行中</span></div></div></div>`; }
 
 function render() {
-  if (!state.user) { renderLogin(); return Promise.resolve(); }
+  if (!state.user) { redirectToLogin(); return Promise.resolve(); }
+  document.body.classList.toggle("admin-shell", state.role === "admin");
+  document.body.classList.toggle("user-shell", state.role !== "admin");
+  document.body.classList.remove("auth-mode");
   renderNav();
   const views = { apply: renderApply, current: renderCurrent, orders: () => renderOrders() + renderPager("orders"), docs: renderDocs, keys: renderAPIKeys, webhooks: renderWebhooks, usage: renderUsage, balance: renderBalance, settings: renderSettings, status: renderServiceStatus, "admin-overview": renderAdminOverview, "admin-mailboxes": renderAdminMailboxes, "admin-pools": renderAdminPools, "admin-channels": renderAdminChannels, "admin-services": renderAdminServices, "admin-rules": renderAdminRules, "admin-routing": renderAdminRouting, "admin-orders": renderAdminOrders, "admin-users": renderAdminUsers, "admin-ledger": renderAdminLedger, "admin-payments": renderAdminPayments, "admin-alerts": renderAdminAlerts, "admin-audit": renderAdminAudit, "admin-settings": renderAdminSettings, "admin-account": renderAdminAccount };
   document.querySelector("#content").innerHTML = (views[state.view] || views.apply)();
@@ -293,6 +302,7 @@ async function loadUser() {
   const page = state.pagination.orders?.page || 1;
   const [me, services, orders] = await Promise.all([api("/api/v1/me"), api("/api/v1/services?page=1&page_size=100"), api(`/api/v1/orders?page=${page}&page_size=20`)]);
   state.user = me; state.services = (services.data || []).filter(service => service.enabled); state.orders = rememberPage("orders", orders); if (!state.services.some(service => service.code === state.selectedService) && state.services[0]) state.selectedService = state.services[0].code;
+  if (!state.currentOrder || !state.orders.some(order => order.id === state.currentOrder.id)) state.currentOrder = state.orders.find(order => ["assigned", "waiting_code", "code_received"].includes(order.status)) || null;
   if (["keys", "usage", "balance", "webhooks"].includes(state.view)) await loadUserModule(state.view);
 }
 async function loadUserModule(view) {
@@ -312,7 +322,7 @@ async function loadAdmin() {
   if (state.view === "admin-settings") state.version = (await api("/api/v1/admin/system/version")).data;
 }
 
-async function refresh() { try { if (!state.user && !state.token) { renderLogin(); return; } if (state.role === "admin") await loadAdmin(); else await loadUser(); await render(); } catch (error) { toast(error.message); } }
+async function refresh() { try { if (!state.user && !state.token) { redirectToLogin(); return; } if (state.role === "admin") await loadAdmin(); else await loadUser(); await render(); } catch (error) { toast(error.message); } }
 function stopPolling() { if (state.polling) { clearInterval(state.polling); state.polling = null; } }
 function startPolling(orderID) {
   stopPolling();
@@ -370,7 +380,7 @@ async function changePassword() {
   state.token = result.data.token; localStorage.setItem("heromail_token", state.token);
   await refresh(); toast("密码已修改，旧会话已全部撤销");
 }
-async function logout() { try { await api("/api/v1/auth/logout", { method: "POST" }); } finally { state.token = ""; state.user = null; localStorage.removeItem("heromail_token"); renderLogin(); } }
+async function logout() { try { await api("/api/v1/auth/logout", { method: "POST" }); } finally { state.token = ""; state.user = null; localStorage.removeItem("heromail_token"); redirectToLogin(); } }
 async function createPayment() { const amount = Number(document.querySelector("#topup-amount")?.value); const method = document.querySelector("#topup-method")?.value; const result = await api("/api/v1/payment/orders", { method: "POST", body: JSON.stringify({ amount, method, mobile: /Android|iPhone|iPad/i.test(navigator.userAgent) }) }); location.href = result.data.pay_url; }
 async function createWebhook() { const url = document.querySelector("#webhook-url")?.value.trim(); const result = await api("/api/v1/webhooks", { method: "POST", body: JSON.stringify({ url }) }); showSecret("Webhook 签名密钥", result.data.secret); await refresh(); }
 async function createPool() { const name = document.querySelector("#pool-name")?.value.trim(); if (!name) return toast("请输入邮箱池名称"); await api("/api/v1/admin/mailbox-pools", { method: "POST", body: JSON.stringify({ name, provider: document.querySelector("#pool-provider")?.value, region: document.querySelector("#pool-region")?.value, enabled: true, daily_limit: Number(document.querySelector("#pool-limit")?.value), cooldown_seconds: Number(document.querySelector("#pool-cooldown")?.value) }) }); await refresh(); toast("邮箱池已保存"); }
@@ -419,9 +429,9 @@ function startUpgradePolling() { clearInterval(state.upgradePolling); state.upgr
 document.addEventListener("click", async event => {
   const target = event.target.closest("[data-action]"); if (!target) return;
   const action = target.dataset.action;
-  if (action === "role") { stopPolling(); state.role = state.role === "user" ? "admin" : "user"; state.view = state.role === "admin" ? "admin-overview" : "apply"; state.currentOrder = null; await refresh(); return; }
-  if (action === "auth-mode") { renderLogin(target.dataset.mode); return; }
-  if (action === "view") { state.view = target.dataset.view; await refresh(); return; }
+  if (action === "role") { location.href = state.role === "admin" ? "/app" : "/admin"; return; }
+  if (action === "auth-mode") { location.href = target.dataset.mode === "register" ? "/register" : "/login"; return; }
+  if (action === "view") { await navigate(target.dataset.view); return; }
   if (action === "service") { state.selectedService = target.dataset.service; await render(); return; }
   if (action === "create") { await createOrder(); return; }
   if (action === "submit") { state.currentOrder = state.orders.find(order => order.id === target.dataset.order) || state.currentOrder; await mutateOrder("submitted"); return; }
@@ -457,5 +467,21 @@ document.addEventListener("click", async event => {
   if (action === "close-modal") { document.querySelector("#secret-modal")?.remove(); return; }
 });
 
-async function boot() { if (!state.token) { renderLogin(); return; } try { state.user = await api("/api/v1/me"); state.role = state.user.role === "admin" ? "admin" : "user"; state.view = state.role === "admin" ? "admin-overview" : "apply"; document.body.classList.remove("auth-mode"); await refresh(); } catch (error) { renderLogin(); toast(error.message); } }
+window.addEventListener("popstate", async () => {
+  if (!state.user) return;
+  state.view = routeView(state.role);
+  await refresh();
+});
+
+async function boot() {
+  if (!state.token) { redirectToLogin(); return; }
+  try {
+    state.user = await api("/api/v1/me");
+    const wantsAdmin = location.pathname === "/admin" || location.pathname.startsWith("/admin/");
+    if (wantsAdmin && state.user.role !== "admin") { location.replace("/app"); return; }
+    state.role = wantsAdmin && state.user.role === "admin" ? "admin" : "user";
+    state.view = routeView(state.role);
+    await refresh();
+  } catch (error) { state.token = ""; localStorage.removeItem("heromail_token"); redirectToLogin(); }
+}
 boot();
