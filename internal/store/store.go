@@ -68,7 +68,7 @@ func (s *Store) seed() {
 		for serviceID := range s.services {
 			states[serviceID] = domain.MailboxService{ServiceID: serviceID, State: domain.ServiceAvailable, ChangedAt: time.Now()}
 		}
-		s.mailboxes[id] = &domain.Mailbox{ID: id, Address: fmt.Sprintf("hero_%02d@%s", i, mailDomain), Provider: provider, Pool: pool, State: domain.MailboxAvailable, HealthScore: 84 + i%16, OAuthValidUntil: time.Now().Add(30 * 24 * time.Hour), Services: states}
+		s.mailboxes[id] = &domain.Mailbox{ID: id, Address: fmt.Sprintf("hero_%02d@%s", i, mailDomain), Provider: provider, Pool: pool, State: domain.MailboxAvailable, HealthScore: 84 + i%16, OAuthValidUntil: time.Now().Add(30 * 24 * time.Hour), ConnectionMethod: domain.MailboxConnectionMicrosoftOAuth, VerificationStatus: domain.MailboxVerificationVerified, LastVerifiedAt: time.Now(), RegisteredPlatforms: []string{}, Services: states}
 	}
 }
 
@@ -393,7 +393,15 @@ func (s *Store) Mailboxes() []domain.Mailbox {
 	defer s.mu.RUnlock()
 	out := make([]domain.Mailbox, 0, len(s.mailboxes))
 	for _, mailbox := range s.mailboxes {
-		out = append(out, cloneMailbox(*mailbox))
+		item := cloneMailbox(*mailbox)
+		item.RegisteredPlatforms = make([]string, 0)
+		for _, service := range s.services {
+			if state, ok := mailbox.Services[service.ID]; ok && state.State == domain.ServiceConsumed {
+				item.RegisteredPlatforms = append(item.RegisteredPlatforms, service.Code)
+			}
+		}
+		sort.Strings(item.RegisteredPlatforms)
+		out = append(out, item)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Address < out[j].Address })
 	return out
@@ -436,6 +444,7 @@ func cloneMailbox(mailbox domain.Mailbox) domain.Mailbox {
 		services[k] = v
 	}
 	mailbox.Services = services
+	mailbox.RegisteredPlatforms = append([]string(nil), mailbox.RegisteredPlatforms...)
 	return mailbox
 }
 

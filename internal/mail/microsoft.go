@@ -220,7 +220,7 @@ func (w *Worker) poll(ctx context.Context) {
 				refreshed["refresh_token"] = credential["refresh_token"]
 			}
 			credential, validUntil = refreshed, newValidUntil
-			_ = w.repository.UpdateMailboxCredential(mailbox.Mailbox.ID, credential, validUntil)
+			_ = w.repository.UpdateMailboxCredential("system", mailbox.Mailbox.ID, credential, validUntil, "")
 		}
 		messages, messageErr := w.client.Messages(ctx, credential["access_token"])
 		if messageErr != nil {

@@ -128,7 +128,8 @@ func (s *PostgresStore) seedDemoMailboxes(services []sqlService) error {
 			if index%2 == 0 {
 				provider, domainName, pool = "hotmail", "hotmail.com", "Hotmail Pool A"
 			}
-			mailbox := sqlMailbox{ID: fmt.Sprintf("mb-%03d", index), Address: fmt.Sprintf("hero_%02d@%s", index, domainName), Provider: provider, Pool: pool, State: string(domain.MailboxAvailable), HealthScore: 84 + index%16, OAuthValidUntil: time.Now().Add(30 * 24 * time.Hour)}
+			now := time.Now().UTC()
+			mailbox := sqlMailbox{ID: fmt.Sprintf("mb-%03d", index), Address: fmt.Sprintf("hero_%02d@%s", index, domainName), Provider: provider, Pool: pool, State: string(domain.MailboxAvailable), HealthScore: 84 + index%16, OAuthValidUntil: now.Add(30 * 24 * time.Hour), ConnectionMethod: domain.MailboxConnectionMicrosoftOAuth, VerificationStatus: domain.MailboxVerificationVerified, LastVerifiedAt: &now}
 			if err := tx.Where("id = ?", mailbox.ID).FirstOrCreate(&mailbox).Error; err != nil {
 				return err
 			}
@@ -524,18 +525,42 @@ func (s *PostgresStore) MailboxesPage(page, pageSize int) ([]domain.Mailbox, int
 		s.db.Where("mailbox_id IN ?", mailboxIDs).Find(&states)
 	}
 	stateMap := make(map[string]map[string]domain.MailboxService)
+	consumedServiceIDs := make(map[string]struct{})
 	for _, state := range states {
 		if stateMap[state.MailboxID] == nil {
 			stateMap[state.MailboxID] = make(map[string]domain.MailboxService)
 		}
 		stateMap[state.MailboxID][state.ServiceID] = domain.MailboxService{ServiceID: state.ServiceID, State: domain.ServiceMailboxState(state.State), ChangedAt: state.ChangedAt}
+		if domain.ServiceMailboxState(state.State) == domain.ServiceConsumed {
+			consumedServiceIDs[state.ServiceID] = struct{}{}
+		}
+	}
+	serviceCodes := make([]sqlService, 0, len(consumedServiceIDs))
+	if len(consumedServiceIDs) > 0 {
+		ids := make([]string, 0, len(consumedServiceIDs))
+		for id := range consumedServiceIDs {
+			ids = append(ids, id)
+		}
+		s.db.Select("id", "code", "name").Where("id IN ?", ids).Order("name ASC").Find(&serviceCodes)
 	}
 	items := make([]domain.Mailbox, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, mapMailbox(row, stateMap[row.ID]))
+		mailbox := mapMailbox(row, stateMap[row.ID])
+		mailbox.RegisteredPlatforms = registeredPlatforms(stateMap[row.ID], serviceCodes)
+		items = append(items, mailbox)
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Address < items[j].Address })
 	return items, total
+}
+
+func registeredPlatforms(states map[string]domain.MailboxService, services []sqlService) []string {
+	result := make([]string, 0)
+	for _, service := range services {
+		if state, ok := states[service.ID]; ok && state.State == domain.ServiceConsumed {
+			result = append(result, service.Code)
+		}
+	}
+	return result
 }
 
 func (s *PostgresStore) updateOrder(id, userID string, allowed []domain.OrderStatus, mutate func(*sqlOrder, time.Time)) (domain.Order, error) {
@@ -617,9 +642,12 @@ func mapService(row sqlService) domain.Service {
 }
 
 func mapMailbox(row sqlMailbox, states map[string]domain.MailboxService) domain.Mailbox {
-	mailbox := domain.Mailbox{ID: row.ID, Address: row.Address, Provider: row.Provider, Pool: row.Pool, State: domain.MailboxState(row.State), HealthScore: row.HealthScore, OAuthValidUntil: row.OAuthValidUntil, ActiveOrderID: row.ActiveOrderID, TodayCodes: row.TodayCodes, Services: states}
+	mailbox := domain.Mailbox{ID: row.ID, Address: row.Address, Provider: row.Provider, Pool: row.Pool, State: domain.MailboxState(row.State), HealthScore: row.HealthScore, OAuthValidUntil: row.OAuthValidUntil, ActiveOrderID: row.ActiveOrderID, TodayCodes: row.TodayCodes, ConnectionMethod: row.ConnectionMethod, VerificationStatus: row.VerificationStatus, VerificationError: row.VerificationError, Services: states}
 	if row.LastReceivedAt != nil {
 		mailbox.LastReceivedAt = *row.LastReceivedAt
+	}
+	if row.LastVerifiedAt != nil {
+		mailbox.LastVerifiedAt = *row.LastVerifiedAt
 	}
 	return mailbox
 }

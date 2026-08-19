@@ -146,6 +146,7 @@ func (s *Server) routes() {
 	admin.GET("/mailboxes", s.adminMailboxes)
 	admin.POST("/mailboxes", s.adminSaveMailbox)
 	admin.DELETE("/mailboxes/:id", s.adminDeleteMailbox)
+	admin.POST("/mailboxes/:id/verify", s.adminVerifyMailbox)
 	admin.GET("/mailbox-pools", s.adminMailboxPools)
 	admin.POST("/mailbox-pools", s.adminSaveMailboxPool)
 	admin.DELETE("/mailbox-pools/:id", s.adminDeleteMailboxPool)

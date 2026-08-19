@@ -3,6 +3,7 @@ package httpapi
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -90,6 +91,73 @@ func (s *Server) adminDeleteMailbox(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+func (s *Server) adminVerifyMailbox(c *gin.Context) {
+	repository, ok := s.Store.(store.ResourceRepository)
+	if !ok || s.Microsoft == nil || !s.Microsoft.Enabled() {
+		writeError(c, http.StatusServiceUnavailable, "mailbox_verification_unavailable", "Microsoft OAuth 尚未配置")
+		return
+	}
+	mailbox, err := repository.GetMailboxCredential(c.Param("id"))
+	if err != nil {
+		writeError(c, http.StatusNotFound, "mailbox_not_found", "邮箱不存在")
+		return
+	}
+	method := mailbox.Mailbox.ConnectionMethod
+	if method == "" {
+		method = domain.MailboxConnectionMicrosoftOAuth
+	}
+	if method != domain.MailboxConnectionMicrosoftOAuth {
+		writeError(c, http.StatusBadRequest, "mailbox_method_unsupported", "当前连接方式不支持在线验证")
+		return
+	}
+	now := time.Now().UTC()
+	markFailed := func(cause error) {
+		_ = repository.UpdateMailboxVerification(demoUser(c), mailbox.Mailbox.ID, method, domain.MailboxVerificationFailed, cause.Error(), now, c.ClientIP())
+	}
+	credential := mailbox.Config
+	accessToken := credential["access_token"]
+	validUntil, _ := time.Parse(time.RFC3339, credential["expires_at"])
+	if accessToken == "" || time.Until(validUntil) < 5*time.Minute {
+		if credential["refresh_token"] == "" {
+			err = errors.New("邮箱缺少可用的 OAuth 刷新凭证")
+			markFailed(err)
+			writeError(c, http.StatusBadGateway, "mailbox_verification_failed", err.Error())
+			return
+		}
+		credential, validUntil, err = s.Microsoft.Refresh(c.Request.Context(), credential["refresh_token"])
+		if err != nil {
+			markFailed(err)
+			writeError(c, http.StatusBadGateway, "mailbox_verification_failed", err.Error())
+			return
+		}
+		if credential["refresh_token"] == "" {
+			credential["refresh_token"] = mailbox.Config["refresh_token"]
+		}
+		if err = repository.UpdateMailboxCredential(demoUser(c), mailbox.Mailbox.ID, credential, validUntil, c.ClientIP()); err != nil {
+			writeError(c, http.StatusInternalServerError, "mailbox_credential_save_failed", "刷新后的邮箱凭证保存失败")
+			return
+		}
+		accessToken = credential["access_token"]
+	}
+	profile, err := s.Microsoft.Profile(c.Request.Context(), accessToken)
+	if err != nil {
+		markFailed(err)
+		writeError(c, http.StatusBadGateway, "mailbox_verification_failed", err.Error())
+		return
+	}
+	if !strings.EqualFold(profile.Address, mailbox.Mailbox.Address) {
+		err = errors.New("OAuth 账户与邮箱资产地址不一致")
+		markFailed(err)
+		writeError(c, http.StatusConflict, "mailbox_address_mismatch", err.Error())
+		return
+	}
+	if err = repository.UpdateMailboxVerification(demoUser(c), mailbox.Mailbox.ID, method, domain.MailboxVerificationVerified, "", now, c.ClientIP()); err != nil {
+		writeError(c, http.StatusInternalServerError, "mailbox_verification_save_failed", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"status": domain.MailboxVerificationVerified, "verified_at": now}})
 }
 
 func (s *Server) adminSaveService(c *gin.Context) {
@@ -229,7 +297,19 @@ func (s *Server) microsoftOAuthCallback(c *gin.Context) {
 	if strings.Contains(profile.Address, "@hotmail.") || strings.HasSuffix(profile.Address, "@hotmail.com") {
 		provider = "hotmail"
 	}
-	_, err = repository.SaveMailbox(state.ActorID, domain.Mailbox{Address: profile.Address, Provider: provider, Pool: state.Pool, State: domain.MailboxAvailable, HealthScore: 100, OAuthValidUntil: validUntil}, credential, c.ClientIP())
+	now := time.Now().UTC()
+	_, err = repository.SaveMailbox(state.ActorID, domain.Mailbox{
+		Address:             profile.Address,
+		Provider:            provider,
+		Pool:                state.Pool,
+		State:               domain.MailboxAvailable,
+		HealthScore:         100,
+		OAuthValidUntil:     validUntil,
+		ConnectionMethod:    domain.MailboxConnectionMicrosoftOAuth,
+		VerificationStatus:  domain.MailboxVerificationVerified,
+		LastVerifiedAt:      now,
+		RegisteredPlatforms: []string{},
+	}, credential, c.ClientIP())
 	if err != nil {
 		writeError(c, http.StatusBadRequest, "mailbox_save_failed", err.Error())
 		return

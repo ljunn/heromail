@@ -37,6 +37,14 @@ const (
 	ServiceBlocked   ServiceMailboxState = "blocked"
 )
 
+const (
+	MailboxConnectionMicrosoftOAuth = "microsoft_oauth"
+
+	MailboxVerificationPending  = "pending_verification"
+	MailboxVerificationVerified = "verified"
+	MailboxVerificationFailed   = "failed"
+)
+
 type User struct {
 	ID          string    `json:"id"`
 	Email       string    `json:"email"`
@@ -68,17 +76,22 @@ type MailboxService struct {
 }
 
 type Mailbox struct {
-	ID              string                    `json:"id"`
-	Address         string                    `json:"address"`
-	Provider        string                    `json:"provider"`
-	Pool            string                    `json:"pool"`
-	State           MailboxState              `json:"state"`
-	HealthScore     int                       `json:"health_score"`
-	OAuthValidUntil time.Time                 `json:"oauth_valid_until"`
-	ActiveOrderID   string                    `json:"active_order_id,omitempty"`
-	TodayCodes      int                       `json:"today_codes"`
-	LastReceivedAt  time.Time                 `json:"last_received_at,omitempty"`
-	Services        map[string]MailboxService `json:"services"`
+	ID                  string                    `json:"id"`
+	Address             string                    `json:"address"`
+	Provider            string                    `json:"provider"`
+	Pool                string                    `json:"pool"`
+	State               MailboxState              `json:"state"`
+	HealthScore         int                       `json:"health_score"`
+	OAuthValidUntil     time.Time                 `json:"oauth_valid_until"`
+	ActiveOrderID       string                    `json:"active_order_id,omitempty"`
+	TodayCodes          int                       `json:"today_codes"`
+	LastReceivedAt      time.Time                 `json:"last_received_at,omitempty"`
+	ConnectionMethod    string                    `json:"connection_method,omitempty"`
+	VerificationStatus  string                    `json:"verification_status,omitempty"`
+	LastVerifiedAt      time.Time                 `json:"last_verified_at,omitempty"`
+	VerificationError   string                    `json:"verification_error,omitempty"`
+	RegisteredPlatforms []string                  `json:"registered_platforms"`
+	Services            map[string]MailboxService `json:"services"`
 }
 
 type Order struct {

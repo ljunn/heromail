@@ -73,6 +73,10 @@ type sqlMailbox struct {
 	ActiveOrderID       string    `gorm:"size:64;index"`
 	TodayCodes          int       `gorm:"not null;default:0"`
 	LastReceivedAt      *time.Time
+	ConnectionMethod    string `gorm:"size:32;index"`
+	VerificationStatus  string `gorm:"size:24;index"`
+	LastVerifiedAt      *time.Time
+	VerificationError   string `gorm:"size:500"`
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 }

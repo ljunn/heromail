@@ -30,6 +30,9 @@ func TestRegistrationConsumesMailboxForOneServiceOnly(t *testing.T) {
 	if got := mailbox.Services["svc-openai"].State; got != domain.ServiceAvailable {
 		t.Fatalf("openai state = %s, want %s", got, domain.ServiceAvailable)
 	}
+	if len(mailbox.RegisteredPlatforms) != 1 || mailbox.RegisteredPlatforms[0] != "github" {
+		t.Fatalf("registered platforms = %#v, want [github]", mailbox.RegisteredPlatforms)
+	}
 
 	second, err := s.CreateOrder("user-001", "svc-github", "test-2")
 	if err != nil {

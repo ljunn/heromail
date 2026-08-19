@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ljunn/heromail/internal/domain"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func (s *PostgresStore) ListMailboxPoolsPage(page, pageSize int) ([]domain.MailboxPool, int64) {
@@ -69,9 +70,9 @@ func (s *PostgresStore) DeleteMailboxPool(actorID, poolID, ip string) error {
 }
 
 func (s *PostgresStore) SaveMailbox(actorID string, mailbox domain.Mailbox, credential map[string]string, ip string) (domain.Mailbox, error) {
-	if mailbox.ID == "" {
-		mailbox.ID = uuid.NewString()
-	}
+	mailbox.Address = strings.ToLower(strings.TrimSpace(mailbox.Address))
+	mailbox.Provider = strings.ToLower(strings.TrimSpace(mailbox.Provider))
+	mailbox.Pool = strings.TrimSpace(mailbox.Pool)
 	encrypted := ""
 	var err error
 	if len(credential) > 0 {
@@ -80,17 +81,75 @@ func (s *PostgresStore) SaveMailbox(actorID string, mailbox domain.Mailbox, cred
 			return domain.Mailbox{}, err
 		}
 	}
-	row := sqlMailbox{ID: mailbox.ID, Address: strings.ToLower(strings.TrimSpace(mailbox.Address)), Provider: strings.ToLower(mailbox.Provider), Pool: mailbox.Pool, State: string(mailbox.State), HealthScore: mailbox.HealthScore, OAuthValidUntil: mailbox.OAuthValidUntil, EncryptedCredential: encrypted}
-	if row.State == "" {
-		row.State = string(domain.MailboxAvailable)
-	}
-	if row.HealthScore == 0 {
-		row.HealthScore = 100
-	}
+	var row sqlMailbox
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		var existing sqlMailbox
-		if findErr := tx.First(&existing, "id = ?", row.ID).Error; findErr == nil && encrypted == "" {
-			row.EncryptedCredential = existing.EncryptedCredential
+		query := tx.Where("address = ?", mailbox.Address)
+		if mailbox.ID != "" {
+			query = tx.Where("id = ? OR address = ?", mailbox.ID, mailbox.Address)
+		}
+		findErr := query.First(&existing).Error
+		if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
+			return findErr
+		}
+		if findErr == nil {
+			row = existing
+			row.Address = mailbox.Address
+			row.Provider = mailbox.Provider
+			row.Pool = mailbox.Pool
+			if mailbox.HealthScore > 0 {
+				row.HealthScore = mailbox.HealthScore
+			}
+			if !mailbox.OAuthValidUntil.IsZero() {
+				row.OAuthValidUntil = mailbox.OAuthValidUntil
+			}
+			if mailbox.ConnectionMethod != "" {
+				row.ConnectionMethod = mailbox.ConnectionMethod
+			}
+			if mailbox.VerificationStatus != "" {
+				row.VerificationStatus = mailbox.VerificationStatus
+				row.VerificationError = mailbox.VerificationError
+			}
+			if mailbox.State != "" && row.ActiveOrderID == "" {
+				row.State = string(mailbox.State)
+			}
+			if !mailbox.LastVerifiedAt.IsZero() {
+				verifiedAt := mailbox.LastVerifiedAt
+				row.LastVerifiedAt = &verifiedAt
+			}
+			if row.ActiveOrderID == "" && row.State == string(domain.MailboxError) && mailbox.VerificationStatus == domain.MailboxVerificationVerified {
+				row.State = string(domain.MailboxAvailable)
+			}
+		} else {
+			mailboxID := mailbox.ID
+			if mailboxID == "" {
+				mailboxID = uuid.NewString()
+			}
+			row = sqlMailbox{
+				ID:                 mailboxID,
+				Address:            mailbox.Address,
+				Provider:           mailbox.Provider,
+				Pool:               mailbox.Pool,
+				State:              string(mailbox.State),
+				HealthScore:        mailbox.HealthScore,
+				OAuthValidUntil:    mailbox.OAuthValidUntil,
+				ConnectionMethod:   mailbox.ConnectionMethod,
+				VerificationStatus: mailbox.VerificationStatus,
+				VerificationError:  mailbox.VerificationError,
+			}
+			if row.State == "" {
+				row.State = string(domain.MailboxAvailable)
+			}
+			if row.HealthScore == 0 {
+				row.HealthScore = 100
+			}
+			if !mailbox.LastVerifiedAt.IsZero() {
+				verifiedAt := mailbox.LastVerifiedAt
+				row.LastVerifiedAt = &verifiedAt
+			}
+		}
+		if encrypted != "" {
+			row.EncryptedCredential = encrypted
 		}
 		if err := tx.Save(&row).Error; err != nil {
 			return err
@@ -162,12 +221,50 @@ func (s *PostgresStore) ListMailboxCredentials(limit int) ([]MailboxCredential, 
 	return items, nil
 }
 
-func (s *PostgresStore) UpdateMailboxCredential(mailboxID string, credential map[string]string, validUntil time.Time) error {
+func (s *PostgresStore) UpdateMailboxCredential(actorID, mailboxID string, credential map[string]string, validUntil time.Time, ip string) error {
 	encrypted, err := s.encryptJSON(credential)
 	if err != nil {
 		return err
 	}
-	return s.db.Model(&sqlMailbox{}).Where("id = ?", mailboxID).Updates(map[string]any{"encrypted_credential": encrypted, "oauth_valid_until": validUntil, "state": domain.MailboxAvailable}).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&sqlMailbox{}).Where("id = ?", mailboxID).Updates(map[string]any{"encrypted_credential": encrypted, "oauth_valid_until": validUntil})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrMailboxNotFound
+		}
+		return tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: actorID, Action: "mailbox.credential.refresh", ResourceType: "mailbox", ResourceID: mailboxID, Detail: "刷新邮箱 OAuth 凭证", IP: ip}).Error
+	})
+}
+
+// UpdateMailboxVerification 只更新连接健康状态，不触碰邮箱凭证。
+func (s *PostgresStore) UpdateMailboxVerification(actorID, mailboxID, method, status, verificationError string, verifiedAt time.Time, ip string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var mailbox sqlMailbox
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&mailbox, "id = ?", mailboxID).Error; err != nil {
+			return ErrMailboxNotFound
+		}
+		mailbox.ConnectionMethod = method
+		mailbox.VerificationStatus = status
+		mailbox.VerificationError = verificationError
+		if !verifiedAt.IsZero() {
+			mailbox.LastVerifiedAt = &verifiedAt
+		}
+		if status == domain.MailboxVerificationVerified {
+			mailbox.HealthScore = 100
+			if mailbox.State == string(domain.MailboxError) && mailbox.ActiveOrderID == "" {
+				mailbox.State = string(domain.MailboxAvailable)
+			}
+		} else if status == domain.MailboxVerificationFailed && mailbox.ActiveOrderID == "" && mailbox.State != string(domain.MailboxBlocked) {
+			mailbox.State = string(domain.MailboxError)
+			mailbox.HealthScore = 0
+		}
+		if err := tx.Save(&mailbox).Error; err != nil {
+			return err
+		}
+		return tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: actorID, Action: "mailbox.verify", ResourceType: "mailbox", ResourceID: mailboxID, Detail: "邮箱连接验证结果：" + status, IP: ip}).Error
+	})
 }
 
 func (s *PostgresStore) SaveService(actorID string, service domain.Service, ip string) (domain.Service, error) {
