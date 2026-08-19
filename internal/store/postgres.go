@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -151,7 +152,11 @@ func (s *PostgresStore) ensureDefaultMailboxPool() error {
 		for index := range services {
 			if contains(services[index].AllowedProviders, domain.MailboxProviderOutlook) && !contains(services[index].AllowedProviders, domain.MailboxProviderOutlookDE) {
 				services[index].AllowedProviders = append(services[index].AllowedProviders, domain.MailboxProviderOutlookDE)
-				if err := tx.Model(&services[index]).Update("allowed_providers", services[index].AllowedProviders).Error; err != nil {
+				providers, err := json.Marshal(services[index].AllowedProviders)
+				if err != nil {
+					return err
+				}
+				if err := tx.Model(&services[index]).Update("allowed_providers", gorm.Expr("CAST(? AS jsonb)", string(providers))).Error; err != nil {
 					return err
 				}
 				updatedServices++
