@@ -22,16 +22,26 @@ func NewVerificationWorker(repository pendingVerificationRepository, queue store
 }
 
 func (w *VerificationWorker) Run(ctx context.Context) {
-	if ids, err := w.repository.PendingMailboxVerificationIDs(1000); err == nil {
-		for _, id := range ids {
-			_ = w.queue.EnqueueMailboxVerification(ctx, id)
-		}
-	}
+	nextReconcile := time.Time{}
 	for ctx.Err() == nil {
+		if time.Now().After(nextReconcile) {
+			w.reconcile(ctx)
+			nextReconcile = time.Now().Add(30 * time.Second)
+		}
 		mailboxID, err := w.queue.DequeueMailboxVerification(ctx, 5*time.Second)
 		if err != nil || mailboxID == "" {
 			continue
 		}
 		_, _ = w.verifier.Verify(ctx, "system", mailboxID, "")
+	}
+}
+
+func (w *VerificationWorker) reconcile(ctx context.Context) {
+	ids, err := w.repository.PendingMailboxVerificationIDs(1000)
+	if err != nil {
+		return
+	}
+	for _, id := range ids {
+		_ = w.queue.EnqueueMailboxVerification(ctx, id)
 	}
 }

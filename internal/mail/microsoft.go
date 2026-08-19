@@ -205,14 +205,23 @@ func (c *MicrosoftClient) Messages(ctx context.Context, accessToken string) ([]M
 }
 
 type Worker struct {
-	repository store.ResourceRepository
+	repository workerRepository
 	receiver   CodeReceiver
 	client     *MicrosoftClient
 	imap       IMAPMessageConnector
 	interval   time.Duration
 }
 
-func NewWorker(repository store.ResourceRepository, receiver CodeReceiver, client *MicrosoftClient, interval time.Duration) *Worker {
+type workerRepository interface {
+	ListMailboxCredentialsPage(afterID string, limit int) ([]store.MailboxCredential, error)
+	UpdateMailboxCredential(actorID, mailboxID string, credential map[string]string, validUntil time.Time, ip string) error
+	UpdateMailboxVerification(actorID, mailboxID, method, status, verificationError string, verifiedAt time.Time, ip string) error
+	WaitingOrdersForMailbox(mailboxID string) []domain.Order
+	ServiceByID(serviceID string) (domain.Service, bool)
+	MarkMailEvent(mailboxID, messageID, sender, subject string, receivedAt time.Time) (bool, error)
+}
+
+func NewWorker(repository workerRepository, receiver CodeReceiver, client *MicrosoftClient, interval time.Duration) *Worker {
 	if interval < 5*time.Second {
 		interval = 15 * time.Second
 	}
@@ -234,65 +243,77 @@ func (w *Worker) Run(ctx context.Context) {
 }
 
 func (w *Worker) poll(ctx context.Context) {
-	mailboxes, err := w.repository.ListMailboxCredentials(100)
-	if err != nil {
+	const batchSize = 100
+	afterID := ""
+	for {
+		mailboxes, err := w.repository.ListMailboxCredentialsPage(afterID, batchSize)
+		if err != nil {
+			return
+		}
+		for _, mailbox := range mailboxes {
+			w.pollMailbox(ctx, mailbox)
+		}
+		if len(mailboxes) < batchSize {
+			return
+		}
+		afterID = mailboxes[len(mailboxes)-1].Mailbox.ID
+	}
+}
+
+func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredential) {
+	orders := w.repository.WaitingOrdersForMailbox(mailbox.Mailbox.ID)
+	if len(orders) == 0 {
 		return
 	}
-	for _, mailbox := range mailboxes {
-		orders := w.repository.WaitingOrdersForMailbox(mailbox.Mailbox.ID)
-		if len(orders) == 0 {
-			continue
+	credential := mailbox.Config
+	useIMAP := mailbox.Mailbox.ConnectionMethod == domain.MailboxConnectionIMAP
+	validUntil, _ := time.Parse(time.RFC3339, credential["expires_at"])
+	needsRefresh := credential["refresh_token"] != "" && (credential["access_token"] == "" || time.Until(validUntil) < 5*time.Minute)
+	if needsRefresh {
+		refreshed, newValidUntil, refreshErr := w.client.RefreshCredential(ctx, credential)
+		if refreshErr != nil {
+			return
 		}
-		credential := mailbox.Config
-		useIMAP := mailbox.Mailbox.ConnectionMethod == domain.MailboxConnectionIMAP
-		validUntil, _ := time.Parse(time.RFC3339, credential["expires_at"])
-		needsRefresh := credential["refresh_token"] != "" && (credential["access_token"] == "" || time.Until(validUntil) < 5*time.Minute)
-		if needsRefresh {
-			refreshed, newValidUntil, refreshErr := w.client.RefreshCredential(ctx, credential)
-			if refreshErr != nil {
-				continue
-			}
-			credential, validUntil = mergeCredential(credential, refreshed), newValidUntil
-			_ = w.repository.UpdateMailboxCredential("system", mailbox.Mailbox.ID, credential, validUntil, "")
+		credential, validUntil = mergeCredential(credential, refreshed), newValidUntil
+		_ = w.repository.UpdateMailboxCredential("system", mailbox.Mailbox.ID, credential, validUntil, "")
+	}
+	var messages []Message
+	var messageErr error
+	if useIMAP {
+		messages, messageErr = w.imap.Messages(ctx, mailbox.Mailbox.Address, credential)
+	} else {
+		if credential["access_token"] == "" {
+			return
 		}
-		var messages []Message
-		var messageErr error
+		messages, messageErr = w.client.Messages(ctx, credential["access_token"])
+	}
+	if messageErr != nil {
 		if useIMAP {
-			messages, messageErr = w.imap.Messages(ctx, mailbox.Mailbox.Address, credential)
-		} else {
-			if credential["access_token"] == "" {
-				continue
+			message := messageErr.Error()
+			if len(message) > 480 {
+				message = message[:480]
 			}
-			messages, messageErr = w.client.Messages(ctx, credential["access_token"])
+			_ = w.repository.UpdateMailboxVerification("system", mailbox.Mailbox.ID, domain.MailboxConnectionIMAP, domain.MailboxVerificationFailed, message, time.Now().UTC(), "")
 		}
-		if messageErr != nil {
-			if useIMAP {
-				message := messageErr.Error()
-				if len(message) > 480 {
-					message = message[:480]
-				}
-				_ = w.repository.UpdateMailboxVerification("system", mailbox.Mailbox.ID, domain.MailboxConnectionIMAP, domain.MailboxVerificationFailed, message, time.Now().UTC(), "")
-			}
+		return
+	}
+	for _, message := range messages {
+		if message.ReceivedAt.Before(orders[0].SubmittedAt.Add(-time.Minute)) {
 			continue
 		}
-		for _, message := range messages {
-			if message.ReceivedAt.Before(orders[0].SubmittedAt.Add(-time.Minute)) {
+		fresh, markErr := w.repository.MarkMailEvent(mailbox.Mailbox.ID, message.ID, message.Sender, message.Subject, message.ReceivedAt)
+		if markErr != nil || !fresh {
+			continue
+		}
+		for _, order := range orders {
+			service, ok := w.repository.ServiceByID(order.ServiceID)
+			if !ok {
 				continue
 			}
-			fresh, markErr := w.repository.MarkMailEvent(mailbox.Mailbox.ID, message.ID, message.Sender, message.Subject, message.ReceivedAt)
-			if markErr != nil || !fresh {
-				continue
-			}
-			for _, order := range orders {
-				service, ok := w.repository.ServiceByID(order.ServiceID)
-				if !ok {
-					continue
-				}
-				code, matched := matchCode(service, message)
-				if matched {
-					_, _ = w.receiver.ReceiveCodeValue(order.ID, code)
-					break
-				}
+			code, matched := matchCode(service, message)
+			if matched {
+				_, _ = w.receiver.ReceiveCodeValue(order.ID, code)
+				break
 			}
 		}
 	}

@@ -124,6 +124,7 @@ type Overview struct {
 	AvailableMailboxes int     `json:"available_mailboxes"`
 	TotalMailboxes     int     `json:"total_mailboxes"`
 	OutlookMailboxes   int     `json:"outlook_mailboxes"`
+	OutlookDEMailboxes int     `json:"outlook_de_mailboxes"`
 	HotmailMailboxes   int     `json:"hotmail_mailboxes"`
 	PendingMailboxes   int     `json:"pending_mailboxes"`
 	VerifiedMailboxes  int     `json:"verified_mailboxes"`

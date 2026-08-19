@@ -21,12 +21,10 @@ type OAuthState struct {
 type ResourceRepository interface {
 	ListMailboxPoolsPage(page, pageSize int) ([]domain.MailboxPool, int64)
 	MailboxPoolByName(name string) (domain.MailboxPool, bool)
-	SaveMailboxPool(actorID string, pool domain.MailboxPool, ip string) (domain.MailboxPool, error)
-	DeleteMailboxPool(actorID, poolID, ip string) error
 	SaveMailbox(actorID string, mailbox domain.Mailbox, credential map[string]string, ip string) (domain.Mailbox, error)
 	DeleteMailbox(actorID, mailboxID, ip string) error
 	GetMailboxCredential(mailboxID string) (MailboxCredential, error)
-	ListMailboxCredentials(limit int) ([]MailboxCredential, error)
+	ListMailboxCredentialsPage(afterID string, limit int) ([]MailboxCredential, error)
 	UpdateMailboxCredential(actorID, mailboxID string, credential map[string]string, validUntil time.Time, ip string) error
 	UpdateMailboxVerification(actorID, mailboxID, method, status, verificationError string, verifiedAt time.Time, ip string) error
 	PendingMailboxVerificationIDs(limit int) ([]string, error)

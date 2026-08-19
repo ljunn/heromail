@@ -1,12 +1,66 @@
 package mail
 
 import (
+	"context"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ljunn/heromail/internal/domain"
+	"github.com/ljunn/heromail/internal/store"
 )
+
+type pagingWorkerRepository struct {
+	mailboxes []store.MailboxCredential
+	pages     int
+}
+
+func (s *pagingWorkerRepository) ListMailboxCredentialsPage(afterID string, limit int) ([]store.MailboxCredential, error) {
+	s.pages++
+	start := 0
+	for start < len(s.mailboxes) && s.mailboxes[start].Mailbox.ID <= afterID {
+		start++
+	}
+	end := start + limit
+	if end > len(s.mailboxes) {
+		end = len(s.mailboxes)
+	}
+	return s.mailboxes[start:end], nil
+}
+
+func (*pagingWorkerRepository) UpdateMailboxCredential(string, string, map[string]string, time.Time, string) error {
+	return nil
+}
+func (*pagingWorkerRepository) UpdateMailboxVerification(string, string, string, string, string, time.Time, string) error {
+	return nil
+}
+func (*pagingWorkerRepository) WaitingOrdersForMailbox(string) []domain.Order { return nil }
+func (*pagingWorkerRepository) ServiceByID(string) (domain.Service, bool) {
+	return domain.Service{}, false
+}
+func (*pagingWorkerRepository) MarkMailEvent(string, string, string, string, time.Time) (bool, error) {
+	return true, nil
+}
+
+type codeReceiverStub struct{}
+
+func (codeReceiverStub) ReceiveCodeValue(string, string) (domain.Order, error) {
+	return domain.Order{}, nil
+}
+
+func TestWorkerScansMailboxCredentialsPastFirstPage(t *testing.T) {
+	repository := &pagingWorkerRepository{mailboxes: make([]store.MailboxCredential, 205)}
+	for index := range repository.mailboxes {
+		repository.mailboxes[index].Mailbox.ID = fmt.Sprintf("mailbox-%03d", index)
+	}
+	worker := NewWorker(repository, codeReceiverStub{}, NewMicrosoftClient(MicrosoftConfig{}), time.Minute)
+	worker.poll(context.Background())
+	if repository.pages != 3 {
+		t.Fatalf("邮箱凭证分页次数 = %d，期望 3", repository.pages)
+	}
+}
 
 func TestMicrosoftAuthorizationURL(t *testing.T) {
 	client := NewMicrosoftClient(MicrosoftConfig{ClientID: "client-id", ClientSecret: "client-secret", Tenant: "common", RedirectURI: "https://mail.example.com/callback"})

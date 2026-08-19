@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type APIKey struct {
 	ID         string     `json:"id"`
@@ -47,5 +50,36 @@ type MailboxPool struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-// DefaultMailboxPoolName 是系统唯一的邮箱资产池名称，邮箱类型由 Mailbox.Provider 区分。
-const DefaultMailboxPoolName = "邮箱池"
+const (
+	DefaultMailboxPoolName   = "邮箱池"
+	MailboxProviderOutlook   = "outlook"
+	MailboxProviderOutlookDE = "outlook_de"
+	MailboxProviderHotmail   = "hotmail"
+)
+
+var SupportedMailboxProviders = []string{MailboxProviderOutlook, MailboxProviderOutlookDE, MailboxProviderHotmail}
+
+// DetectMailboxProvider 按邮箱域名识别首版支持的 Microsoft 邮箱类型。
+func DetectMailboxProvider(address string) (string, bool) {
+	address = strings.ToLower(strings.TrimSpace(address))
+	switch {
+	case strings.HasSuffix(address, "@outlook.de"):
+		return MailboxProviderOutlookDE, true
+	case strings.Contains(address, "@outlook."):
+		return MailboxProviderOutlook, true
+	case strings.Contains(address, "@hotmail."):
+		return MailboxProviderHotmail, true
+	default:
+		return "", false
+	}
+}
+
+func IsSupportedMailboxProvider(provider string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	for _, supported := range SupportedMailboxProviders {
+		if provider == supported {
+			return true
+		}
+	}
+	return false
+}

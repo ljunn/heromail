@@ -167,10 +167,14 @@ textarea.field { resize: vertical; }
 .service-modal-body { overflow-y: auto; overscroll-behavior: contain; }
 .service-modal-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 20px; border-top: 1px solid var(--line); background: #fafbfd; }
 .service-modal-footer .primary-btn { min-width: 190px; }
-.provider-options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0; padding: 0; border: 0; }
+.provider-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0; padding: 0; border: 0; }
 .provider-options legend { grid-column: 1 / -1; margin-bottom: -3px; padding: 0; color: var(--muted); font-size: 12px; font-weight: 600; }
 .provider-options label { display: flex; min-height: 40px; flex: 1; grid-template-columns: none; align-items: center; gap: 9px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: #fafbfd; }
 .provider-options input { width: 16px; height: 16px; margin: 0; accent-color: var(--blue); }
+.service-config-section { display: grid; gap: 12px; padding: 0 0 18px; border-bottom: 1px solid var(--line); }
+.service-config-section:last-child { padding-bottom: 0; border-bottom: 0; }
+.service-config-section h3 { margin: 0; color: #20304a; font-size: 13px; }
+.utility-field { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
 .modal-subtitle { margin-top: 4px; color: var(--muted); font-size: 12px; }
 .provider-fields { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #fafbfd; }
 .provider-fields[hidden] { display: none; }
@@ -194,7 +198,7 @@ textarea.field { resize: vertical; }
 .mailbox-dropzone em { max-width: 100%; overflow: hidden; color: var(--blue); font-size: 11px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
 .mailbox-import-actions { display: flex; align-items: center; gap: 14px; margin: 0 0 20px; }
 .mailbox-import-actions span { color: var(--muted); font-size: 11px; }
-.mailbox-metrics { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 12px; margin-bottom: 20px; }
+.mailbox-metrics { display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: 12px; margin-bottom: 20px; }
 .mailbox-metrics > div { padding: 15px 16px; border: 1px solid var(--line); border-radius: 10px; background: white; }
 .mailbox-metrics span, .mailbox-metrics small { display: block; color: var(--muted); font-size: 11px; }
 .mailbox-metrics strong { display: block; margin: 8px 0 4px; color: #20304a; font-size: 23px; }
@@ -307,6 +311,7 @@ textarea.field { resize: vertical; }
   .service-modal-footer { align-items: stretch; flex-direction: column; padding: 12px 15px; }
   .service-modal-footer .primary-btn { width: 100%; min-width: 0; }
   .service-modal .form-columns { grid-template-columns: 1fr; }
+  .provider-options { grid-template-columns: 1fr; }
   .card-body { padding: 15px; }
   .filter-bar { padding: 12px; }
   .select, .search { width: 100%; }

@@ -18,6 +18,7 @@ func TestMailboxLineParserSupportsMicrosoftFormats(t *testing.T) {
 		refreshToken string
 	}{
 		{name: "冒号", line: "alpha@outlook.com:secret", address: "alpha@outlook.com", provider: "outlook", password: "secret"},
+		{name: "德国 Outlook", line: "alpha@outlook.de:secret", address: "alpha@outlook.de", provider: "outlook_de", password: "secret"},
 		{name: "四横线", line: "beta@hotmail.com----secret", address: "beta@hotmail.com", provider: "hotmail", password: "secret"},
 		{name: "竖线", line: "gamma@outlook.com|secret", address: "gamma@outlook.com", provider: "outlook", password: "secret"},
 		{name: "CSV", line: fmt.Sprintf("delta@hotmail.com,secret,%s,refresh-value", clientID), address: "delta@hotmail.com", provider: "hotmail", password: "secret", clientID: clientID, refreshToken: "refresh-value"},

@@ -17,7 +17,7 @@ import (
 func (s *PostgresStore) ListMailboxPoolsPage(page, pageSize int) ([]domain.MailboxPool, int64) {
 	page, pageSize = normalizePage(page, pageSize)
 	var total int64
-	s.db.Model(&sqlMailboxPool{}).Count(&total)
+	s.db.Model(&sqlMailboxPool{}).Where("name = ?", domain.DefaultMailboxPoolName).Count(&total)
 	type poolRow struct {
 		ID              string
 		Name            string
@@ -30,7 +30,7 @@ func (s *PostgresStore) ListMailboxPoolsPage(page, pageSize int) ([]domain.Mailb
 		MailboxCount    int64
 	}
 	var rows []poolRow
-	s.db.Table("mailbox_pools AS p").Select("p.id, p.name, p.provider, p.region, p.enabled, p.daily_limit, p.cooldown_seconds, p.created_at, count(m.id) AS mailbox_count").Joins("LEFT JOIN mailboxes AS m ON m.pool = p.name").Group("p.id").Order("p.created_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&rows)
+	s.db.Table("mailbox_pools AS p").Select("p.id, p.name, p.provider, p.region, p.enabled, p.daily_limit, p.cooldown_seconds, p.created_at, count(m.id) AS mailbox_count").Joins("LEFT JOIN mailboxes AS m ON m.pool = p.name").Where("p.name = ?", domain.DefaultMailboxPoolName).Group("p.id").Order("p.created_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&rows)
 	items := make([]domain.MailboxPool, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, domain.MailboxPool{ID: row.ID, Name: row.Name, Provider: row.Provider, Region: row.Region, Enabled: row.Enabled, DailyLimit: row.DailyLimit, CooldownSecond: row.CooldownSeconds, MailboxCount: row.MailboxCount, CreatedAt: row.CreatedAt})
@@ -46,48 +46,13 @@ func (s *PostgresStore) MailboxPoolByName(name string) (domain.MailboxPool, bool
 	return domain.MailboxPool{ID: row.ID, Name: row.Name, Provider: row.Provider, Region: row.Region, Enabled: row.Enabled, DailyLimit: row.DailyLimit, CooldownSecond: row.CooldownSeconds, CreatedAt: row.CreatedAt}, true
 }
 
-func (s *PostgresStore) SaveMailboxPool(actorID string, pool domain.MailboxPool, ip string) (domain.MailboxPool, error) {
-	if pool.ID == "" {
-		pool.ID = uuid.NewString()
-	}
-	row := sqlMailboxPool{ID: pool.ID, Name: strings.TrimSpace(pool.Name), Provider: strings.ToLower(pool.Provider), Region: pool.Region, Enabled: pool.Enabled, DailyLimit: pool.DailyLimit, CooldownSeconds: pool.CooldownSecond}
-	if row.DailyLimit <= 0 {
-		row.DailyLimit = 100
-	}
-	if row.CooldownSeconds < 0 {
-		row.CooldownSeconds = 0
-	}
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Save(&row).Error; err != nil {
-			return err
-		}
-		return tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: actorID, Action: "mailbox_pool.save", ResourceType: "mailbox_pool", ResourceID: row.ID, Detail: "保存邮箱池", IP: ip}).Error
-	})
-	pool = domain.MailboxPool{ID: row.ID, Name: row.Name, Provider: row.Provider, Region: row.Region, Enabled: row.Enabled, DailyLimit: row.DailyLimit, CooldownSecond: row.CooldownSeconds, CreatedAt: row.CreatedAt}
-	return pool, err
-}
-
-func (s *PostgresStore) DeleteMailboxPool(actorID, poolID, ip string) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		var pool sqlMailboxPool
-		if err := tx.First(&pool, "id = ?", poolID).Error; err != nil {
-			return ErrMailboxPoolNotFound
-		}
-		var count int64
-		tx.Model(&sqlMailbox{}).Where("pool = ?", pool.Name).Count(&count)
-		if count > 0 {
-			return errors.New("邮箱池仍包含邮箱，不能删除")
-		}
-		if err := tx.Delete(&pool).Error; err != nil {
-			return err
-		}
-		return tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: actorID, Action: "mailbox_pool.delete", ResourceType: "mailbox_pool", ResourceID: pool.ID, Detail: "删除邮箱池", IP: ip}).Error
-	})
-}
-
 func (s *PostgresStore) SaveMailbox(actorID string, mailbox domain.Mailbox, credential map[string]string, ip string) (domain.Mailbox, error) {
 	mailbox.Address = strings.ToLower(strings.TrimSpace(mailbox.Address))
-	mailbox.Provider = strings.ToLower(strings.TrimSpace(mailbox.Provider))
+	provider, supported := domain.DetectMailboxProvider(mailbox.Address)
+	if !supported {
+		return domain.Mailbox{}, errors.New("首版只支持 Outlook/Hotmail 邮箱")
+	}
+	mailbox.Provider = provider
 	mailbox.Pool = strings.TrimSpace(mailbox.Pool)
 	if mailbox.Pool == "" {
 		mailbox.Pool = domain.DefaultMailboxPoolName
@@ -221,12 +186,16 @@ func (s *PostgresStore) GetMailboxCredential(mailboxID string) (MailboxCredentia
 	return MailboxCredential{Mailbox: mapMailbox(row, nil), Config: config}, nil
 }
 
-func (s *PostgresStore) ListMailboxCredentials(limit int) ([]MailboxCredential, error) {
+func (s *PostgresStore) ListMailboxCredentialsPage(afterID string, limit int) ([]MailboxCredential, error) {
 	if limit < 1 || limit > 500 {
 		limit = 100
 	}
 	var rows []sqlMailbox
-	if err := s.db.Where("encrypted_credential <> '' AND state NOT IN ?", []string{string(domain.MailboxBlocked), string(domain.MailboxError)}).Order("updated_at ASC").Limit(limit).Find(&rows).Error; err != nil {
+	query := s.db.Where("encrypted_credential <> '' AND state NOT IN ?", []string{string(domain.MailboxBlocked), string(domain.MailboxError)})
+	if afterID != "" {
+		query = query.Where("id > ?", afterID)
+	}
+	if err := query.Order("id ASC").Limit(limit).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	items := make([]MailboxCredential, 0, len(rows))
@@ -346,7 +315,7 @@ func (s *PostgresStore) SaveService(actorID string, service domain.Service, ip s
 				return err
 			}
 		}
-		return tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: actorID, Action: "target_service.save", ResourceType: "target_service", ResourceID: row.ID, Detail: "保存目标平台与收码规则", IP: ip}).Error
+		return tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: actorID, Action: "target_service.save", ResourceType: "target_service", ResourceID: row.ID, Detail: "保存目标平台配置", IP: ip}).Error
 	})
 	return mapService(row), err
 }

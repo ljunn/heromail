@@ -359,8 +359,9 @@ type resourceRepositoryStub struct {
 type mailboxImportRepositoryStub struct {
 	store.Repository
 	store.ResourceRepository
-	saved  []domain.Mailbox
-	queued []string
+	saved      []domain.Mailbox
+	queued     []string
+	enqueueErr error
 }
 
 func (s *mailboxImportRepositoryStub) MailboxPoolByName(name string) (domain.MailboxPool, bool) {
@@ -375,7 +376,29 @@ func (s *mailboxImportRepositoryStub) SaveMailbox(_ string, mailbox domain.Mailb
 
 func (s *mailboxImportRepositoryStub) EnqueueMailboxVerification(_ context.Context, mailboxID string) error {
 	s.queued = append(s.queued, mailboxID)
-	return nil
+	return s.enqueueErr
+}
+
+func TestAdminImportKeepsSavedMailboxWhenQueueIsTemporarilyUnavailable(t *testing.T) {
+	repository := &mailboxImportRepositoryStub{Repository: store.New(), enqueueErr: errors.New("redis unavailable")}
+	server := NewServer(repository)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "mailboxes.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = part.Write([]byte("alpha@outlook.com:password\n"))
+	_ = writer.Close()
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/mailboxes/import", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("X-HeroMail-Role", "admin")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || len(repository.saved) != 1 {
+		t.Fatalf("Redis 暂时不可用时导入结果错误：status=%d saved=%d body=%s", response.Code, len(repository.saved), response.Body.String())
+	}
 }
 
 func (s *mailboxImportRepositoryStub) DequeueMailboxVerification(context.Context, time.Duration) (string, error) {
@@ -391,7 +414,7 @@ func TestAdminImportsMailboxFileAndQueuesVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = part.Write([]byte("alpha@outlook.com:password\nbeta@hotmail.com----password\n"))
+	_, _ = part.Write([]byte("alpha@outlook.com:password\nbeta@hotmail.com----password\ngamma@outlook.de:password\n"))
 	_ = writer.Close()
 
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/mailboxes/import", &body)
@@ -403,7 +426,7 @@ func TestAdminImportsMailboxFileAndQueuesVerification(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("导入邮箱返回 %d，响应：%s", response.Code, response.Body.String())
 	}
-	if len(repository.saved) != 2 || len(repository.queued) != 2 {
+	if len(repository.saved) != 3 || len(repository.queued) != 3 {
 		t.Fatalf("邮箱或验证任务数量错误：saved=%d queued=%d", len(repository.saved), len(repository.queued))
 	}
 	for _, mailbox := range repository.saved {
@@ -435,11 +458,11 @@ func TestAdminSaveServiceValidatesConfigPrecisely(t *testing.T) {
 			name:        "不支持的邮箱供应商",
 			body:        `{"code":"grok","name":"Grok 注册","enabled":true,"allowed_providers":["gmail"],"price":0.02,"ttl_seconds":600,"sender_domains":["x.ai"],"regex":"\\b(\\d{6})\\b"}`,
 			wantStatus:  http.StatusBadRequest,
-			wantMessage: "只允许 outlook 和 hotmail",
+			wantMessage: "只允许 outlook、outlook_de 和 hotmail",
 		},
 		{
 			name:       "有效配置",
-			body:       `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","hotmail"],"price":0.02,"ttl_seconds":600,"sender_domains":["x.ai"],"subject_keywords":[],"regex":"\\b(\\d{6})\\b"}`,
+			body:       `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","outlook_de","hotmail"],"price":0.02,"ttl_seconds":600,"sender_domains":["x.ai"],"subject_keywords":[],"regex":"\\b(\\d{6})\\b"}`,
 			wantStatus: http.StatusOK,
 		},
 	}

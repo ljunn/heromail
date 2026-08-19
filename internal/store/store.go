@@ -46,16 +46,16 @@ func (s *Store) seed() {
 	s.users["admin-001"] = &domain.User{ID: "admin-001", Email: "admin@heromail.local", Balance: 0, Role: "admin"}
 
 	services := []*domain.Service{
-		{ID: "svc-github", Code: "github", Name: "GitHub", Description: "开发者平台", Enabled: true, AllowedProviders: []string{"outlook", "hotmail"}, Price: 0.35, TTLSeconds: 600, SenderDomains: []string{"github.com"}, SubjectKeywords: []string{"verification", "验证码"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-openai", Code: "openai", Name: "OpenAI", Description: "人工智能平台", Enabled: true, AllowedProviders: []string{"outlook", "hotmail"}, Price: 0.60, TTLSeconds: 600, SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification", "code"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-discord", Code: "discord", Name: "Discord", Description: "社区平台", Enabled: true, AllowedProviders: []string{"outlook", "hotmail"}, Price: 0.30, TTLSeconds: 600, SenderDomains: []string{"discord.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-telegram", Code: "telegram", Name: "Telegram", Description: "通讯平台", Enabled: true, AllowedProviders: []string{"outlook", "hotmail"}, Price: 0.25, TTLSeconds: 600, SenderDomains: []string{"telegram.org"}, SubjectKeywords: []string{"login code", "code"}, Regex: `\b(\d{5})\b`},
+		{ID: "svc-github", Code: "github", Name: "GitHub", Description: "开发者平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), Price: 0.35, TTLSeconds: 600, SenderDomains: []string{"github.com"}, SubjectKeywords: []string{"verification", "验证码"}, Regex: `\b(\d{6})\b`},
+		{ID: "svc-openai", Code: "openai", Name: "OpenAI", Description: "人工智能平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), Price: 0.60, TTLSeconds: 600, SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification", "code"}, Regex: `\b(\d{6})\b`},
+		{ID: "svc-discord", Code: "discord", Name: "Discord", Description: "社区平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), Price: 0.30, TTLSeconds: 600, SenderDomains: []string{"discord.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
+		{ID: "svc-telegram", Code: "telegram", Name: "Telegram", Description: "通讯平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), Price: 0.25, TTLSeconds: 600, SenderDomains: []string{"telegram.org"}, SubjectKeywords: []string{"login code", "code"}, Regex: `\b(\d{5})\b`},
 	}
 	for _, service := range services {
 		s.services[service.ID] = service
 	}
 
-	providers := []string{"outlook", "hotmail"}
+	providers := []string{domain.MailboxProviderOutlook, domain.MailboxProviderHotmail}
 	for i := 1; i <= 24; i++ {
 		provider := providers[(i-1)%len(providers)]
 		mailDomain := "outlook.com"
@@ -354,10 +354,13 @@ func (s *Store) Overview() domain.Overview {
 	now := time.Now()
 	for _, mailbox := range s.mailboxes {
 		result.TotalMailboxes++
-		if mailbox.Provider == "outlook" {
+		if mailbox.Provider == domain.MailboxProviderOutlook {
 			result.OutlookMailboxes++
 		}
-		if mailbox.Provider == "hotmail" {
+		if mailbox.Provider == domain.MailboxProviderOutlookDE {
+			result.OutlookDEMailboxes++
+		}
+		if mailbox.Provider == domain.MailboxProviderHotmail {
 			result.HotmailMailboxes++
 		}
 		if mailbox.VerificationStatus == domain.MailboxVerificationPending {
@@ -423,17 +426,6 @@ func (s *Store) Mailboxes() []domain.Mailbox {
 func (s *Store) MailboxesPage(page, pageSize int) ([]domain.Mailbox, int64) {
 	items := s.Mailboxes()
 	return paginate(items, page, pageSize), int64(len(items))
-}
-
-func (s *Store) MailboxesPageByPool(pool string, page, pageSize int) ([]domain.Mailbox, int64) {
-	items := s.Mailboxes()
-	filtered := make([]domain.Mailbox, 0)
-	for _, mailbox := range items {
-		if mailbox.Pool == pool {
-			filtered = append(filtered, mailbox)
-		}
-	}
-	return paginate(filtered, page, pageSize), int64(len(filtered))
 }
 
 func (s *Store) Ping(context.Context) error { return nil }

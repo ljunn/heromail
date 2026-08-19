@@ -10,6 +10,8 @@ import (
 	"net/mail"
 	"regexp"
 	"strings"
+
+	"github.com/ljunn/heromail/internal/domain"
 )
 
 const maxMailboxImportLineBytes = 1024 * 1024
@@ -164,14 +166,11 @@ func normalizeMailboxImportRecord(record MailboxImportRecord) (MailboxImportReco
 	if err != nil || !strings.EqualFold(parsed.Address, record.Address) {
 		return MailboxImportRecord{}, errors.New("邮箱地址无效")
 	}
-	switch {
-	case strings.Contains(record.Address, "@outlook."):
-		record.Provider = "outlook"
-	case strings.Contains(record.Address, "@hotmail."):
-		record.Provider = "hotmail"
-	default:
+	provider, supported := domain.DetectMailboxProvider(record.Address)
+	if !supported {
 		return MailboxImportRecord{}, errors.New("首版只支持 Outlook/Hotmail 邮箱")
 	}
+	record.Provider = provider
 	if len(record.Credential()) == 0 {
 		return MailboxImportRecord{}, errors.New("邮箱凭证不能为空")
 	}

@@ -63,31 +63,39 @@ func (v *MailboxVerifier) Verify(ctx context.Context, actorID, mailboxID, ip str
 	if v.graph != nil && (config["access_token"] != "" || config["refresh_token"] != "") {
 		accessToken := config["access_token"]
 		validUntil, _ := time.Parse(time.RFC3339, config["expires_at"])
-		if accessToken == "" || time.Until(validUntil) < 5*time.Minute {
-			refreshed, newValidUntil, refreshErr := v.graph.RefreshCredential(ctx, config)
+		didRefresh := false
+		if accessToken == "" || (!validUntil.IsZero() && !validUntil.After(now)) {
+			refreshedCredential, newValidUntil, refreshErr := v.graph.RefreshCredential(ctx, config)
 			if refreshErr != nil {
 				graphErr = refreshErr
 			} else {
-				config = mergeCredential(config, refreshed)
+				config = mergeCredential(config, refreshedCredential)
 				accessToken = config["access_token"]
 				if saveErr := v.repository.UpdateMailboxCredential(actorID, mailboxID, config, newValidUntil, ip); saveErr != nil {
 					graphErr = saveErr
 				} else {
 					graphErr = nil
+					didRefresh = true
 				}
 			}
 		} else {
 			graphErr = nil
 		}
 		if graphErr == nil && accessToken != "" {
-			profile, profileErr := v.graph.Profile(ctx, accessToken)
-			if profileErr != nil {
-				graphErr = profileErr
-			} else if !strings.EqualFold(profile.Address, credential.Mailbox.Address) {
-				graphErr = errors.New("Graph 账户与邮箱地址不一致")
-			} else if _, messagesErr := v.graph.Messages(ctx, accessToken); messagesErr != nil {
-				graphErr = messagesErr
-			} else {
+			graphErr = v.verifyGraphAccess(ctx, credential.Mailbox.Address, accessToken)
+			if graphErr != nil && !didRefresh && config["refresh_token"] != "" {
+				newCredential, newValidUntil, refreshErr := v.graph.RefreshCredential(ctx, config)
+				if refreshErr == nil {
+					config = mergeCredential(config, newCredential)
+					accessToken = config["access_token"]
+					if saveErr := v.repository.UpdateMailboxCredential(actorID, mailboxID, config, newValidUntil, ip); saveErr == nil {
+						graphErr = v.verifyGraphAccess(ctx, credential.Mailbox.Address, accessToken)
+					} else {
+						graphErr = saveErr
+					}
+				}
+			}
+			if graphErr == nil {
 				return v.markVerified(actorID, mailboxID, domain.MailboxConnectionMicrosoftGraph, now, ip)
 			}
 		}
@@ -108,6 +116,18 @@ func (v *MailboxVerifier) Verify(ctx context.Context, actorID, mailboxID, ip str
 		return MailboxVerificationResult{}, updateErr
 	}
 	return MailboxVerificationResult{Method: domain.MailboxConnectionAuto, Status: domain.MailboxVerificationFailed, VerifiedAt: now}, errors.New(message)
+}
+
+func (v *MailboxVerifier) verifyGraphAccess(ctx context.Context, address, accessToken string) error {
+	profile, err := v.graph.Profile(ctx, accessToken)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(profile.Address, address) {
+		return errors.New("Graph 账户与邮箱地址不一致")
+	}
+	_, err = v.graph.Messages(ctx, accessToken)
+	return err
 }
 
 func (v *MailboxVerifier) markVerified(actorID, mailboxID, method string, now time.Time, ip string) (MailboxVerificationResult, error) {

@@ -38,13 +38,32 @@ type graphConnectorStub struct {
 	messagesErr error
 	profile     Profile
 	calls       int
+	refreshes   int
 }
 
 func (s *graphConnectorStub) RefreshCredential(context.Context, map[string]string) (map[string]string, time.Time, error) {
+	s.refreshes++
 	if s.refreshErr != nil {
 		return nil, time.Time{}, s.refreshErr
 	}
 	return map[string]string{"access_token": "new-access", "refresh_token": "new-refresh", "expires_at": time.Now().Add(time.Hour).Format(time.RFC3339)}, time.Now().Add(time.Hour), nil
+}
+
+func TestMailboxVerifierUsesAccessTokenWithoutExpiryBeforeRefresh(t *testing.T) {
+	repository := &verificationRepositoryStub{credential: store.MailboxCredential{
+		Mailbox: domain.Mailbox{ID: "mailbox-1", Address: "user@outlook.de"},
+		Config:  map[string]string{"access_token": "access"},
+	}}
+	graph := &graphConnectorStub{profile: Profile{Address: "user@outlook.de"}}
+	imap := &imapConnectorStub{}
+
+	result, err := NewMailboxVerifier(repository, graph, imap).Verify(context.Background(), "system", "mailbox-1", "")
+	if err != nil {
+		t.Fatalf("现有 Access Token 验证失败：%v", err)
+	}
+	if result.Method != domain.MailboxConnectionMicrosoftGraph || graph.refreshes != 0 || imap.calls != 0 {
+		t.Fatalf("未优先使用现有 Access Token：result=%+v refreshes=%d imap=%d", result, graph.refreshes, imap.calls)
+	}
 }
 
 func (s *graphConnectorStub) Profile(context.Context, string) (Profile, error) {

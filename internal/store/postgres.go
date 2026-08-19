@@ -96,10 +96,10 @@ func (s *PostgresStore) seed(config PostgresConfig) error {
 		}
 	}
 	services := []sqlService{
-		{ID: "svc-github", Code: "github", Name: "GitHub", Description: "开发者平台", Enabled: true, AllowedProviders: []string{"outlook", "hotmail"}, PriceCents: 35, TTLSeconds: 600, SenderDomains: []string{"github.com"}, SubjectKeywords: []string{"verification", "验证码"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-openai", Code: "openai", Name: "OpenAI", Description: "人工智能平台", Enabled: true, AllowedProviders: []string{"outlook", "hotmail"}, PriceCents: 60, TTLSeconds: 600, SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification", "code"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-discord", Code: "discord", Name: "Discord", Description: "社区平台", Enabled: true, AllowedProviders: []string{"outlook", "hotmail"}, PriceCents: 30, TTLSeconds: 600, SenderDomains: []string{"discord.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-telegram", Code: "telegram", Name: "Telegram", Description: "通讯平台", Enabled: true, AllowedProviders: []string{"outlook", "hotmail"}, PriceCents: 25, TTLSeconds: 600, SenderDomains: []string{"telegram.org"}, SubjectKeywords: []string{"login code", "code"}, Regex: `\b(\d{5})\b`},
+		{ID: "svc-github", Code: "github", Name: "GitHub", Description: "开发者平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 35, TTLSeconds: 600, SenderDomains: []string{"github.com"}, SubjectKeywords: []string{"verification", "验证码"}, Regex: `\b(\d{6})\b`},
+		{ID: "svc-openai", Code: "openai", Name: "OpenAI", Description: "人工智能平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 60, TTLSeconds: 600, SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification", "code"}, Regex: `\b(\d{6})\b`},
+		{ID: "svc-discord", Code: "discord", Name: "Discord", Description: "社区平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 30, TTLSeconds: 600, SenderDomains: []string{"discord.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
+		{ID: "svc-telegram", Code: "telegram", Name: "Telegram", Description: "通讯平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 25, TTLSeconds: 600, SenderDomains: []string{"telegram.org"}, SubjectKeywords: []string{"login code", "code"}, Regex: `\b(\d{5})\b`},
 	}
 	for _, service := range services {
 		if err := s.db.Where("id = ?", service.ID).FirstOrCreate(&service).Error; err != nil {
@@ -117,32 +117,60 @@ func (s *PostgresStore) seed(config PostgresConfig) error {
 
 func (s *PostgresStore) ensureDefaultMailboxPool() error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		defaultPool := sqlMailboxPool{ID: "pool-default", Name: domain.DefaultMailboxPoolName, Provider: "mixed", Region: "global", Enabled: true, DailyLimit: 1000, CooldownSeconds: 0}
-		if err := tx.Where("name = ?", defaultPool.Name).FirstOrCreate(&defaultPool).Error; err != nil {
+		var defaultPool sqlMailboxPool
+		created := false
+		if err := tx.Where("name = ?", domain.DefaultMailboxPoolName).First(&defaultPool).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+			defaultPool = sqlMailboxPool{ID: "pool-default", Name: domain.DefaultMailboxPoolName, Provider: "mixed", Region: "global", Enabled: true, DailyLimit: 1000, CooldownSeconds: 0}
+			if err := tx.Create(&defaultPool).Error; err != nil {
+				return err
+			}
+			created = true
+		} else if err != nil {
 			return err
 		}
-		if err := tx.Model(&sqlMailboxPool{}).Where("id = ?", defaultPool.ID).Updates(map[string]any{
-			"provider":         "mixed",
-			"region":           "global",
-			"enabled":          true,
-			"daily_limit":      1000,
-			"cooldown_seconds": 0,
-		}).Error; err != nil {
+		if err := tx.Model(&defaultPool).Updates(map[string]any{"provider": "mixed", "enabled": true}).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(&sqlMailbox{}).Where("pool <> ? OR pool IS NULL OR pool = ''", defaultPool.Name).Update("pool", defaultPool.Name).Error; err != nil {
+		moved := tx.Model(&sqlMailbox{}).Where("pool <> ? OR pool IS NULL OR pool = ''", defaultPool.Name).Update("pool", defaultPool.Name)
+		if moved.Error != nil {
+			return moved.Error
+		}
+		legacy := tx.Model(&sqlMailboxPool{}).Where("id <> ? AND enabled = ?", defaultPool.ID, true).Update("enabled", false)
+		if legacy.Error != nil {
+			return legacy.Error
+		}
+		reclassified := tx.Model(&sqlMailbox{}).Where("lower(address) LIKE ? AND provider <> ?", "%@outlook.de", domain.MailboxProviderOutlookDE).Update("provider", domain.MailboxProviderOutlookDE)
+		if reclassified.Error != nil {
+			return reclassified.Error
+		}
+		var services []sqlService
+		if err := tx.Find(&services).Error; err != nil {
 			return err
 		}
-		return tx.Where("id <> ?", defaultPool.ID).Delete(&sqlMailboxPool{}).Error
+		updatedServices := int64(0)
+		for index := range services {
+			if contains(services[index].AllowedProviders, domain.MailboxProviderOutlook) && !contains(services[index].AllowedProviders, domain.MailboxProviderOutlookDE) {
+				services[index].AllowedProviders = append(services[index].AllowedProviders, domain.MailboxProviderOutlookDE)
+				if err := tx.Model(&services[index]).Update("allowed_providers", services[index].AllowedProviders).Error; err != nil {
+					return err
+				}
+				updatedServices++
+			}
+		}
+		if !created && moved.RowsAffected == 0 && legacy.RowsAffected == 0 && reclassified.RowsAffected == 0 && updatedServices == 0 {
+			return nil
+		}
+		detail := fmt.Sprintf("统一邮箱池：迁移邮箱 %d 个，停用旧池 %d 个，重分类 Outlook.de %d 个，更新平台 %d 个", moved.RowsAffected, legacy.RowsAffected, reclassified.RowsAffected, updatedServices)
+		return tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: "system", Action: "mailbox_pool.consolidate", ResourceType: "mailbox_pool", ResourceID: defaultPool.ID, Detail: detail}).Error
 	})
 }
 
 func (s *PostgresStore) seedDemoMailboxes(services []sqlService) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		for index := 1; index <= 24; index++ {
-			provider, domainName, pool := "outlook", "outlook.com", domain.DefaultMailboxPoolName
+			provider, domainName, pool := domain.MailboxProviderOutlook, "outlook.com", domain.DefaultMailboxPoolName
 			if index%2 == 0 {
-				provider, domainName = "hotmail", "hotmail.com"
+				provider, domainName = domain.MailboxProviderHotmail, "hotmail.com"
 			}
 			now := time.Now().UTC()
 			mailbox := sqlMailbox{ID: fmt.Sprintf("mb-%03d", index), Address: fmt.Sprintf("hero_%02d@%s", index, domainName), Provider: provider, Pool: pool, State: string(domain.MailboxAvailable), HealthScore: 84 + index%16, OAuthValidUntil: now.Add(30 * 24 * time.Hour), ConnectionMethod: domain.MailboxConnectionMicrosoftOAuth, VerificationStatus: domain.MailboxVerificationVerified, LastVerifiedAt: &now}
@@ -492,10 +520,11 @@ func (s *PostgresStore) ReapExpired() int {
 
 func (s *PostgresStore) Overview() domain.Overview {
 	var result domain.Overview
-	var total, outlook, hotmail, pending, verified, available, leased, authErrors, blocked int64
+	var total, outlook, outlookDE, hotmail, pending, verified, available, leased, authErrors, blocked int64
 	s.db.Model(&sqlMailbox{}).Count(&total)
-	s.db.Model(&sqlMailbox{}).Where("provider = ?", "outlook").Count(&outlook)
-	s.db.Model(&sqlMailbox{}).Where("provider = ?", "hotmail").Count(&hotmail)
+	s.db.Model(&sqlMailbox{}).Where("provider = ?", domain.MailboxProviderOutlook).Count(&outlook)
+	s.db.Model(&sqlMailbox{}).Where("provider = ?", domain.MailboxProviderOutlookDE).Count(&outlookDE)
+	s.db.Model(&sqlMailbox{}).Where("provider = ?", domain.MailboxProviderHotmail).Count(&hotmail)
 	s.db.Model(&sqlMailbox{}).Where("verification_status = ?", domain.MailboxVerificationPending).Count(&pending)
 	s.db.Model(&sqlMailbox{}).Where("verification_status = ?", domain.MailboxVerificationVerified).Count(&verified)
 	s.db.Model(&sqlMailbox{}).Where("state = ?", domain.MailboxAvailable).Count(&available)
@@ -505,6 +534,7 @@ func (s *PostgresStore) Overview() domain.Overview {
 	result.AvailableMailboxes = int(available)
 	result.TotalMailboxes = int(total)
 	result.OutlookMailboxes = int(outlook)
+	result.OutlookDEMailboxes = int(outlookDE)
 	result.HotmailMailboxes = int(hotmail)
 	result.PendingMailboxes = int(pending)
 	result.VerifiedMailboxes = int(verified)
@@ -540,10 +570,6 @@ func (s *PostgresStore) Mailboxes() []domain.Mailbox {
 
 func (s *PostgresStore) MailboxesPage(page, pageSize int) ([]domain.Mailbox, int64) {
 	return s.mailboxesPage("", page, pageSize)
-}
-
-func (s *PostgresStore) MailboxesPageByPool(pool string, page, pageSize int) ([]domain.Mailbox, int64) {
-	return s.mailboxesPage(strings.TrimSpace(pool), page, pageSize)
 }
 
 func (s *PostgresStore) mailboxesPage(pool string, page, pageSize int) ([]domain.Mailbox, int64) {

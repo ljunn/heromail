@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -31,38 +30,6 @@ func (s *Server) adminMailboxPools(c *gin.Context) {
 	writePage(c, items, page, pageSize, total)
 }
 
-func (s *Server) adminSaveMailboxPool(c *gin.Context) {
-	repository, ok := s.Store.(store.ResourceRepository)
-	if !ok {
-		writeError(c, http.StatusServiceUnavailable, "mailbox_pools_unavailable", "邮箱池服务不可用")
-		return
-	}
-	var request domain.MailboxPool
-	if err := c.ShouldBindJSON(&request); err != nil || request.Name == "" || request.Provider == "" {
-		writeError(c, http.StatusBadRequest, "invalid_request", "邮箱池名称和供应商不能为空")
-		return
-	}
-	pool, err := repository.SaveMailboxPool(demoUser(c), request, c.ClientIP())
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "mailbox_pool_save_failed", err.Error())
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"data": pool})
-}
-
-func (s *Server) adminDeleteMailboxPool(c *gin.Context) {
-	repository, ok := s.Store.(store.ResourceRepository)
-	if !ok {
-		writeError(c, http.StatusServiceUnavailable, "mailbox_pools_unavailable", "邮箱池服务不可用")
-		return
-	}
-	if err := repository.DeleteMailboxPool(demoUser(c), c.Param("id"), c.ClientIP()); err != nil {
-		writeError(c, http.StatusConflict, "mailbox_pool_delete_failed", err.Error())
-		return
-	}
-	c.Status(http.StatusNoContent)
-}
-
 func (s *Server) adminSaveMailbox(c *gin.Context) {
 	repository, ok := s.Store.(store.ResourceRepository)
 	if !ok {
@@ -73,10 +40,16 @@ func (s *Server) adminSaveMailbox(c *gin.Context) {
 		domain.Mailbox
 		Credential map[string]string `json:"credential"`
 	}
-	if err := c.ShouldBindJSON(&request); err != nil || request.Address == "" || request.Provider == "" {
-		writeError(c, http.StatusBadRequest, "invalid_request", "邮箱地址和供应商不能为空")
+	if err := c.ShouldBindJSON(&request); err != nil || request.Address == "" {
+		writeError(c, http.StatusBadRequest, "invalid_request", "邮箱地址不能为空")
 		return
 	}
+	provider, supported := domain.DetectMailboxProvider(request.Address)
+	if !supported {
+		writeError(c, http.StatusBadRequest, "unsupported_mailbox_provider", "首版只支持 Outlook/Hotmail 邮箱")
+		return
+	}
+	request.Provider = provider
 	request.Pool = domain.DefaultMailboxPoolName
 	mailbox, err := repository.SaveMailbox(demoUser(c), request.Mailbox, request.Credential, c.ClientIP())
 	if err != nil {
@@ -160,9 +133,8 @@ func (s *Server) adminImportMailboxes(c *gin.Context) {
 			if saveErr != nil {
 				return saveErr
 			}
-			if enqueueErr := queue.EnqueueMailboxVerification(c.Request.Context(), mailbox.ID); enqueueErr != nil {
-				return fmt.Errorf("保存成功但验证任务入队失败：%w", enqueueErr)
-			}
+			// 入队失败时由验证 Worker 的周期补偿扫描重新加入，邮箱已成功导入。
+			_ = queue.EnqueueMailboxVerification(c.Request.Context(), mailbox.ID)
 			return nil
 		})
 		_ = part.Close()
@@ -218,8 +190,8 @@ func (s *Server) adminSaveService(c *gin.Context) {
 		return
 	}
 	for _, provider := range request.AllowedProviders {
-		if provider != "outlook" && provider != "hotmail" {
-			writeError(c, http.StatusBadRequest, "invalid_service_config", "邮箱供应商只允许 outlook 和 hotmail")
+		if !domain.IsSupportedMailboxProvider(provider) {
+			writeError(c, http.StatusBadRequest, "invalid_service_config", "邮箱类型只允许 outlook、outlook_de 和 hotmail")
 			return
 		}
 	}
@@ -314,9 +286,10 @@ func (s *Server) microsoftOAuthCallback(c *gin.Context) {
 		writeError(c, http.StatusBadGateway, "oauth_profile_failed", err.Error())
 		return
 	}
-	provider := "outlook"
-	if strings.Contains(profile.Address, "@hotmail.") || strings.HasSuffix(profile.Address, "@hotmail.com") {
-		provider = "hotmail"
+	provider, supported := domain.DetectMailboxProvider(profile.Address)
+	if !supported {
+		writeError(c, http.StatusBadRequest, "unsupported_mailbox_provider", "首版只支持 Outlook/Hotmail 邮箱")
+		return
 	}
 	mailbox, err := repository.SaveMailbox(state.ActorID, domain.Mailbox{
 		Address:             profile.Address,
@@ -332,10 +305,7 @@ func (s *Server) microsoftOAuthCallback(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "mailbox_save_failed", err.Error())
 		return
 	}
-	if err := queue.EnqueueMailboxVerification(c.Request.Context(), mailbox.ID); err != nil {
-		writeError(c, http.StatusServiceUnavailable, "mailbox_verification_queue_failed", "邮箱已保存，自动验证任务将在服务恢复后重试")
-		return
-	}
+	_ = queue.EnqueueMailboxVerification(c.Request.Context(), mailbox.ID)
 	redirect := "/?oauth=microsoft&status=success"
 	if s.PublicURL != "" {
 		redirect = strings.TrimRight(s.PublicURL, "/") + "/?oauth=microsoft&status=success&address=" + url.QueryEscape(profile.Address)
