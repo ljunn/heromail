@@ -435,8 +435,17 @@ document.addEventListener("click", async event => {
   const target = event.target.closest("[data-action]"); if (!target) return;
   const action = target.dataset.action;
   if (action === "role") { location.href = state.role === "admin" ? "/app" : "/admin"; return; }
+  if (action === "toggle-admin-menu") {
+    const open = document.body.classList.toggle("mobile-nav-open");
+    target.setAttribute("aria-expanded", String(open));
+    return;
+  }
   if (action === "auth-mode") { location.href = target.dataset.mode === "register" ? "/register" : "/login"; return; }
-  if (action === "view") { await navigate(target.dataset.view); return; }
+  if (action === "view") {
+    document.body.classList.remove("mobile-nav-open");
+    document.querySelector(".mobile-admin-menu")?.setAttribute("aria-expanded", "false");
+    await navigate(target.dataset.view); return;
+  }
   if (action === "service") { state.selectedService = target.dataset.service; await render(); return; }
   if (action === "create") { await createOrder(); return; }
   if (action === "submit") { state.currentOrder = state.orders.find(order => order.id === target.dataset.order) || state.currentOrder; await mutateOrder("submitted"); return; }

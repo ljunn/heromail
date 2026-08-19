@@ -245,18 +245,25 @@ textarea.field { resize: vertical; }
 }
 
 @media (max-width: 720px) {
-  .sidebar { position: static; width: 100%; height: auto; }
+  .sidebar { position: fixed; z-index: 40; inset: 0 auto 0 0; width: min(292px, calc(100vw - 48px)); height: 100dvh; box-shadow: 16px 0 36px rgba(8, 20, 37, .2); transform: translateX(-105%); transition: transform .2s ease; }
+  .admin-shell.mobile-nav-open .sidebar { transform: translateX(0); }
+  .admin-shell.mobile-nav-open::after { content: ""; position: fixed; z-index: 35; inset: 0; background: rgba(8, 20, 37, .36); }
   .brand { height: 64px; }
-  #nav { display: flex; gap: 10px; overflow-x: auto; padding: 10px 12px; }
-  .nav-group { display: flex; align-items: center; gap: 4px; margin: 0; }
-  .nav-title { display: none; }
-  .nav-item { width: auto; padding: 8px 10px; white-space: nowrap; }
-  .sidebar-foot { display: none; }
+  #nav { padding: 16px 12px; }
+  .nav-group { margin-bottom: 15px; }
+  .nav-title { margin-bottom: 5px; }
+  .nav-item { padding: 10px 12px; }
+  .sidebar-foot { display: flex; padding: 14px 18px; }
   .shell { margin-left: 0; }
   .topbar { min-height: 62px; padding: 0 14px; }
   .mobile-title { display: block; }
   .top-status, .balance { display: none; }
   .role-switch { padding: 8px; }
+  .mobile-admin-menu { display: inline-flex; min-height: 34px; align-items: center; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; color: #46546a; background: #fff; font-size: 12px; }
+  .admin-shell .topbar { justify-content: space-between; }
+  .admin-shell .topbar-actions { gap: 8px; }
+  .admin-shell .role-switch { display: inline-flex !important; padding: 8px 9px; font-size: 11px; }
+  .admin-shell .avatar { width: 30px; height: 30px; }
   .content { padding: 22px 14px 40px; }
   .page-head { display: block; }
   .head-actions { margin-top: 14px; }
@@ -277,8 +284,10 @@ textarea.field { resize: vertical; }
   .auth-panel { padding: 22px; }
   .user-shell .topbar { min-height: 64px; padding: 0 14px; }
   .user-shell .portal-brand { display: inline-flex; margin-right: auto; font-size: 17px; }
+  .user-shell .mobile-title { display: none; }
   .user-shell .portal-brand img { width: 30px; height: 30px; }
   .user-shell .user-nav { display: none; }
+  .user-shell .mobile-admin-menu { display: none; }
   .user-shell .content { padding-bottom: 92px; }
   .user-shell .mobile-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 20; display: grid; grid-template-columns: repeat(4, 1fr); padding: 7px 8px calc(7px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: rgba(255,255,255,.98); }
   .mobile-nav-item { display: grid; min-height: 48px; place-items: center; gap: 3px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; font-size: 10px; }
@@ -288,4 +297,8 @@ textarea.field { resize: vertical; }
   .portal-intro .ghost-btn { margin-top: 16px; }
   .portal-section-head { align-items: flex-start; flex-direction: column; }
   .portal-balance { align-self: flex-start; }
+}
+
+@media (min-width: 721px) {
+  .mobile-admin-menu { display: none; }
 }

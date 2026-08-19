@@ -221,22 +221,25 @@ button { cursor: pointer; }
   .hero-copy p { font-size: 14px; line-height: 1.7; }
   .hero-actions { margin-top: 25px; }
   .hero-actions a { flex: 1; min-width: 145px; }
-  .hero-metrics { margin-top: 34px; }
-  .hero-metrics > div { min-width: 0; padding-right: 13px; margin-right: 12px; }
-  .hero-metrics strong { font-size: 19px; }
-  .hero-metrics small { font-size: 9px; }
-  .hero-stage { min-height: 445px; margin-top: 28px; }
-  .stage-console { top: 52%; right: 0; width: 94%; transform: translateY(-50%) rotate(0); }
+  .hero-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; margin-top: 34px; }
+  .hero-metrics > div { min-width: 0; padding: 0 12px; margin: 0; border-right: 1px solid #d3dee7; }
+  .hero-metrics > div:first-child { padding-left: 0; }
+  .hero-metrics > div:last-child { padding-right: 0; }
+  .hero-metrics strong { font-size: 18px; }
+  .hero-metrics small { margin-top: 6px; font-size: 9px; line-height: 1.45; }
+  .hero-stage { min-height: 0; margin-top: 32px; padding-bottom: 4px; }
+  .stage-orbit, .stage-float, .stage-label { display: none; }
+  .stage-console { position: relative; top: auto; right: auto; width: 100%; transform: none; box-shadow: 0 12px 28px rgba(35,69,101,.11); }
   .console-content { padding: 16px; }
-  .console-heading strong { font-size: 19px; }
-  .route-line { gap: 5px; margin: 22px 0 18px; }
-  .route-node { min-width: 50px; font-size: 10px; }
+  .console-heading strong { font-size: 18px; }
+  .route-line { gap: 5px; margin: 20px 0 17px; }
+  .route-node { min-width: 0; flex: 1; font-size: 10px; }
   .route-node b { font-size: 10px; }
+  .mail-row { padding: 13px; }
   .mail-row strong { font-size: 11px; }
+  .event-feed { margin-top: 18px; }
+  .code-row { margin-top: 15px; padding: 13px; }
   .code-row strong { font-size: 18px; }
-  .float-mail { top: 3%; left: 0; }
-  .float-secure { right: -2%; bottom: 8%; }
-  .stage-label { right: 13%; bottom: -1%; }
   .hero-scroll { display: none; }
   .signal-strip { grid-template-columns: 1fr 1fr; margin: 0 18px; }
   .signal-strip > div { min-height: 100px; padding: 20px 14px; border-bottom: 1px solid #d4e0e8; }
@@ -256,7 +259,7 @@ button { cursor: pointer; }
   .public-page { padding: 45px 18px 65px; }
   .public-page-head h1 { font-size: 33px; }
   .pricing-grid, .docs-layout { grid-template-columns: 1fr; }
-  .docs-nav { position: static; grid-template-columns: 1fr 1fr; }
+  .docs-nav { position: static; grid-template-columns: 1fr; }
   .auth-page { padding: 28px 18px; }
 }
 @media (prefers-reduced-motion: reduce) {
