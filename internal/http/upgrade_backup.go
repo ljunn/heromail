@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,11 +75,36 @@ func createPostgresUpgradeBackup(ctx context.Context, databaseURL, backupDir, pg
 func postgresDumpEnvironment(databaseURL string) []string {
 	environment := make([]string, 0, len(os.Environ())+1)
 	for _, item := range os.Environ() {
-		if !strings.HasPrefix(item, "PGDATABASE=") {
+		if !strings.HasPrefix(item, "PGDATABASE=") && !strings.HasPrefix(item, "PGHOST=") && !strings.HasPrefix(item, "PGPORT=") && !strings.HasPrefix(item, "PGUSER=") && !strings.HasPrefix(item, "PGPASSWORD=") && !strings.HasPrefix(item, "PGSSLMODE=") {
 			environment = append(environment, item)
 		}
 	}
-	return append(environment, "PGDATABASE="+databaseURL)
+
+	parsed, err := url.Parse(strings.TrimSpace(databaseURL))
+	if err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		if host := parsed.Hostname(); host != "" {
+			environment = append(environment, "PGHOST="+host)
+		}
+		if port := parsed.Port(); port != "" {
+			environment = append(environment, "PGPORT="+port)
+		}
+		if parsed.User != nil {
+			if user := parsed.User.Username(); user != "" {
+				environment = append(environment, "PGUSER="+user)
+			}
+			if password, ok := parsed.User.Password(); ok {
+				environment = append(environment, "PGPASSWORD="+password)
+			}
+		}
+		if database := strings.TrimPrefix(parsed.Path, "/"); database != "" {
+			environment = append(environment, "PGDATABASE="+database)
+		}
+		if sslMode := parsed.Query().Get("sslmode"); sslMode != "" {
+			environment = append(environment, "PGSSLMODE="+sslMode)
+		}
+		return environment
+	}
+	return append(environment, "PGDATABASE="+strings.TrimSpace(databaseURL))
 }
 
 func verifyGzipFile(path string) error {

@@ -67,3 +67,21 @@ func TestPostgresUpgradeBackupRemovesPartialFileOnFailure(t *testing.T) {
 		}
 	}
 }
+
+func TestPostgresDumpEnvironmentParsesConnectionURL(t *testing.T) {
+	environment := postgresDumpEnvironment("postgres://report:secret%21@db.internal:5433/heromail?sslmode=require")
+	values := make(map[string]string)
+	for _, item := range environment {
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) == 2 {
+			values[parts[0]] = parts[1]
+		}
+	}
+	for key, want := range map[string]string{
+		"PGHOST": "db.internal", "PGPORT": "5433", "PGUSER": "report", "PGPASSWORD": "secret!", "PGDATABASE": "heromail", "PGSSLMODE": "require",
+	} {
+		if values[key] != want {
+			t.Fatalf("环境变量 %s = %q，期望 %q", key, values[key], want)
+		}
+	}
+}
