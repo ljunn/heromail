@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -19,6 +20,7 @@ type OAuthState struct {
 
 type ResourceRepository interface {
 	ListMailboxPoolsPage(page, pageSize int) ([]domain.MailboxPool, int64)
+	MailboxPoolByName(name string) (domain.MailboxPool, bool)
 	SaveMailboxPool(actorID string, pool domain.MailboxPool, ip string) (domain.MailboxPool, error)
 	DeleteMailboxPool(actorID, poolID, ip string) error
 	SaveMailbox(actorID string, mailbox domain.Mailbox, credential map[string]string, ip string) (domain.Mailbox, error)
@@ -27,6 +29,7 @@ type ResourceRepository interface {
 	ListMailboxCredentials(limit int) ([]MailboxCredential, error)
 	UpdateMailboxCredential(actorID, mailboxID string, credential map[string]string, validUntil time.Time, ip string) error
 	UpdateMailboxVerification(actorID, mailboxID, method, status, verificationError string, verifiedAt time.Time, ip string) error
+	PendingMailboxVerificationIDs(limit int) ([]string, error)
 	SaveService(actorID string, service domain.Service, ip string) (domain.Service, error)
 	DeleteService(actorID, serviceID, ip string) error
 	CreateOAuthState(state string, value OAuthState, ttl time.Duration) error
@@ -34,6 +37,11 @@ type ResourceRepository interface {
 	WaitingOrdersForMailbox(mailboxID string) []domain.Order
 	ServiceByID(serviceID string) (domain.Service, bool)
 	MarkMailEvent(mailboxID, messageID, sender, subject string, receivedAt time.Time) (bool, error)
+}
+
+type MailboxVerificationQueue interface {
+	EnqueueMailboxVerification(ctx context.Context, mailboxID string) error
+	DequeueMailboxVerification(ctx context.Context, timeout time.Duration) (string, error)
 }
 
 var (

@@ -18,6 +18,7 @@ const state = {
   webhookEndpoints: [],
   webhookDeliveries: [],
   pools: [],
+  mailboxPool: new URLSearchParams(location.search).get("pool") || "",
   users: [],
   auditLogs: [],
   paymentProviders: [],
@@ -66,7 +67,7 @@ const mobileUserNav = [["apply", "申请", "inbox"], ["current", "任务", "cloc
 
 const adminNav = [
   ["运行", [["admin-overview", "运行概览", "dashboard"]]],
-  ["资源管理", [["admin-mailboxes", "邮箱资源", "mail"], ["admin-pools", "邮箱池", "database"], ["admin-channels", "接入渠道", "plug"]]],
+  ["资源管理", [["admin-mailboxes", "邮箱池", "database"]]],
   ["业务配置", [["admin-services", "目标平台", "globe"], ["admin-rules", "收码规则", "scan"], ["admin-routing", "调度策略", "route"]]],
   ["订单与用户", [["admin-orders", "注册订单", "receipt"], ["admin-users", "平台用户", "users"], ["admin-ledger", "余额与流水", "ledger"], ["admin-payments", "支付管理", "creditCard"]]],
   ["系统", [["admin-alerts", "告警中心", "bell"], ["admin-audit", "审计日志", "audit"], ["admin-settings", "系统设置", "settings"], ["admin-account", "管理员账户", "shieldUser"]]]
@@ -90,13 +91,14 @@ async function navigate(view, replace = false) {
   const path = routes[view];
   if (!path) return;
   stopPolling();
+  if (view === "admin-mailboxes" && state.view !== "admin-mailboxes") state.mailboxPool = "";
   state.view = view;
   history[replace ? "replaceState" : "pushState"]({ view }, "", path);
   await refresh();
 }
 
 async function api(path, options = {}) {
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  const headers = { ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }), ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
   const response = await fetch(path, { ...options, headers });
   const body = await response.json().catch(() => ({}));
@@ -109,7 +111,8 @@ async function api(path, options = {}) {
 
 const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
 const money = value => `¥${Number(value || 0).toFixed(2)}`;
-const time = value => value ? new Date(value).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "-";
+const time = value => { const parsed = value ? new Date(value) : null; return parsed && Number.isFinite(parsed.getTime()) && parsed.getUTCFullYear() > 1 ? parsed.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "-"; };
+const connectionLabel = value => ({ auto: "自动", microsoft_graph: "Graph", microsoft_oauth: "Graph OAuth2", imap: "IMAP" }[value] || value || "自动");
 const statusMap = { assigned: ["等待提交", "orange"], waiting_code: ["收码中", "blue"], code_received: ["已收码", "green"], completed: ["已完成", "green"], canceled: ["已取消", "red"], expired_refunded: ["已超时退款", "orange"], allocation_failed: ["分配失败", "red"], disputed: ["申诉中", "orange"], pending: ["待支付", "orange"], paid: ["已支付", "blue"], active: ["正常", "green"], disabled: ["已停用", "red"], available: ["可用", "green"], leased: ["租用中", "blue"], cooldown: ["冷却中", "orange"], auth_error: ["授权异常", "red"], blocked: ["已隔离", "red"], verified: ["已验证", "green"], pending_verification: ["待验证", "orange"], failed: ["失败", "red"], idle: ["等待任务", "blue"], backing_up: ["备份中", "orange"], queued: ["已排队", "orange"], updating: ["升级中", "orange"], success: ["成功", "green"] };
 const statusChip = status => { const item = statusMap[status] || [status, "blue"]; return `<span class="chip ${item[1]}">${item[0]}</span>`; };
 
@@ -177,9 +180,14 @@ function renderAdminOverview() {
 }
 
 async function verifyMailbox(id) { await api(`/api/v1/admin/mailboxes/${id}/verify`, { method: "POST" }); await refresh(); toast("邮箱连接验证成功"); }
-function renderAdminMailboxes() {
+function renderAdminMailboxesLegacy() {
   const total = state.pagination.mailboxes?.total || 0;
   return pageHead("邮箱资源", "邮箱是平台资产，系统按“邮箱 × 目标平台”决定是否分配。", `<button class="primary-btn" data-action="view" data-view="admin-channels">通过 Microsoft 接入</button>`) + `<div class="stat-grid">${stat("邮箱总数", total, "已接入资产")}${stat("当页可用", state.mailboxes.filter(mailbox => mailbox.state === "available").length, "健康分 ≥ 60")}${stat("当页租用中", state.mailboxes.filter(mailbox => mailbox.state === "leased").length, "注册任务")}${stat("当页授权异常", state.mailboxes.filter(mailbox => mailbox.state === "auth_error").length, "需要重新授权")}${stat("当页隔离", state.mailboxes.filter(mailbox => mailbox.state === "blocked").length, "人工处理")}</div><div class="card"><div class="table-wrap"><table><thead><tr><th>邮箱</th><th>供应商</th><th>邮箱池</th><th>连接方式</th><th>验证状态</th><th>已注册平台</th><th>OAuth 有效期</th><th>健康分</th><th>最近验证</th><th>最近收信</th><th>操作</th></tr></thead><tbody>${state.mailboxes.map(mailbox => `<tr><td>${esc(mailbox.address)}</td><td>${esc(mailbox.provider)}</td><td>${esc(mailbox.pool)}</td><td>${mailbox.connection_method === "microsoft_oauth" ? "Microsoft OAuth2" : esc(mailbox.connection_method || "—")}</td><td>${statusChip(mailbox.verification_status || mailbox.state)}${mailbox.verification_error ? `<div class="muted">${esc(mailbox.verification_error)}</div>` : ""}</td><td>${esc((mailbox.registered_platforms || []).join(", ") || "—")}</td><td>${mailbox.oauth_valid_until ? new Date(mailbox.oauth_valid_until).toLocaleString("zh-CN") : "—"}</td><td>${mailbox.health_score}/100</td><td>${time(mailbox.last_verified_at)}</td><td>${time(mailbox.last_received_at)}</td><td><div class="table-actions"><button class="link-btn" data-action="verify-mailbox" data-id="${esc(mailbox.id)}">验证</button><button class="link-btn danger-text" data-action="delete-mailbox" data-id="${esc(mailbox.id)}">删除</button></div></td></tr>`).join("") || `<tr><td colspan="11" class="empty">尚未接入邮箱</td></tr>`}</tbody></table></div>${renderPager("mailboxes")}</div>`;
+}
+
+function renderAdminPools() {
+  const rows = state.pools.map(pool => `<tr><td><strong>${esc(pool.name)}</strong></td><td>${esc(pool.provider)}</td><td>${pool.mailbox_count}</td><td>${pool.enabled ? `<span class="chip green">启用</span>` : `<span class="chip red">停用</span>`}</td><td><div class="table-actions"><button class="link-btn" data-action="view-pool" data-pool="${esc(pool.name)}">查看邮箱</button><button class="link-btn danger-text" data-action="delete-pool" data-id="${esc(pool.id)}">删除</button></div></td></tr>`).join("");
+  return pageHead("邮箱池", "先选邮箱池，再查看该池中的邮箱列表。") + `<div class="card"><div class="table-wrap"><table><thead><tr><th>名称</th><th>供应商</th><th>邮箱数</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="5" class="empty">暂无邮箱池</td></tr>`}</tbody></table></div>${renderPager("pools")}</div><div class="card"><div class="card-head"><h2>新增邮箱池</h2></div><div class="card-body form-grid"><label>名称<input id="pool-name" class="field"></label><label>供应商<select id="pool-provider" class="field"><option value="outlook">Outlook</option><option value="hotmail">Hotmail</option></select></label><label>地区<input id="pool-region" class="field" value="global"></label><label>日限额<input id="pool-limit" class="field" type="number" min="1" value="100"></label><label>冷却秒数<input id="pool-cooldown" class="field" type="number" min="0" value="60"></label><button class="primary-btn" data-action="create-pool">保存邮箱池</button></div></div>`;
 }
 
 function renderAdminServices() {
@@ -229,8 +237,29 @@ function renderWebhooks() {
   return pageHead("Webhook", "订阅订单状态变化并查看投递结果。") + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>端点</h2></div><div class="table-wrap"><table><thead><tr><th>URL</th><th>事件</th><th>状态</th><th>操作</th></tr></thead><tbody>${state.webhookEndpoints.map(endpoint => `<tr><td>${esc(endpoint.url)}</td><td>${esc(endpoint.events.join(", "))}</td><td>${endpoint.enabled ? `<span class="chip green">启用</span>` : `<span class="chip red">停用</span>`}</td><td><button class="link-btn" data-action="delete-webhook" data-id="${endpoint.id}">删除</button></td></tr>`).join("") || `<tr><td colspan="4" class="empty">暂无 Webhook 端点</td></tr>`}</tbody></table></div>${renderPager("webhooks")}</div><div class="card"><div class="card-head"><h2>新增端点</h2></div><div class="card-body form-grid"><label>接收地址<input id="webhook-url" class="field" type="url" placeholder="https://example.com/webhook"></label><button class="primary-btn" data-action="create-webhook">创建端点</button><div class="notice">签名密钥只显示一次。请求使用 <code>X-HeroMail-Signature</code> 验证。</div></div></div></div><div class="card" style="margin-top:16px"><div class="card-head"><h2>投递记录</h2></div><div class="table-wrap"><table><thead><tr><th>事件</th><th>订单</th><th>状态</th><th>尝试</th><th>响应</th><th>下次重试</th><th>操作</th></tr></thead><tbody>${state.webhookDeliveries.map(item => `<tr><td>${esc(item.event)}</td><td>${esc(item.order_id)}</td><td>${statusChip(item.status)}</td><td>${item.attempts}</td><td>${item.response_code || "—"}</td><td>${time(item.next_retry_at)}</td><td>${item.status === "failed" ? `<button class="link-btn" data-action="retry-webhook" data-id="${item.id}">重试</button>` : "—"}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">暂无投递记录</td></tr>`}</tbody></table></div>${renderPager("webhook-deliveries")}</div>`;
 }
 
-function renderAdminPools() {
+function renderAdminPoolsLegacy() {
   return pageHead("邮箱池", "配置邮箱供应商、地区、日限额和冷却时间。") + `<div class="admin-grid"><div class="card"><div class="table-wrap"><table><thead><tr><th>名称</th><th>供应商</th><th>地区</th><th>邮箱数</th><th>日限额</th><th>冷却</th><th>状态</th><th>操作</th></tr></thead><tbody>${state.pools.map(pool => `<tr><td>${esc(pool.name)}</td><td>${esc(pool.provider)}</td><td>${esc(pool.region || "—")}</td><td>${pool.mailbox_count}</td><td>${pool.daily_limit}</td><td>${pool.cooldown_seconds} 秒</td><td>${pool.enabled ? `<span class="chip green">启用</span>` : `<span class="chip red">停用</span>`}</td><td><button class="link-btn danger-text" data-action="delete-pool" data-id="${esc(pool.id)}">删除</button></td></tr>`).join("") || `<tr><td colspan="8" class="empty">暂无邮箱池</td></tr>`}</tbody></table></div>${renderPager("pools")}</div><div class="card"><div class="card-head"><h2>新增邮箱池</h2></div><div class="card-body form-grid"><label>名称<input id="pool-name" class="field"></label><label>供应商<select id="pool-provider" class="field"><option value="outlook">Outlook</option><option value="hotmail">Hotmail</option></select></label><label>地区<input id="pool-region" class="field" value="global"></label><label>日限额<input id="pool-limit" class="field" type="number" min="1" value="100"></label><label>冷却秒数<input id="pool-cooldown" class="field" type="number" min="0" value="60"></label><button class="primary-btn" data-action="create-pool">保存邮箱池</button></div></div></div>`;
+}
+
+async function importMailboxes() {
+  const file = document.querySelector("#mailbox-file")?.files?.[0];
+  const pool = document.querySelector("#mailbox-import-pool")?.value || state.mailboxPool;
+  if (!file) return toast("请选择 TXT 或 CSV 文件");
+  if (!pool) return toast("请选择邮箱池");
+  const form = new FormData(); form.append("file", file);
+  const result = await api(`/api/v1/admin/mailboxes/import?pool=${encodeURIComponent(pool)}`, { method: "POST", body: form });
+  state.mailboxPool = pool;
+  history.replaceState({}, "", `/admin/mailboxes?pool=${encodeURIComponent(pool)}`);
+  await refresh();
+  toast(`导入完成：${result.data.imported} 个成功，${result.data.failed} 个失败`);
+}
+
+function renderAdminMailboxes() {
+  const total = state.pagination.mailboxes?.total || 0;
+  const poolOptions = state.pools.map(pool => `<option value="${esc(pool.name)}" ${state.mailboxPool === pool.name ? "selected" : ""}>${esc(pool.name)} · ${esc(pool.provider)}</option>`).join("");
+  const poolLabel = state.mailboxPool ? ` · ${esc(state.mailboxPool)}` : "";
+  const rows = state.mailboxes.map(mailbox => `<tr><td>${esc(mailbox.address)}</td><td>${esc(mailbox.provider)}</td><td>${esc(mailbox.connection_method || "auto")}</td><td>${statusChip(mailbox.verification_status || mailbox.state)}${mailbox.verification_error ? `<div class="muted">${esc(mailbox.verification_error)}</div>` : ""}</td><td>${esc((mailbox.registered_platforms || []).join(", ") || "—")}</td><td>${mailbox.health_score}/100</td><td>${time(mailbox.last_verified_at)}</td><td><div class="table-actions"><button class="link-btn" data-action="verify-mailbox" data-id="${esc(mailbox.id)}">验证</button><button class="link-btn danger-text" data-action="delete-mailbox" data-id="${esc(mailbox.id)}">删除</button></div></td></tr>`).join("");
+  return pageHead(`邮箱列表${poolLabel}`, "导入后系统自动验证，Graph 优先，失败时回退 IMAP。", `<button class="ghost-btn" data-action="view" data-view="admin-pools">返回邮箱池</button>`) + `<div class="card"><div class="card-head"><h2>导入邮箱</h2><span class="muted">按行流式读取，支持 TXT / CSV / JSON Lines</span></div><div class="card-body form-grid"><div class="form-columns"><label>邮箱池<select id="mailbox-import-pool" class="field">${poolOptions || `<option value="">请先创建邮箱池</option>`}</select></label><label>文件<input id="mailbox-file" class="field" type="file" accept=".txt,.csv,text/plain,text/csv"></label></div><button class="primary-btn" data-action="import-mailboxes" ${state.pools.length ? "" : "disabled"}>导入并自动验证</button></div></div><div class="stat-grid">${stat("邮箱总数", total, "当前邮箱池")}${stat("当页可用", state.mailboxes.filter(mailbox => mailbox.state === "available").length, "验证通过")}${stat("当页待验证", state.mailboxes.filter(mailbox => mailbox.verification_status === "pending_verification").length, "后台队列处理中")}${stat("当页已注册平台", state.mailboxes.filter(mailbox => (mailbox.registered_platforms || []).length > 0).length, "按平台占用")}</div><div class="card"><div class="table-wrap"><table><thead><tr><th>邮箱</th><th>供应商</th><th>连接方式</th><th>验证状态</th><th>已注册平台</th><th>健康分</th><th>最近验证</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="8" class="empty">尚未接入邮箱</td></tr>`}</tbody></table></div>${renderPager("mailboxes")}</div>`;
 }
 
 function renderAdminUsers() {
@@ -313,9 +342,10 @@ async function loadUserModule(view) {
   if (view === "webhooks") { state.webhookEndpoints = rememberPage("webhooks", await api(`/api/v1/webhooks?page=${requestedPage("webhooks")}&page_size=20`)); state.webhookDeliveries = rememberPage("webhook-deliveries", await api(`/api/v1/webhook-deliveries?page=${requestedPage("webhook-deliveries")}&page_size=20`)); }
 }
 async function loadAdmin() {
-  const [me, overview, services, mailboxes, orders] = await Promise.all([api("/api/v1/me"), api("/api/v1/admin/overview"), api(`/api/v1/admin/services?page=${requestedPage("admin-services")}&page_size=20`), api(`/api/v1/admin/mailboxes?page=${requestedPage("mailboxes")}&page_size=20`), api(`/api/v1/admin/orders?page=${requestedPage("admin-orders")}&page_size=20`)]);
+  const mailboxFilter = state.mailboxPool ? `&pool=${encodeURIComponent(state.mailboxPool)}` : "";
+  const [me, overview, services, mailboxes, orders] = await Promise.all([api("/api/v1/me"), api("/api/v1/admin/overview"), api(`/api/v1/admin/services?page=${requestedPage("admin-services")}&page_size=20`), api(`/api/v1/admin/mailboxes?page=${requestedPage("mailboxes")}&page_size=20${mailboxFilter}`), api(`/api/v1/admin/orders?page=${requestedPage("admin-orders")}&page_size=20`)]);
   state.user = me; state.overview = overview.data; state.services = rememberPage("admin-services", services); state.mailboxes = rememberPage("mailboxes", mailboxes); state.orders = rememberPage("admin-orders", orders);
-  if (["admin-pools", "admin-channels"].includes(state.view)) state.pools = rememberPage("pools", await api(`/api/v1/admin/mailbox-pools?page=${requestedPage("pools")}&page_size=20`));
+  if (["admin-pools", "admin-mailboxes", "admin-channels"].includes(state.view)) state.pools = rememberPage("pools", await api(`/api/v1/admin/mailbox-pools?page=${requestedPage("pools")}&page_size=20`));
   if (state.view === "admin-users") state.users = rememberPage("users", await api(`/api/v1/admin/users?page=${requestedPage("users")}&page_size=20`));
   if (state.view === "admin-ledger") state.ledgers = rememberPage("admin-ledger", await api(`/api/v1/admin/wallet/ledgers?page=${requestedPage("admin-ledger")}&page_size=20`));
   if (state.view === "admin-audit") state.auditLogs = rememberPage("audit", await api(`/api/v1/admin/audit-logs?page=${requestedPage("audit")}&page_size=20`));
@@ -467,6 +497,14 @@ document.addEventListener("click", async event => {
   if (action === "delete-webhook") { await api(`/api/v1/webhooks/${target.dataset.id}`, { method: "DELETE" }); await refresh(); return; }
   if (action === "retry-webhook") { await api(`/api/v1/webhook-deliveries/${target.dataset.id}/retry`, { method: "POST" }); await refresh(); return; }
   if (action === "create-pool") { await createPool(); return; }
+  if (action === "view-pool") {
+    state.mailboxPool = target.dataset.pool || "";
+    state.pagination.mailboxes = { page: 1 };
+    history.pushState({}, "", `/admin/mailboxes?pool=${encodeURIComponent(state.mailboxPool)}`);
+    state.view = "admin-mailboxes";
+    await refresh(); return;
+  }
+  if (action === "import-mailboxes") { await importMailboxes(); return; }
   if (action === "delete-pool") { await deletePool(target.dataset.id); return; }
   if (action === "delete-mailbox") { await deleteMailbox(target.dataset.id); return; }
   if (action === "verify-mailbox") { await verifyMailbox(target.dataset.id); return; }
@@ -486,6 +524,7 @@ document.addEventListener("click", async event => {
 window.addEventListener("popstate", async () => {
   if (!state.user) return;
   state.view = routeView(state.role);
+  state.mailboxPool = new URLSearchParams(location.search).get("pool") || "";
   await refresh();
 });
 

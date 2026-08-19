@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -12,8 +14,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ljunn/heromail/internal/domain"
+	"github.com/ljunn/heromail/internal/mail"
 	"github.com/ljunn/heromail/internal/store"
 )
+
+const maxMailboxImportBytes = 100 << 20
 
 func (s *Server) adminMailboxPools(c *gin.Context) {
 	repository, ok := s.Store.(store.ResourceRepository)
@@ -94,70 +99,83 @@ func (s *Server) adminDeleteMailbox(c *gin.Context) {
 }
 
 func (s *Server) adminVerifyMailbox(c *gin.Context) {
-	repository, ok := s.Store.(store.ResourceRepository)
-	if !ok || s.Microsoft == nil || !s.Microsoft.Enabled() {
-		writeError(c, http.StatusServiceUnavailable, "mailbox_verification_unavailable", "Microsoft OAuth 尚未配置")
+	if s.MailboxVerifier == nil {
+		writeError(c, http.StatusServiceUnavailable, "mailbox_verification_unavailable", "邮箱验证服务不可用")
 		return
 	}
-	mailbox, err := repository.GetMailboxCredential(c.Param("id"))
+	result, err := s.MailboxVerifier.Verify(c.Request.Context(), demoUser(c), c.Param("id"), c.ClientIP())
 	if err != nil {
-		writeError(c, http.StatusNotFound, "mailbox_not_found", "邮箱不存在")
-		return
-	}
-	method := mailbox.Mailbox.ConnectionMethod
-	if method == "" {
-		method = domain.MailboxConnectionMicrosoftOAuth
-	}
-	if method != domain.MailboxConnectionMicrosoftOAuth {
-		writeError(c, http.StatusBadRequest, "mailbox_method_unsupported", "当前连接方式不支持在线验证")
-		return
-	}
-	now := time.Now().UTC()
-	markFailed := func(cause error) {
-		_ = repository.UpdateMailboxVerification(demoUser(c), mailbox.Mailbox.ID, method, domain.MailboxVerificationFailed, cause.Error(), now, c.ClientIP())
-	}
-	credential := mailbox.Config
-	accessToken := credential["access_token"]
-	validUntil, _ := time.Parse(time.RFC3339, credential["expires_at"])
-	if accessToken == "" || time.Until(validUntil) < 5*time.Minute {
-		if credential["refresh_token"] == "" {
-			err = errors.New("邮箱缺少可用的 OAuth 刷新凭证")
-			markFailed(err)
-			writeError(c, http.StatusBadGateway, "mailbox_verification_failed", err.Error())
-			return
-		}
-		credential, validUntil, err = s.Microsoft.Refresh(c.Request.Context(), credential["refresh_token"])
-		if err != nil {
-			markFailed(err)
-			writeError(c, http.StatusBadGateway, "mailbox_verification_failed", err.Error())
-			return
-		}
-		if credential["refresh_token"] == "" {
-			credential["refresh_token"] = mailbox.Config["refresh_token"]
-		}
-		if err = repository.UpdateMailboxCredential(demoUser(c), mailbox.Mailbox.ID, credential, validUntil, c.ClientIP()); err != nil {
-			writeError(c, http.StatusInternalServerError, "mailbox_credential_save_failed", "刷新后的邮箱凭证保存失败")
-			return
-		}
-		accessToken = credential["access_token"]
-	}
-	profile, err := s.Microsoft.Profile(c.Request.Context(), accessToken)
-	if err != nil {
-		markFailed(err)
 		writeError(c, http.StatusBadGateway, "mailbox_verification_failed", err.Error())
 		return
 	}
-	if !strings.EqualFold(profile.Address, mailbox.Mailbox.Address) {
-		err = errors.New("OAuth 账户与邮箱资产地址不一致")
-		markFailed(err)
-		writeError(c, http.StatusConflict, "mailbox_address_mismatch", err.Error())
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+func (s *Server) adminImportMailboxes(c *gin.Context) {
+	repository, ok := s.Store.(store.ResourceRepository)
+	queue, queueOK := s.Store.(store.MailboxVerificationQueue)
+	if !ok || !queueOK {
+		writeError(c, http.StatusServiceUnavailable, "mailbox_import_unavailable", "邮箱导入服务不可用")
 		return
 	}
-	if err = repository.UpdateMailboxVerification(demoUser(c), mailbox.Mailbox.ID, method, domain.MailboxVerificationVerified, "", now, c.ClientIP()); err != nil {
-		writeError(c, http.StatusInternalServerError, "mailbox_verification_save_failed", err.Error())
+	poolName := strings.TrimSpace(c.Query("pool"))
+	pool, exists := repository.MailboxPoolByName(poolName)
+	if !exists || !pool.Enabled {
+		writeError(c, http.StatusBadRequest, "mailbox_pool_not_found", "请选择已启用的邮箱池")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"status": domain.MailboxVerificationVerified, "verified_at": now}})
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxMailboxImportBytes)
+	multipartReader, err := c.Request.MultipartReader()
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_mailbox_file", "请上传 TXT 或 CSV 文件")
+		return
+	}
+	var result mail.MailboxImportResult
+	foundFile := false
+	for {
+		part, nextErr := multipartReader.NextPart()
+		if nextErr != nil {
+			if errors.Is(nextErr, io.EOF) {
+				break
+			}
+			writeError(c, http.StatusBadRequest, "mailbox_file_read_failed", "读取上传文件失败")
+			return
+		}
+		if part.FormName() != "file" {
+			_ = part.Close()
+			continue
+		}
+		foundFile = true
+		result, err = mail.StreamMailboxImport(part, mail.NewMailboxLineParser(), func(record mail.MailboxImportRecord) error {
+			mailbox, saveErr := repository.SaveMailbox(demoUser(c), domain.Mailbox{
+				Address:             record.Address,
+				Provider:            record.Provider,
+				Pool:                pool.Name,
+				State:               domain.MailboxPending,
+				ConnectionMethod:    domain.MailboxConnectionAuto,
+				VerificationStatus:  domain.MailboxVerificationPending,
+				RegisteredPlatforms: []string{},
+			}, record.Credential(), c.ClientIP())
+			if saveErr != nil {
+				return saveErr
+			}
+			if enqueueErr := queue.EnqueueMailboxVerification(c.Request.Context(), mailbox.ID); enqueueErr != nil {
+				return fmt.Errorf("保存成功但验证任务入队失败：%w", enqueueErr)
+			}
+			return nil
+		})
+		_ = part.Close()
+		break
+	}
+	if !foundFile {
+		writeError(c, http.StatusBadRequest, "mailbox_file_missing", "请选择要导入的 TXT 或 CSV 文件")
+		return
+	}
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "mailbox_import_failed", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
 func (s *Server) adminSaveService(c *gin.Context) {
@@ -274,7 +292,8 @@ func (s *Server) microsoftOAuthStart(c *gin.Context) {
 
 func (s *Server) microsoftOAuthCallback(c *gin.Context) {
 	repository, ok := s.Store.(store.ResourceRepository)
-	if !ok || s.Microsoft == nil || !s.Microsoft.Enabled() {
+	queue, queueOK := s.Store.(store.MailboxVerificationQueue)
+	if !ok || !queueOK || s.Microsoft == nil || !s.Microsoft.Enabled() {
 		writeError(c, http.StatusServiceUnavailable, "microsoft_oauth_unavailable", "Microsoft OAuth 尚未配置")
 		return
 	}
@@ -297,21 +316,22 @@ func (s *Server) microsoftOAuthCallback(c *gin.Context) {
 	if strings.Contains(profile.Address, "@hotmail.") || strings.HasSuffix(profile.Address, "@hotmail.com") {
 		provider = "hotmail"
 	}
-	now := time.Now().UTC()
-	_, err = repository.SaveMailbox(state.ActorID, domain.Mailbox{
+	mailbox, err := repository.SaveMailbox(state.ActorID, domain.Mailbox{
 		Address:             profile.Address,
 		Provider:            provider,
 		Pool:                state.Pool,
-		State:               domain.MailboxAvailable,
-		HealthScore:         100,
+		State:               domain.MailboxPending,
 		OAuthValidUntil:     validUntil,
-		ConnectionMethod:    domain.MailboxConnectionMicrosoftOAuth,
-		VerificationStatus:  domain.MailboxVerificationVerified,
-		LastVerifiedAt:      now,
+		ConnectionMethod:    domain.MailboxConnectionAuto,
+		VerificationStatus:  domain.MailboxVerificationPending,
 		RegisteredPlatforms: []string{},
 	}, credential, c.ClientIP())
 	if err != nil {
 		writeError(c, http.StatusBadRequest, "mailbox_save_failed", err.Error())
+		return
+	}
+	if err := queue.EnqueueMailboxVerification(c.Request.Context(), mailbox.ID); err != nil {
+		writeError(c, http.StatusServiceUnavailable, "mailbox_verification_queue_failed", "邮箱已保存，自动验证任务将在服务恢复后重试")
 		return
 	}
 	redirect := "/?oauth=microsoft&status=success"

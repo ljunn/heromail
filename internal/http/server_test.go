@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -353,6 +355,63 @@ type resourceRepositoryStub struct {
 	store.Repository
 	store.ResourceRepository
 	savedService domain.Service
+}
+
+type mailboxImportRepositoryStub struct {
+	store.Repository
+	store.ResourceRepository
+	saved  []domain.Mailbox
+	queued []string
+}
+
+func (s *mailboxImportRepositoryStub) MailboxPoolByName(name string) (domain.MailboxPool, bool) {
+	return domain.MailboxPool{Name: name, Provider: "outlook", Enabled: name == "主池"}, name == "主池"
+}
+
+func (s *mailboxImportRepositoryStub) SaveMailbox(_ string, mailbox domain.Mailbox, _ map[string]string, _ string) (domain.Mailbox, error) {
+	mailbox.ID = "mailbox-" + mailbox.Address
+	s.saved = append(s.saved, mailbox)
+	return mailbox, nil
+}
+
+func (s *mailboxImportRepositoryStub) EnqueueMailboxVerification(_ context.Context, mailboxID string) error {
+	s.queued = append(s.queued, mailboxID)
+	return nil
+}
+
+func (s *mailboxImportRepositoryStub) DequeueMailboxVerification(context.Context, time.Duration) (string, error) {
+	return "", nil
+}
+
+func TestAdminImportsMailboxFileAndQueuesVerification(t *testing.T) {
+	repository := &mailboxImportRepositoryStub{Repository: store.New()}
+	server := NewServer(repository)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "mailboxes.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = part.Write([]byte("alpha@outlook.com:password\nbeta@hotmail.com----password\n"))
+	_ = writer.Close()
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/mailboxes/import?pool="+url.QueryEscape("主池"), &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("X-HeroMail-Role", "admin")
+	request.Header.Set("X-HeroMail-User", "admin-001")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("导入邮箱返回 %d，响应：%s", response.Code, response.Body.String())
+	}
+	if len(repository.saved) != 2 || len(repository.queued) != 2 {
+		t.Fatalf("邮箱或验证任务数量错误：saved=%d queued=%d", len(repository.saved), len(repository.queued))
+	}
+	for _, mailbox := range repository.saved {
+		if mailbox.State != domain.MailboxPending || mailbox.VerificationStatus != domain.MailboxVerificationPending || len(mailbox.RegisteredPlatforms) != 0 {
+			t.Fatalf("导入邮箱初始状态错误：%+v", mailbox)
+		}
+	}
 }
 
 func (s *resourceRepositoryStub) SaveService(_ string, service domain.Service, _ string) (domain.Service, error) {

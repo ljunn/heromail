@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ljunn/heromail/internal/domain"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -18,16 +19,31 @@ func (s *PostgresStore) ListMailboxPoolsPage(page, pageSize int) ([]domain.Mailb
 	var total int64
 	s.db.Model(&sqlMailboxPool{}).Count(&total)
 	type poolRow struct {
-		sqlMailboxPool
-		MailboxCount int64
+		ID              string
+		Name            string
+		Provider        string
+		Region          string
+		Enabled         bool
+		DailyLimit      int
+		CooldownSeconds int
+		CreatedAt       time.Time
+		MailboxCount    int64
 	}
 	var rows []poolRow
-	s.db.Table("mailbox_pools AS p").Select("p.*, count(m.id) AS mailbox_count").Joins("LEFT JOIN mailboxes AS m ON m.pool = p.name").Group("p.id").Order("p.created_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&rows)
+	s.db.Table("mailbox_pools AS p").Select("p.id, p.name, p.provider, p.region, p.enabled, p.daily_limit, p.cooldown_seconds, p.created_at, count(m.id) AS mailbox_count").Joins("LEFT JOIN mailboxes AS m ON m.pool = p.name").Group("p.id").Order("p.created_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&rows)
 	items := make([]domain.MailboxPool, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, domain.MailboxPool{ID: row.ID, Name: row.Name, Provider: row.Provider, Region: row.Region, Enabled: row.Enabled, DailyLimit: row.DailyLimit, CooldownSecond: row.CooldownSeconds, MailboxCount: row.MailboxCount, CreatedAt: row.CreatedAt})
 	}
 	return items, total
+}
+
+func (s *PostgresStore) MailboxPoolByName(name string) (domain.MailboxPool, bool) {
+	var row sqlMailboxPool
+	if err := s.db.First(&row, "name = ?", strings.TrimSpace(name)).Error; err != nil {
+		return domain.MailboxPool{}, false
+	}
+	return domain.MailboxPool{ID: row.ID, Name: row.Name, Provider: row.Provider, Region: row.Region, Enabled: row.Enabled, DailyLimit: row.DailyLimit, CooldownSecond: row.CooldownSeconds, CreatedAt: row.CreatedAt}, true
 }
 
 func (s *PostgresStore) SaveMailboxPool(actorID string, pool domain.MailboxPool, ip string) (domain.MailboxPool, error) {
@@ -140,7 +156,7 @@ func (s *PostgresStore) SaveMailbox(actorID string, mailbox domain.Mailbox, cred
 			if row.State == "" {
 				row.State = string(domain.MailboxAvailable)
 			}
-			if row.HealthScore == 0 {
+			if row.HealthScore == 0 && row.State == string(domain.MailboxAvailable) {
 				row.HealthScore = 100
 			}
 			if !mailbox.LastVerifiedAt.IsZero() {
@@ -253,7 +269,7 @@ func (s *PostgresStore) UpdateMailboxVerification(actorID, mailboxID, method, st
 		}
 		if status == domain.MailboxVerificationVerified {
 			mailbox.HealthScore = 100
-			if mailbox.State == string(domain.MailboxError) && mailbox.ActiveOrderID == "" {
+			if (mailbox.State == string(domain.MailboxError) || mailbox.State == string(domain.MailboxPending)) && mailbox.ActiveOrderID == "" {
 				mailbox.State = string(domain.MailboxAvailable)
 			}
 		} else if status == domain.MailboxVerificationFailed && mailbox.ActiveOrderID == "" && mailbox.State != string(domain.MailboxBlocked) {
@@ -265,6 +281,47 @@ func (s *PostgresStore) UpdateMailboxVerification(actorID, mailboxID, method, st
 		}
 		return tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: actorID, Action: "mailbox.verify", ResourceType: "mailbox", ResourceID: mailboxID, Detail: "邮箱连接验证结果：" + status, IP: ip}).Error
 	})
+}
+
+func (s *PostgresStore) PendingMailboxVerificationIDs(limit int) ([]string, error) {
+	if limit < 1 || limit > 5000 {
+		limit = 1000
+	}
+	var ids []string
+	err := s.db.Model(&sqlMailbox{}).Where("verification_status = ?", domain.MailboxVerificationPending).Order("updated_at ASC").Limit(limit).Pluck("id", &ids).Error
+	return ids, err
+}
+
+const (
+	mailboxVerificationQueueKey = "heromail:mailbox:verification:queue"
+	mailboxVerificationSetKey   = "heromail:mailbox:verification:queued"
+)
+
+func (s *PostgresStore) EnqueueMailboxVerification(ctx context.Context, mailboxID string) error {
+	script := redis.NewScript(`
+if redis.call("SADD", KEYS[1], ARGV[1]) == 1 then
+  redis.call("LPUSH", KEYS[2], ARGV[1])
+end
+return 1`)
+	return script.Run(ctx, s.redis, []string{mailboxVerificationSetKey, mailboxVerificationQueueKey}, mailboxID).Err()
+}
+
+func (s *PostgresStore) DequeueMailboxVerification(ctx context.Context, timeout time.Duration) (string, error) {
+	values, err := s.redis.BRPop(ctx, timeout, mailboxVerificationQueueKey).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if len(values) != 2 {
+		return "", nil
+	}
+	mailboxID := values[1]
+	if err := s.redis.SRem(ctx, mailboxVerificationSetKey, mailboxID).Err(); err != nil {
+		return "", err
+	}
+	return mailboxID, nil
 }
 
 func (s *PostgresStore) SaveService(actorID string, service domain.Service, ip string) (domain.Service, error) {

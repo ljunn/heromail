@@ -27,6 +27,7 @@ type Server struct {
 	UpgradeBackup      upgradeBackupFunc
 	Payment            *payment.Service
 	Microsoft          *mail.MicrosoftClient
+	MailboxVerifier    *mail.MailboxVerifier
 	PublicURL          string
 	WorkerToken        string
 }
@@ -54,6 +55,9 @@ func NewServer(st store.Repository) *Server {
 		redirectURI = strings.TrimRight(s.PublicURL, "/") + "/api/v1/oauth/microsoft/callback"
 	}
 	s.Microsoft = mail.NewMicrosoftClient(mail.MicrosoftConfig{ClientID: os.Getenv("MICROSOFT_CLIENT_ID"), ClientSecret: os.Getenv("MICROSOFT_CLIENT_SECRET"), Tenant: os.Getenv("MICROSOFT_TENANT"), RedirectURI: redirectURI})
+	if repository, ok := st.(store.ResourceRepository); ok {
+		s.MailboxVerifier = mail.NewMailboxVerifier(repository, s.Microsoft, mail.NewMicrosoftIMAPConnector())
+	}
 	if repository, ok := st.(store.PaymentRepository); ok {
 		s.Payment = payment.New(repository, os.Getenv("HEROMAIL_PUBLIC_URL"))
 	}
@@ -145,6 +149,7 @@ func (s *Server) routes() {
 	admin.GET("/overview", s.adminOverview)
 	admin.GET("/mailboxes", s.adminMailboxes)
 	admin.POST("/mailboxes", s.adminSaveMailbox)
+	admin.POST("/mailboxes/import", s.adminImportMailboxes)
 	admin.DELETE("/mailboxes/:id", s.adminDeleteMailbox)
 	admin.POST("/mailboxes/:id/verify", s.adminVerifyMailbox)
 	admin.GET("/mailbox-pools", s.adminMailboxPools)
@@ -311,7 +316,15 @@ func (s *Server) adminOverview(c *gin.Context) {
 
 func (s *Server) adminMailboxes(c *gin.Context) {
 	page, pageSize := pageRequest(c)
-	items, total := s.Store.MailboxesPage(page, pageSize)
+	var items []domain.Mailbox
+	var total int64
+	if repository, ok := s.Store.(interface {
+		MailboxesPageByPool(string, int, int) ([]domain.Mailbox, int64)
+	}); ok && strings.TrimSpace(c.Query("pool")) != "" {
+		items, total = repository.MailboxesPageByPool(strings.TrimSpace(c.Query("pool")), page, pageSize)
+	} else {
+		items, total = s.Store.MailboxesPage(page, pageSize)
+	}
 	writePage(c, items, page, pageSize, total)
 }
 

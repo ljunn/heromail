@@ -44,7 +44,12 @@ func main() {
 		repository = postgresStore
 	}
 	server := httpapi.NewServer(repository)
-	if resources, ok := repository.(store.ResourceRepository); ok && server.Microsoft != nil && server.Microsoft.Enabled() {
+	if resources, ok := repository.(store.ResourceRepository); ok && server.MailboxVerifier != nil {
+		if queue, queueOK := repository.(store.MailboxVerificationQueue); queueOK {
+			go mail.NewVerificationWorker(resources, queue, server.MailboxVerifier).Run(ctx)
+		}
+	}
+	if resources, ok := repository.(store.ResourceRepository); ok && server.Microsoft != nil {
 		if receiver, receiverOK := repository.(mail.CodeReceiver); receiverOK {
 			go mail.NewWorker(resources, receiver, server.Microsoft, 15*time.Second).Run(ctx)
 		}

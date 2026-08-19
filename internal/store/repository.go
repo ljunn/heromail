@@ -26,6 +26,7 @@ type Repository interface {
 	Overview() domain.Overview
 	Mailboxes() []domain.Mailbox
 	MailboxesPage(page, pageSize int) ([]domain.Mailbox, int64)
+	MailboxesPageByPool(pool string, page, pageSize int) ([]domain.Mailbox, int64)
 }
 
 type ServiceUsage struct {

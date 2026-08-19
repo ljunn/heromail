@@ -412,6 +412,17 @@ func (s *Store) MailboxesPage(page, pageSize int) ([]domain.Mailbox, int64) {
 	return paginate(items, page, pageSize), int64(len(items))
 }
 
+func (s *Store) MailboxesPageByPool(pool string, page, pageSize int) ([]domain.Mailbox, int64) {
+	items := s.Mailboxes()
+	filtered := make([]domain.Mailbox, 0)
+	for _, mailbox := range items {
+		if mailbox.Pool == pool {
+			filtered = append(filtered, mailbox)
+		}
+	}
+	return paginate(filtered, page, pageSize), int64(len(filtered))
+}
+
 func (s *Store) Ping(context.Context) error { return nil }
 func (s *Store) StorageName() string        { return "memory" }
 

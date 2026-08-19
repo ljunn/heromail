@@ -251,7 +251,8 @@ func (s *PostgresStore) ServiceAvailability(serviceIDs []string) map[string]int 
 		Joins("JOIN mailboxes AS m ON m.id = mss.mailbox_id").
 		Joins("JOIN mailbox_pools AS mp ON mp.name = m.pool AND mp.enabled = ?", true).
 		Where("mss.service_id IN ? AND ts.enabled = ?", serviceIDs, true).
-		Where("m.state = ? AND m.active_order_id = '' AND m.health_score >= ? AND m.oauth_valid_until > ?", domain.MailboxAvailable, 60, time.Now()).
+		Where("m.state = ? AND m.active_order_id = '' AND m.health_score >= ? AND m.verification_status = ?", domain.MailboxAvailable, 60, domain.MailboxVerificationVerified).
+		Where("(m.connection_method = ? OR m.oauth_valid_until > ?)", domain.MailboxConnectionIMAP, time.Now()).
 		Where("mss.state = ?", domain.ServiceAvailable).
 		Where("ts.allowed_providers @> jsonb_build_array(m.provider)").
 		Where("m.last_received_at IS NULL OR m.last_received_at <= NOW() - (mp.cooldown_seconds * INTERVAL '1 second')").
@@ -304,7 +305,8 @@ func (s *PostgresStore) CreateOrder(userID, serviceID, requestID string) (domain
 		query := tx.Table("mailboxes AS m").Select("m.*").
 			Joins("JOIN mailbox_service_states AS mss ON mss.mailbox_id = m.id AND mss.service_id = ?", service.ID).
 			Joins("JOIN mailbox_pools AS mp ON mp.name = m.pool AND mp.enabled = ?", true).
-			Where("m.state = ? AND m.active_order_id = '' AND m.health_score >= ? AND m.oauth_valid_until > ?", domain.MailboxAvailable, 60, time.Now()).
+			Where("m.state = ? AND m.active_order_id = '' AND m.health_score >= ? AND m.verification_status = ?", domain.MailboxAvailable, 60, domain.MailboxVerificationVerified).
+			Where("(m.connection_method = ? OR m.oauth_valid_until > ?)", domain.MailboxConnectionIMAP, time.Now()).
 			Where("mss.state = ?", domain.ServiceAvailable).
 			Where("m.provider IN ?", service.AllowedProviders).
 			Where("m.last_received_at IS NULL OR m.last_received_at <= NOW() - (mp.cooldown_seconds * INTERVAL '1 second')").
@@ -511,11 +513,23 @@ func (s *PostgresStore) Mailboxes() []domain.Mailbox {
 }
 
 func (s *PostgresStore) MailboxesPage(page, pageSize int) ([]domain.Mailbox, int64) {
+	return s.mailboxesPage("", page, pageSize)
+}
+
+func (s *PostgresStore) MailboxesPageByPool(pool string, page, pageSize int) ([]domain.Mailbox, int64) {
+	return s.mailboxesPage(strings.TrimSpace(pool), page, pageSize)
+}
+
+func (s *PostgresStore) mailboxesPage(pool string, page, pageSize int) ([]domain.Mailbox, int64) {
 	page, pageSize = normalizePage(page, pageSize)
 	var total int64
-	s.db.Model(&sqlMailbox{}).Count(&total)
+	query := s.db.Model(&sqlMailbox{})
+	if pool != "" {
+		query = query.Where("pool = ?", pool)
+	}
+	query.Count(&total)
 	var rows []sqlMailbox
-	s.db.Order("address ASC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&rows)
+	query.Order("address ASC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&rows)
 	mailboxIDs := make([]string, 0, len(rows))
 	for _, row := range rows {
 		mailboxIDs = append(mailboxIDs, row.ID)

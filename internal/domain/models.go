@@ -25,6 +25,7 @@ const (
 	MailboxCooldown  MailboxState = "cooldown"
 	MailboxBlocked   MailboxState = "blocked"
 	MailboxError     MailboxState = "auth_error"
+	MailboxPending   MailboxState = "pending_verification"
 )
 
 type ServiceMailboxState string
@@ -38,7 +39,10 @@ const (
 )
 
 const (
+	MailboxConnectionAuto           = "auto"
 	MailboxConnectionMicrosoftOAuth = "microsoft_oauth"
+	MailboxConnectionMicrosoftGraph = "microsoft_graph"
+	MailboxConnectionIMAP           = "imap"
 
 	MailboxVerificationPending  = "pending_verification"
 	MailboxVerificationVerified = "verified"

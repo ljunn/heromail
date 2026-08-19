@@ -80,8 +80,41 @@ func (c *MicrosoftClient) Refresh(ctx context.Context, refreshToken string) (map
 	return c.token(ctx, url.Values{"client_id": {c.config.ClientID}, "client_secret": {c.config.ClientSecret}, "grant_type": {"refresh_token"}, "refresh_token": {refreshToken}, "scope": {"offline_access Mail.Read User.Read"}})
 }
 
+func (c *MicrosoftClient) RefreshCredential(ctx context.Context, credential map[string]string) (map[string]string, time.Time, error) {
+	clientID := strings.TrimSpace(credential["client_id"])
+	if clientID == "" {
+		clientID = c.config.ClientID
+	}
+	refreshToken := strings.TrimSpace(credential["refresh_token"])
+	if clientID == "" || refreshToken == "" {
+		return nil, time.Time{}, errors.New("缺少 Microsoft client_id 或 refresh_token")
+	}
+	values := url.Values{
+		"client_id":     {clientID},
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"scope":         {"offline_access Mail.Read User.Read"},
+	}
+	clientSecret := strings.TrimSpace(credential["client_secret"])
+	if clientSecret == "" && clientID == c.config.ClientID {
+		clientSecret = c.config.ClientSecret
+	}
+	if clientSecret != "" {
+		values.Set("client_secret", clientSecret)
+	}
+	tenant := strings.TrimSpace(credential["tenant"])
+	if tenant == "" {
+		tenant = c.config.Tenant
+	}
+	return c.tokenForTenant(ctx, tenant, values)
+}
+
 func (c *MicrosoftClient) token(ctx context.Context, values url.Values) (map[string]string, time.Time, error) {
-	endpoint := fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/v2.0/token", c.config.Tenant)
+	return c.tokenForTenant(ctx, c.config.Tenant, values)
+}
+
+func (c *MicrosoftClient) tokenForTenant(ctx context.Context, tenant string, values url.Values) (map[string]string, time.Time, error) {
+	endpoint := fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/v2.0/token", tenant)
 	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(values.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response, err := c.http.Do(request)
@@ -175,6 +208,7 @@ type Worker struct {
 	repository store.ResourceRepository
 	receiver   CodeReceiver
 	client     *MicrosoftClient
+	imap       IMAPMessageConnector
 	interval   time.Duration
 }
 
@@ -182,7 +216,7 @@ func NewWorker(repository store.ResourceRepository, receiver CodeReceiver, clien
 	if interval < 5*time.Second {
 		interval = 15 * time.Second
 	}
-	return &Worker{repository: repository, receiver: receiver, client: client, interval: interval}
+	return &Worker{repository: repository, receiver: receiver, client: client, imap: NewMicrosoftIMAPConnector(), interval: interval}
 }
 
 func (w *Worker) Run(ctx context.Context) {
@@ -210,20 +244,35 @@ func (w *Worker) poll(ctx context.Context) {
 			continue
 		}
 		credential := mailbox.Config
+		useIMAP := mailbox.Mailbox.ConnectionMethod == domain.MailboxConnectionIMAP
 		validUntil, _ := time.Parse(time.RFC3339, credential["expires_at"])
-		if credential["access_token"] == "" || time.Until(validUntil) < 5*time.Minute {
-			refreshed, newValidUntil, refreshErr := w.client.Refresh(ctx, credential["refresh_token"])
+		needsRefresh := credential["refresh_token"] != "" && (credential["access_token"] == "" || time.Until(validUntil) < 5*time.Minute)
+		if needsRefresh {
+			refreshed, newValidUntil, refreshErr := w.client.RefreshCredential(ctx, credential)
 			if refreshErr != nil {
 				continue
 			}
-			if refreshed["refresh_token"] == "" {
-				refreshed["refresh_token"] = credential["refresh_token"]
-			}
-			credential, validUntil = refreshed, newValidUntil
+			credential, validUntil = mergeCredential(credential, refreshed), newValidUntil
 			_ = w.repository.UpdateMailboxCredential("system", mailbox.Mailbox.ID, credential, validUntil, "")
 		}
-		messages, messageErr := w.client.Messages(ctx, credential["access_token"])
+		var messages []Message
+		var messageErr error
+		if useIMAP {
+			messages, messageErr = w.imap.Messages(ctx, mailbox.Mailbox.Address, credential)
+		} else {
+			if credential["access_token"] == "" {
+				continue
+			}
+			messages, messageErr = w.client.Messages(ctx, credential["access_token"])
+		}
 		if messageErr != nil {
+			if useIMAP {
+				message := messageErr.Error()
+				if len(message) > 480 {
+					message = message[:480]
+				}
+				_ = w.repository.UpdateMailboxVerification("system", mailbox.Mailbox.ID, domain.MailboxConnectionIMAP, domain.MailboxVerificationFailed, message, time.Now().UTC(), "")
+			}
 			continue
 		}
 		for _, message := range messages {
