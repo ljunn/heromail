@@ -255,6 +255,7 @@ async function importMailboxes() {
 }
 
 function renderAdminMailboxes() {
+  if (!state.mailboxPool) return renderAdminPools();
   const total = state.pagination.mailboxes?.total || 0;
   const poolOptions = state.pools.map(pool => `<option value="${esc(pool.name)}" ${state.mailboxPool === pool.name ? "selected" : ""}>${esc(pool.name)} · ${esc(pool.provider)}</option>`).join("");
   const poolLabel = state.mailboxPool ? ` · ${esc(state.mailboxPool)}` : "";
