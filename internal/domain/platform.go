@@ -46,3 +46,6 @@ type MailboxPool struct {
 	MailboxCount   int64     `json:"mailbox_count"`
 	CreatedAt      time.Time `json:"created_at"`
 }
+
+// DefaultMailboxPoolName 是系统唯一的邮箱资产池名称，邮箱类型由 Mailbox.Provider 区分。
+const DefaultMailboxPoolName = "邮箱池"

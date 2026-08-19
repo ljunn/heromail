@@ -73,10 +73,11 @@ func (s *Server) adminSaveMailbox(c *gin.Context) {
 		domain.Mailbox
 		Credential map[string]string `json:"credential"`
 	}
-	if err := c.ShouldBindJSON(&request); err != nil || request.Address == "" || request.Provider == "" || request.Pool == "" {
-		writeError(c, http.StatusBadRequest, "invalid_request", "邮箱地址、供应商和邮箱池不能为空")
+	if err := c.ShouldBindJSON(&request); err != nil || request.Address == "" || request.Provider == "" {
+		writeError(c, http.StatusBadRequest, "invalid_request", "邮箱地址和供应商不能为空")
 		return
 	}
+	request.Pool = domain.DefaultMailboxPoolName
 	mailbox, err := repository.SaveMailbox(demoUser(c), request.Mailbox, request.Credential, c.ClientIP())
 	if err != nil {
 		writeError(c, http.StatusBadRequest, "mailbox_save_failed", err.Error())
@@ -118,10 +119,10 @@ func (s *Server) adminImportMailboxes(c *gin.Context) {
 		writeError(c, http.StatusServiceUnavailable, "mailbox_import_unavailable", "邮箱导入服务不可用")
 		return
 	}
-	poolName := strings.TrimSpace(c.Query("pool"))
+	poolName := domain.DefaultMailboxPoolName
 	pool, exists := repository.MailboxPoolByName(poolName)
 	if !exists || !pool.Enabled {
-		writeError(c, http.StatusBadRequest, "mailbox_pool_not_found", "请选择已启用的邮箱池")
+		writeError(c, http.StatusBadRequest, "mailbox_pool_not_found", "系统邮箱池不可用")
 		return
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxMailboxImportBytes)
@@ -271,12 +272,13 @@ func (s *Server) microsoftOAuthStart(c *gin.Context) {
 		return
 	}
 	var request struct {
-		Pool string `json:"pool" binding:"required"`
+		Pool string `json:"pool"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid_request", "请选择邮箱池")
+		writeError(c, http.StatusBadRequest, "invalid_request", "请求格式无效")
 		return
 	}
+	request.Pool = domain.DefaultMailboxPoolName
 	buffer := make([]byte, 32)
 	if _, err := rand.Read(buffer); err != nil {
 		writeError(c, http.StatusInternalServerError, "oauth_state_failed", "无法创建 OAuth 状态")
@@ -319,7 +321,7 @@ func (s *Server) microsoftOAuthCallback(c *gin.Context) {
 	mailbox, err := repository.SaveMailbox(state.ActorID, domain.Mailbox{
 		Address:             profile.Address,
 		Provider:            provider,
-		Pool:                state.Pool,
+		Pool:                domain.DefaultMailboxPoolName,
 		State:               domain.MailboxPending,
 		OAuthValidUntil:     validUntil,
 		ConnectionMethod:    domain.MailboxConnectionAuto,

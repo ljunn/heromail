@@ -89,6 +89,9 @@ func (s *PostgresStore) SaveMailbox(actorID string, mailbox domain.Mailbox, cred
 	mailbox.Address = strings.ToLower(strings.TrimSpace(mailbox.Address))
 	mailbox.Provider = strings.ToLower(strings.TrimSpace(mailbox.Provider))
 	mailbox.Pool = strings.TrimSpace(mailbox.Pool)
+	if mailbox.Pool == "" {
+		mailbox.Pool = domain.DefaultMailboxPoolName
+	}
 	encrypted := ""
 	var err error
 	if len(credential) > 0 {

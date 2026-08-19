@@ -8,7 +8,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -365,7 +364,7 @@ type mailboxImportRepositoryStub struct {
 }
 
 func (s *mailboxImportRepositoryStub) MailboxPoolByName(name string) (domain.MailboxPool, bool) {
-	return domain.MailboxPool{Name: name, Provider: "outlook", Enabled: name == "主池"}, name == "主池"
+	return domain.MailboxPool{Name: name, Provider: "mixed", Enabled: name == domain.DefaultMailboxPoolName}, name == domain.DefaultMailboxPoolName
 }
 
 func (s *mailboxImportRepositoryStub) SaveMailbox(_ string, mailbox domain.Mailbox, _ map[string]string, _ string) (domain.Mailbox, error) {
@@ -395,7 +394,7 @@ func TestAdminImportsMailboxFileAndQueuesVerification(t *testing.T) {
 	_, _ = part.Write([]byte("alpha@outlook.com:password\nbeta@hotmail.com----password\n"))
 	_ = writer.Close()
 
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/mailboxes/import?pool="+url.QueryEscape("主池"), &body)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/mailboxes/import", &body)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	request.Header.Set("X-HeroMail-Role", "admin")
 	request.Header.Set("X-HeroMail-User", "admin-001")
@@ -408,7 +407,7 @@ func TestAdminImportsMailboxFileAndQueuesVerification(t *testing.T) {
 		t.Fatalf("邮箱或验证任务数量错误：saved=%d queued=%d", len(repository.saved), len(repository.queued))
 	}
 	for _, mailbox := range repository.saved {
-		if mailbox.State != domain.MailboxPending || mailbox.VerificationStatus != domain.MailboxVerificationPending || len(mailbox.RegisteredPlatforms) != 0 {
+		if mailbox.Pool != domain.DefaultMailboxPoolName || mailbox.State != domain.MailboxPending || mailbox.VerificationStatus != domain.MailboxVerificationPending || len(mailbox.RegisteredPlatforms) != 0 {
 			t.Fatalf("导入邮箱初始状态错误：%+v", mailbox)
 		}
 	}

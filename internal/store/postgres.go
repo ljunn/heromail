@@ -106,27 +106,43 @@ func (s *PostgresStore) seed(config PostgresConfig) error {
 			return err
 		}
 	}
+	if err := s.ensureDefaultMailboxPool(); err != nil {
+		return err
+	}
 	if config.SeedDemo {
-		pools := []sqlMailboxPool{
-			{ID: "pool-outlook-demo", Name: "Outlook Pool A", Provider: "outlook", Region: "global", Enabled: true, DailyLimit: 1000, CooldownSeconds: 0},
-			{ID: "pool-hotmail-demo", Name: "Hotmail Pool A", Provider: "hotmail", Region: "global", Enabled: true, DailyLimit: 1000, CooldownSeconds: 0},
-		}
-		for _, pool := range pools {
-			if err := s.db.Where("id = ?", pool.ID).FirstOrCreate(&pool).Error; err != nil {
-				return err
-			}
-		}
 		return s.seedDemoMailboxes(services)
 	}
 	return nil
 }
 
+func (s *PostgresStore) ensureDefaultMailboxPool() error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		defaultPool := sqlMailboxPool{ID: "pool-default", Name: domain.DefaultMailboxPoolName, Provider: "mixed", Region: "global", Enabled: true, DailyLimit: 1000, CooldownSeconds: 0}
+		if err := tx.Where("name = ?", defaultPool.Name).FirstOrCreate(&defaultPool).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&sqlMailboxPool{}).Where("id = ?", defaultPool.ID).Updates(map[string]any{
+			"provider":         "mixed",
+			"region":           "global",
+			"enabled":          true,
+			"daily_limit":      1000,
+			"cooldown_seconds": 0,
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&sqlMailbox{}).Where("pool <> ? OR pool IS NULL OR pool = ''", defaultPool.Name).Update("pool", defaultPool.Name).Error; err != nil {
+			return err
+		}
+		return tx.Where("id <> ?", defaultPool.ID).Delete(&sqlMailboxPool{}).Error
+	})
+}
+
 func (s *PostgresStore) seedDemoMailboxes(services []sqlService) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		for index := 1; index <= 24; index++ {
-			provider, domainName, pool := "outlook", "outlook.com", "Outlook Pool A"
+			provider, domainName, pool := "outlook", "outlook.com", domain.DefaultMailboxPoolName
 			if index%2 == 0 {
-				provider, domainName, pool = "hotmail", "hotmail.com", "Hotmail Pool A"
+				provider, domainName = "hotmail", "hotmail.com"
 			}
 			now := time.Now().UTC()
 			mailbox := sqlMailbox{ID: fmt.Sprintf("mb-%03d", index), Address: fmt.Sprintf("hero_%02d@%s", index, domainName), Provider: provider, Pool: pool, State: string(domain.MailboxAvailable), HealthScore: 84 + index%16, OAuthValidUntil: now.Add(30 * 24 * time.Hour), ConnectionMethod: domain.MailboxConnectionMicrosoftOAuth, VerificationStatus: domain.MailboxVerificationVerified, LastVerifiedAt: &now}
@@ -476,12 +492,22 @@ func (s *PostgresStore) ReapExpired() int {
 
 func (s *PostgresStore) Overview() domain.Overview {
 	var result domain.Overview
-	var available, leased, authErrors, blocked int64
+	var total, outlook, hotmail, pending, verified, available, leased, authErrors, blocked int64
+	s.db.Model(&sqlMailbox{}).Count(&total)
+	s.db.Model(&sqlMailbox{}).Where("provider = ?", "outlook").Count(&outlook)
+	s.db.Model(&sqlMailbox{}).Where("provider = ?", "hotmail").Count(&hotmail)
+	s.db.Model(&sqlMailbox{}).Where("verification_status = ?", domain.MailboxVerificationPending).Count(&pending)
+	s.db.Model(&sqlMailbox{}).Where("verification_status = ?", domain.MailboxVerificationVerified).Count(&verified)
 	s.db.Model(&sqlMailbox{}).Where("state = ?", domain.MailboxAvailable).Count(&available)
 	s.db.Model(&sqlMailbox{}).Where("state = ?", domain.MailboxLeased).Count(&leased)
 	s.db.Model(&sqlMailbox{}).Where("state = ?", domain.MailboxError).Count(&authErrors)
 	s.db.Model(&sqlMailbox{}).Where("state = ?", domain.MailboxBlocked).Count(&blocked)
 	result.AvailableMailboxes = int(available)
+	result.TotalMailboxes = int(total)
+	result.OutlookMailboxes = int(outlook)
+	result.HotmailMailboxes = int(hotmail)
+	result.PendingMailboxes = int(pending)
+	result.VerifiedMailboxes = int(verified)
 	result.ActiveLeases = int(leased)
 	result.AuthErrors = int(authErrors)
 	result.BlockedMailboxes = int(blocked)

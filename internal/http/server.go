@@ -153,8 +153,6 @@ func (s *Server) routes() {
 	admin.DELETE("/mailboxes/:id", s.adminDeleteMailbox)
 	admin.POST("/mailboxes/:id/verify", s.adminVerifyMailbox)
 	admin.GET("/mailbox-pools", s.adminMailboxPools)
-	admin.POST("/mailbox-pools", s.adminSaveMailboxPool)
-	admin.DELETE("/mailbox-pools/:id", s.adminDeleteMailboxPool)
 	admin.POST("/mailboxes/oauth/microsoft", s.microsoftOAuthStart)
 	admin.GET("/services", s.adminServices)
 	admin.POST("/services", s.adminSaveService)
@@ -316,15 +314,7 @@ func (s *Server) adminOverview(c *gin.Context) {
 
 func (s *Server) adminMailboxes(c *gin.Context) {
 	page, pageSize := pageRequest(c)
-	var items []domain.Mailbox
-	var total int64
-	if repository, ok := s.Store.(interface {
-		MailboxesPageByPool(string, int, int) ([]domain.Mailbox, int64)
-	}); ok && strings.TrimSpace(c.Query("pool")) != "" {
-		items, total = repository.MailboxesPageByPool(strings.TrimSpace(c.Query("pool")), page, pageSize)
-	} else {
-		items, total = s.Store.MailboxesPage(page, pageSize)
-	}
+	items, total := s.Store.MailboxesPage(page, pageSize)
 	writePage(c, items, page, pageSize, total)
 }
 

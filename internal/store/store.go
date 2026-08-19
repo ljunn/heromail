@@ -59,9 +59,9 @@ func (s *Store) seed() {
 	for i := 1; i <= 24; i++ {
 		provider := providers[(i-1)%len(providers)]
 		mailDomain := "outlook.com"
-		pool := "Outlook Pool A"
+		pool := domain.DefaultMailboxPoolName
 		if provider == "hotmail" {
-			mailDomain, pool = "hotmail.com", "Hotmail Pool A"
+			mailDomain = "hotmail.com"
 		}
 		id := fmt.Sprintf("mb-%03d", i)
 		states := make(map[string]domain.MailboxService)
@@ -353,6 +353,19 @@ func (s *Store) Overview() domain.Overview {
 	var codeTotal, codeSeconds float64
 	now := time.Now()
 	for _, mailbox := range s.mailboxes {
+		result.TotalMailboxes++
+		if mailbox.Provider == "outlook" {
+			result.OutlookMailboxes++
+		}
+		if mailbox.Provider == "hotmail" {
+			result.HotmailMailboxes++
+		}
+		if mailbox.VerificationStatus == domain.MailboxVerificationPending {
+			result.PendingMailboxes++
+		}
+		if mailbox.VerificationStatus == domain.MailboxVerificationVerified {
+			result.VerifiedMailboxes++
+		}
 		if mailbox.State == domain.MailboxAvailable {
 			result.AvailableMailboxes++
 		}
