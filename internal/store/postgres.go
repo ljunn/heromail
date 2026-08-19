@@ -196,6 +196,14 @@ func (s *PostgresStore) ListEnabledServicesPage(page, pageSize int) ([]domain.Se
 	return items, total
 }
 
+func (s *PostgresStore) EnabledService(codeOrID string) (domain.Service, bool) {
+	var row sqlService
+	if err := s.db.Where("enabled = ? AND (id = ? OR code = ?)", true, codeOrID, strings.ToLower(codeOrID)).First(&row).Error; err != nil {
+		return domain.Service{}, false
+	}
+	return mapService(row), true
+}
+
 func (s *PostgresStore) ServiceUsage(serviceIDs []string) map[string]ServiceUsage {
 	type usageRow struct {
 		ServiceID string
@@ -218,6 +226,39 @@ func (s *PostgresStore) ServiceUsage(serviceIDs []string) map[string]ServiceUsag
 			usage.Consumed = row.Count
 		}
 		result[row.ServiceID] = usage
+	}
+	return result
+}
+
+func (s *PostgresStore) ServiceAvailability(serviceIDs []string) map[string]int {
+	type availabilityRow struct {
+		ServiceID string
+		Count     int
+	}
+	result := make(map[string]int, len(serviceIDs))
+	for _, serviceID := range serviceIDs {
+		result[serviceID] = 0
+	}
+	if len(serviceIDs) == 0 {
+		return result
+	}
+
+	var rows []availabilityRow
+	s.db.Table("mailbox_service_states AS mss").
+		Select("mss.service_id, COUNT(*) AS count").
+		Joins("JOIN target_services AS ts ON ts.id = mss.service_id").
+		Joins("JOIN mailboxes AS m ON m.id = mss.mailbox_id").
+		Joins("JOIN mailbox_pools AS mp ON mp.name = m.pool AND mp.enabled = ?", true).
+		Where("mss.service_id IN ? AND ts.enabled = ?", serviceIDs, true).
+		Where("m.state = ? AND m.active_order_id = '' AND m.health_score >= ? AND m.oauth_valid_until > ?", domain.MailboxAvailable, 60, time.Now()).
+		Where("mss.state = ?", domain.ServiceAvailable).
+		Where("ts.allowed_providers @> jsonb_build_array(m.provider)").
+		Where("m.last_received_at IS NULL OR m.last_received_at <= NOW() - (mp.cooldown_seconds * INTERVAL '1 second')").
+		Where("mp.daily_limit <= 0 OR (SELECT COALESCE(SUM(CASE WHEN inner_m.last_received_at::date = CURRENT_DATE THEN inner_m.today_codes ELSE 0 END), 0) FROM mailboxes AS inner_m WHERE inner_m.pool = mp.name) < mp.daily_limit").
+		Group("mss.service_id").
+		Scan(&rows)
+	for _, row := range rows {
+		result[row.ServiceID] = row.Count
 	}
 	return result
 }

@@ -220,7 +220,7 @@ function renderAdminAccount() {
 }
 
 function renderDocs() {
-  const rows = [["GET", "/api/v1/services", "分页获取可申请平台"], ["POST", "/api/v1/orders", "创建注册订单并分配邮箱"], ["GET", "/api/v1/orders/{id}", "查询状态与验证码"], ["POST", "/api/v1/orders/{id}/submitted", "确认已提交平台注册"], ["POST", "/api/v1/orders/{id}/complete", "确认完成并结算"], ["POST", "/api/v1/orders/{id}/cancel", "取消任务并退款"], ["GET", "/api/v1/webhook-deliveries", "分页查询 Webhook 投递"]];
+  const rows = [["GET", "/api/v1/services", "分页获取可申请平台、价格和余量"], ["GET", "/api/v1/services/{code}/availability", "查询单个平台实时余量"], ["POST", "/api/v1/orders", "创建注册订单并分配邮箱"], ["GET", "/api/v1/orders/{id}", "查询状态与验证码"], ["POST", "/api/v1/orders/{id}/submitted", "确认已提交平台注册"], ["POST", "/api/v1/orders/{id}/complete", "确认完成并结算"], ["POST", "/api/v1/orders/{id}/cancel", "取消任务并退款"], ["GET", "/api/v1/webhook-deliveries", "分页查询 Webhook 投递"]];
   return pageHead("API 文档", "用 Bearer API Key 管理注册收码任务。", "接口只返回完成任务所需的信息；邮箱密码、OAuth Token 和完整邮件始终留在服务端。") + `<div class="card"><div class="table-wrap"><table><thead><tr><th>方法</th><th>路径</th><th>用途</th></tr></thead><tbody>${rows.map(row => `<tr><td><code>${row[0]}</code></td><td><code>${row[1]}</code></td><td>${row[2]}</td></tr>`).join("")}</tbody></table></div><div class="card-body"><h3>鉴权</h3><pre class="code-sample">Authorization: Bearer hm_your_api_key</pre><h3>创建订单</h3><pre class="code-sample">POST /api/v1/orders\nContent-Type: application/json\n\n{\n  "service": "github",\n  "request_id": "client-request-001"\n}</pre><h3>查询验证码</h3><pre class="code-sample">GET /api/v1/orders/{id}</pre><p class="muted">当响应中的 <code>status</code> 为 <code>code_received</code> 时读取 <code>code</code>。列表响应包含 <code>data</code> 与 <code>pagination</code>；错误响应包含 <code>error</code> 与 <code>message</code>。</p></div></div>`;
 }
 
@@ -301,7 +301,7 @@ function requestedPage(key) { return state.pagination[key]?.page || 1; }
 async function loadUser() {
   const page = state.pagination.orders?.page || 1;
   const [me, services, orders] = await Promise.all([api("/api/v1/me"), api("/api/v1/services?page=1&page_size=100"), api(`/api/v1/orders?page=${page}&page_size=20`)]);
-  state.user = me; state.services = (services.data || []).filter(service => service.enabled); state.orders = rememberPage("orders", orders); if (!state.services.some(service => service.code === state.selectedService) && state.services[0]) state.selectedService = state.services[0].code;
+  state.user = me; state.services = services.data || []; state.orders = rememberPage("orders", orders); if (!state.services.some(service => service.code === state.selectedService) && state.services[0]) state.selectedService = state.services[0].code;
   if (!state.currentOrder || !state.orders.some(order => order.id === state.currentOrder.id)) state.currentOrder = state.orders.find(order => ["assigned", "waiting_code", "code_received"].includes(order.status)) || null;
   if (["keys", "usage", "balance", "webhooks"].includes(state.view)) await loadUserModule(state.view);
 }

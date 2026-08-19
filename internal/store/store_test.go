@@ -64,6 +64,31 @@ func TestCancelRefundsAndReleasesLease(t *testing.T) {
 	}
 }
 
+func TestServiceAvailabilityTracksAllocatableMailboxes(t *testing.T) {
+	s := New()
+	before := s.ServiceAvailability([]string{"svc-github"})["svc-github"]
+	if before <= 0 {
+		t.Fatalf("初始 GitHub 余量 = %d，期望大于 0", before)
+	}
+
+	order, err := s.CreateOrder("user-001", "svc-github", "availability-1")
+	if err != nil {
+		t.Fatalf("创建订单失败：%v", err)
+	}
+	afterAllocation := s.ServiceAvailability([]string{"svc-github"})["svc-github"]
+	if afterAllocation != before-1 {
+		t.Fatalf("分配后余量 = %d，期望 %d", afterAllocation, before-1)
+	}
+
+	if _, err := s.CancelOrder(order.ID, "user-001"); err != nil {
+		t.Fatalf("取消订单失败：%v", err)
+	}
+	afterCancel := s.ServiceAvailability([]string{"svc-github"})["svc-github"]
+	if afterCancel != before {
+		t.Fatalf("取消后余量 = %d，期望恢复为 %d", afterCancel, before)
+	}
+}
+
 func findMailbox(mailboxes []domain.Mailbox, address string) (domain.Mailbox, bool) {
 	for _, mailbox := range mailboxes {
 		if mailbox.Address == address {

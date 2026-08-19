@@ -210,6 +210,7 @@ audit_logs                  管理审计日志
 
 ```text
 GET    /api/v1/services
+GET    /api/v1/services/{code}/availability
 POST   /api/v1/orders
 GET    /api/v1/orders/{id}
 POST   /api/v1/orders/{id}/submitted

@@ -111,6 +111,19 @@ func (s *Store) ListEnabledServicesPage(page, pageSize int) ([]domain.Service, i
 	return paginate(items, page, pageSize), int64(len(items))
 }
 
+func (s *Store) EnabledService(codeOrID string) (domain.Service, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, service := range s.services {
+		if service.Enabled && (service.ID == codeOrID || service.Code == codeOrID) {
+			copy := *service
+			copy.AllowedProviders = append([]string(nil), service.AllowedProviders...)
+			return copy, true
+		}
+	}
+	return domain.Service{}, false
+}
+
 func (s *Store) ServiceUsage(serviceIDs []string) map[string]ServiceUsage {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -128,6 +141,32 @@ func (s *Store) ServiceUsage(serviceIDs []string) map[string]ServiceUsage {
 			}
 		}
 		result[serviceID] = usage
+	}
+	return result
+}
+
+func (s *Store) ServiceAvailability(serviceIDs []string) map[string]int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	now := time.Now()
+	result := make(map[string]int, len(serviceIDs))
+	for _, serviceID := range serviceIDs {
+		service, exists := s.services[serviceID]
+		if !exists || !service.Enabled {
+			result[serviceID] = 0
+			continue
+		}
+		for _, mailbox := range s.mailboxes {
+			if mailbox.State != domain.MailboxAvailable || mailbox.ActiveOrderID != "" || mailbox.HealthScore < 60 || !mailbox.OAuthValidUntil.After(now) {
+				continue
+			}
+			if !contains(service.AllowedProviders, mailbox.Provider) {
+				continue
+			}
+			if state, ok := mailbox.Services[serviceID]; ok && state.State == domain.ServiceAvailable {
+				result[serviceID]++
+			}
+		}
 	}
 	return result
 }
@@ -157,19 +196,13 @@ func (s *Store) CreateOrder(userID, serviceID, requestID string) (domain.Order, 
 		return domain.Order{}, ErrInsufficientBalance
 	}
 
+	now := time.Now()
 	var selected *domain.Mailbox
 	for _, mailbox := range s.mailboxes {
-		if mailbox.State != domain.MailboxAvailable || mailbox.ActiveOrderID != "" || mailbox.HealthScore < 60 {
+		if mailbox.State != domain.MailboxAvailable || mailbox.ActiveOrderID != "" || mailbox.HealthScore < 60 || !mailbox.OAuthValidUntil.After(now) {
 			continue
 		}
-		allowed := false
-		for _, provider := range service.AllowedProviders {
-			if provider == mailbox.Provider {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
+		if !contains(service.AllowedProviders, mailbox.Provider) {
 			continue
 		}
 		state, exists := mailbox.Services[service.ID]
@@ -183,7 +216,6 @@ func (s *Store) CreateOrder(userID, serviceID, requestID string) (domain.Order, 
 	if selected == nil {
 		return domain.Order{}, ErrNoMailboxAvailable
 	}
-	now := time.Now()
 	s.seq++
 	order := &domain.Order{ID: fmt.Sprintf("ORD%06d", s.seq), UserID: userID, ServiceID: service.ID, ServiceCode: service.Code, ServiceName: service.Name, MailboxID: selected.ID, MailboxAddress: selected.Address, Status: domain.OrderAssigned, Price: service.Price, CreatedAt: now, AssignedAt: now, ExpiresAt: now.Add(time.Duration(service.TTLSeconds) * time.Second), RequestID: requestID}
 	user.Balance -= service.Price
@@ -193,6 +225,15 @@ func (s *Store) CreateOrder(userID, serviceID, requestID string) (domain.Order, 
 	selected.Services[service.ID] = state
 	s.orders[order.ID] = order
 	return cloneOrder(*order), nil
+}
+
+func contains(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) GetOrder(id string) (domain.Order, bool) {

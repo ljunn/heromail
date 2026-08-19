@@ -119,6 +119,7 @@ func (s *Server) routes() {
 	protected.PUT("/me", s.updateProfile)
 	protected.PUT("/me/password", s.changePassword)
 	protected.GET("/services", s.services)
+	protected.GET("/services/:code/availability", s.serviceAvailability)
 	protected.GET("/orders", s.listUserOrders)
 	protected.POST("/orders", s.createOrder)
 	protected.GET("/orders/:id", s.getUserOrder)
@@ -183,8 +184,49 @@ func (s *Server) me(c *gin.Context) {
 
 func (s *Server) services(c *gin.Context) {
 	page, pageSize := pageRequest(c)
-	items, total := s.Store.ListServicesPage(page, pageSize)
-	writePage(c, serviceViews(s.Store, items), page, pageSize, total)
+	services, total := s.Store.ListEnabledServicesPage(page, pageSize)
+	serviceIDs := make([]string, 0, len(services))
+	for _, service := range services {
+		serviceIDs = append(serviceIDs, service.ID)
+	}
+	availability := s.Store.ServiceAvailability(serviceIDs)
+	items := make([]userServiceView, 0, len(services))
+	for _, service := range services {
+		items = append(items, newUserServiceView(service, availability[service.ID]))
+	}
+	writePage(c, items, page, pageSize, total)
+}
+
+type userServiceView struct {
+	publicServiceView
+	AvailableMailboxes int `json:"available_mailboxes"`
+}
+
+func newUserServiceView(service domain.Service, available int) userServiceView {
+	return userServiceView{
+		publicServiceView: publicServiceView{
+			Code:             service.Code,
+			Name:             service.Name,
+			Description:      service.Description,
+			AllowedProviders: append([]string(nil), service.AllowedProviders...),
+			Price:            service.Price,
+			TTLSeconds:       service.TTLSeconds,
+		},
+		AvailableMailboxes: available,
+	}
+}
+
+func (s *Server) serviceAvailability(c *gin.Context) {
+	service, ok := s.Store.EnabledService(strings.ToLower(strings.TrimSpace(c.Param("code"))))
+	if !ok {
+		writeError(c, http.StatusNotFound, "service_not_found", "target service not found")
+		return
+	}
+	available := s.Store.ServiceAvailability([]string{service.ID})[service.ID]
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"code":                service.Code,
+		"available_mailboxes": available,
+	}})
 }
 
 type createOrderRequest struct {

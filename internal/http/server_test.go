@@ -163,6 +163,76 @@ func TestPublicServicesArePaginatedAndHideInternalRules(t *testing.T) {
 	}
 }
 
+func TestUserServicesIncludePriceAndAvailabilityWithoutInternalRules(t *testing.T) {
+	server := NewServer(store.New())
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/services?page=1&page_size=2", nil)
+	request.Header.Set("X-HeroMail-User", "user-001")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("用户平台列表返回 %d，响应：%s", response.Code, response.Body.String())
+	}
+
+	var body struct {
+		Data       []map[string]any `json:"data"`
+		Pagination struct {
+			Page       int   `json:"page"`
+			PageSize   int   `json:"page_size"`
+			Total      int64 `json:"total"`
+			TotalPages int   `json:"total_pages"`
+		} `json:"pagination"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("解析用户平台列表失败：%v", err)
+	}
+	if len(body.Data) == 0 || len(body.Data) > 2 || body.Pagination.Page != 1 || body.Pagination.PageSize != 2 {
+		t.Fatalf("用户平台分页不正确：data=%d pagination=%+v", len(body.Data), body.Pagination)
+	}
+	for _, service := range body.Data {
+		for _, field := range []string{"code", "name", "description", "allowed_providers", "price", "ttl_seconds", "available_mailboxes"} {
+			if _, exists := service[field]; !exists {
+				t.Fatalf("用户平台响应缺少字段 %s：%+v", field, service)
+			}
+		}
+		for _, field := range []string{"id", "enabled", "leased_mailboxes", "consumed_mailboxes", "sender_domains", "subject_keywords", "regex"} {
+			if _, exists := service[field]; exists {
+				t.Fatalf("用户平台响应泄露内部字段 %s：%+v", field, service)
+			}
+		}
+	}
+}
+
+func TestServiceAvailabilityByCode(t *testing.T) {
+	server := NewServer(store.New())
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/services/github/availability", nil)
+	request.Header.Set("X-HeroMail-User", "user-001")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("平台余量接口返回 %d，响应：%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Data struct {
+			Code               string `json:"code"`
+			AvailableMailboxes int    `json:"available_mailboxes"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("解析平台余量响应失败：%v", err)
+	}
+	if body.Data.Code != "github" || body.Data.AvailableMailboxes <= 0 {
+		t.Fatalf("平台余量响应不正确：%+v", body.Data)
+	}
+
+	missing := httptest.NewRequest(http.MethodGet, "/api/v1/services/unknown/availability", nil)
+	missing.Header.Set("X-HeroMail-User", "user-001")
+	missingResponse := httptest.NewRecorder()
+	server.Router.ServeHTTP(missingResponse, missing)
+	if missingResponse.Code != http.StatusNotFound {
+		t.Fatalf("未知平台余量返回 %d，期望 %d", missingResponse.Code, http.StatusNotFound)
+	}
+}
+
 func TestPublicAndAdminPagesUseSeparateEntries(t *testing.T) {
 	server := NewServer(store.New())
 	for _, path := range []string{"/pricing", "/docs/api", "/open-source", "/login", "/register"} {
