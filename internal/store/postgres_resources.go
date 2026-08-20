@@ -260,7 +260,13 @@ func (s *PostgresStore) PendingMailboxVerificationIDs(limit int) ([]string, erro
 		limit = 1000
 	}
 	var ids []string
-	err := s.db.Model(&sqlMailbox{}).Where("verification_status = ?", domain.MailboxVerificationPending).Order("updated_at ASC").Limit(limit).Pluck("id", &ids).Error
+	err := s.db.Model(&sqlMailbox{}).
+		Where("verification_status = ? OR (verification_status = ? AND connection_method IN ? AND oauth_valid_until <= ?)",
+			domain.MailboxVerificationPending,
+			domain.MailboxVerificationVerified,
+			[]string{domain.MailboxConnectionMicrosoftGraph, domain.MailboxConnectionMicrosoftOAuth},
+			time.Now()).
+		Order("updated_at ASC").Limit(limit).Pluck("id", &ids).Error
 	return ids, err
 }
 

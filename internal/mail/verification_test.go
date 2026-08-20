@@ -16,14 +16,18 @@ type verificationRepositoryStub struct {
 	status     string
 	message    string
 	updated    map[string]string
+	validUntil time.Time
+	updates    int
 }
 
 func (s *verificationRepositoryStub) GetMailboxCredential(string) (store.MailboxCredential, error) {
 	return s.credential, nil
 }
 
-func (s *verificationRepositoryStub) UpdateMailboxCredential(_, _ string, credential map[string]string, _ time.Time, _ string) error {
+func (s *verificationRepositoryStub) UpdateMailboxCredential(_, _ string, credential map[string]string, validUntil time.Time, _ string) error {
 	s.updated = credential
+	s.validUntil = validUntil
+	s.updates++
 	return nil
 }
 
@@ -64,6 +68,9 @@ func TestMailboxVerifierUsesAccessTokenWithoutExpiryBeforeRefresh(t *testing.T) 
 	if result.Method != domain.MailboxConnectionMicrosoftGraph || graph.refreshes != 0 || imap.calls != 0 {
 		t.Fatalf("未优先使用现有 Access Token：result=%+v refreshes=%d imap=%d", result, graph.refreshes, imap.calls)
 	}
+	if repository.updates != 1 || !repository.validUntil.After(time.Now().Add(14*time.Minute)) {
+		t.Fatalf("无过期时间的 Access Token 未持久化保守有效期：updates=%d valid_until=%s", repository.updates, repository.validUntil)
+	}
 }
 
 func (s *graphConnectorStub) Profile(context.Context, string) (Profile, error) {
@@ -86,9 +93,10 @@ func (s *imapConnectorStub) Verify(context.Context, string, map[string]string) e
 }
 
 func TestMailboxVerifierPrefersGraph(t *testing.T) {
+	expiresAt := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
 	repository := &verificationRepositoryStub{credential: store.MailboxCredential{
 		Mailbox: domain.Mailbox{ID: "mailbox-1", Address: "user@outlook.com"},
-		Config:  map[string]string{"access_token": "access", "expires_at": time.Now().Add(time.Hour).Format(time.RFC3339)},
+		Config:  map[string]string{"access_token": "access", "expires_at": expiresAt.Format(time.RFC3339)},
 	}}
 	graph := &graphConnectorStub{profile: Profile{Address: "user@outlook.com"}}
 	imap := &imapConnectorStub{}
@@ -103,6 +111,9 @@ func TestMailboxVerifierPrefersGraph(t *testing.T) {
 	}
 	if imap.calls != 0 {
 		t.Fatalf("Graph 成功后仍调用了 IMAP：%d", imap.calls)
+	}
+	if repository.updates != 1 || !repository.validUntil.Equal(expiresAt) {
+		t.Fatalf("现有 Graph Token 有效期未持久化：updates=%d valid_until=%s", repository.updates, repository.validUntil)
 	}
 }
 

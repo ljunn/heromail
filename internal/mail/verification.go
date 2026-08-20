@@ -90,7 +90,18 @@ func (v *MailboxVerifier) Verify(ctx context.Context, actorID, mailboxID, ip str
 					accessToken = config["access_token"]
 					if saveErr := v.repository.UpdateMailboxCredential(actorID, mailboxID, config, newValidUntil, ip); saveErr == nil {
 						graphErr = v.verifyGraphAccess(ctx, credential.Mailbox.Address, accessToken)
+						didRefresh = graphErr == nil
 					} else {
+						graphErr = saveErr
+					}
+				}
+			}
+			if graphErr == nil {
+				if !didRefresh {
+					if validUntil.IsZero() {
+						validUntil = now.Add(15 * time.Minute)
+					}
+					if saveErr := v.repository.UpdateMailboxCredential(actorID, mailboxID, config, validUntil, ip); saveErr != nil {
 						graphErr = saveErr
 					}
 				}
