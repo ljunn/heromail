@@ -110,6 +110,9 @@ func (s *PostgresStore) seed(config PostgresConfig) error {
 	if err := s.ensureDefaultMailboxPool(); err != nil {
 		return err
 	}
+	if err := s.ensureMailboxServiceStates(); err != nil {
+		return err
+	}
 	if config.SeedDemo {
 		return s.seedDemoMailboxes(services)
 	}
@@ -167,6 +170,25 @@ func (s *PostgresStore) ensureDefaultMailboxPool() error {
 		}
 		detail := fmt.Sprintf("统一邮箱池：迁移邮箱 %d 个，停用旧池 %d 个，重分类 Outlook.de %d 个，更新平台 %d 个", moved.RowsAffected, legacy.RowsAffected, reclassified.RowsAffected, updatedServices)
 		return tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: "system", Action: "mailbox_pool.consolidate", ResourceType: "mailbox_pool", ResourceID: defaultPool.ID, Detail: detail}).Error
+	})
+}
+
+func (s *PostgresStore) ensureMailboxServiceStates() error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Exec(`
+INSERT INTO mailbox_service_states (mailbox_id, service_id, state, changed_at)
+SELECT mailboxes.id, target_services.id, ?, ?
+FROM mailboxes
+CROSS JOIN target_services
+ON CONFLICT (mailbox_id, service_id) DO NOTHING`, domain.ServiceAvailable, time.Now().UTC())
+		if result.Error != nil {
+			return fmt.Errorf("补齐邮箱平台状态失败：%w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		detail := fmt.Sprintf("补齐缺失的邮箱平台状态 %d 条", result.RowsAffected)
+		return tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: "system", Action: "mailbox_service.backfill", ResourceType: "mailbox_service", ResourceID: "all", Detail: detail}).Error
 	})
 }
 
