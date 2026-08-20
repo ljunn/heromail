@@ -73,6 +73,48 @@ func TestAdminEndpointRequiresRole(t *testing.T) {
 	}
 }
 
+func TestAdminOrdersFiltersOnServerAndIncludesUserEmail(t *testing.T) {
+	repository := store.New()
+	github, err := repository.CreateOrder("user-001", "svc-github", "admin-filter-github")
+	if err != nil {
+		t.Fatalf("创建 GitHub 订单失败：%v", err)
+	}
+	if _, err := repository.CancelOrder(github.ID, "user-001"); err != nil {
+		t.Fatalf("取消 GitHub 订单失败：%v", err)
+	}
+	if _, err := repository.CreateOrder("user-001", "svc-openai", "admin-filter-openai"); err != nil {
+		t.Fatalf("创建 OpenAI 订单失败：%v", err)
+	}
+
+	server := NewServer(repository)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/orders?page=1&page_size=20&status=canceled&service=github&query=ORD", nil)
+	request.Header.Set("X-HeroMail-Role", "admin")
+	request.Header.Set("X-HeroMail-User", "admin-001")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("筛选管理员订单返回 %d，响应：%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Data []struct {
+			domain.Order
+			UserEmail string `json:"user_email"`
+		} `json:"data"`
+		Pagination struct {
+			Total int64 `json:"total"`
+		} `json:"pagination"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("解析管理员订单响应失败：%v", err)
+	}
+	if len(body.Data) != 1 || body.Pagination.Total != 1 {
+		t.Fatalf("管理员订单筛选结果不正确：data=%d total=%d", len(body.Data), body.Pagination.Total)
+	}
+	if body.Data[0].ID != github.ID || body.Data[0].UserEmail != "demo@example.com" {
+		t.Fatalf("管理员订单视图不正确：%+v", body.Data[0])
+	}
+}
+
 func TestStaticAssetsUseBuildVersion(t *testing.T) {
 	originalCommit := buildinfo.Commit
 	buildinfo.Commit = "static-test-commit"

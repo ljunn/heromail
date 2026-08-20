@@ -223,7 +223,7 @@ func (s *Server) adminLedgers(c *gin.Context) {
 		return
 	}
 	page, pageSize := pageRequest(c)
-	items, total := repository.ListWalletLedgersPage("", page, pageSize)
+	items, total := repository.ListWalletLedgersPage(strings.TrimSpace(c.Query("user_id")), page, pageSize)
 	writePage(c, items, page, pageSize, total)
 }
 

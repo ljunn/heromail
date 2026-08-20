@@ -425,6 +425,33 @@ func (s *PostgresStore) ListOrdersPage(userID string, page, pageSize int) ([]dom
 	return items, total
 }
 
+func (s *PostgresStore) ListAdminOrdersPage(filter AdminOrderFilter, page, pageSize int) ([]domain.Order, int64) {
+	page, pageSize = normalizePage(page, pageSize)
+	query := s.db.Model(&sqlOrder{})
+	if filter.Status != "" {
+		query = query.Where("status = ?", filter.Status)
+	}
+	if filter.Service != "" {
+		query = query.Where("service_id = ? OR service_code = ?", filter.Service, filter.Service)
+	}
+	if filter.UserID != "" {
+		query = query.Where("user_id = ?", filter.UserID)
+	}
+	if keyword := strings.TrimSpace(filter.Query); keyword != "" {
+		pattern := "%" + keyword + "%"
+		query = query.Where("id ILIKE ? OR user_id ILIKE ? OR mailbox_address ILIKE ?", pattern, pattern, pattern)
+	}
+	var total int64
+	query.Count(&total)
+	var rows []sqlOrder
+	query.Order("created_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&rows)
+	items := make([]domain.Order, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, mapOrder(row))
+	}
+	return items, total
+}
+
 func (s *PostgresStore) SubmitOrder(id, userID string) (domain.Order, error) {
 	return s.updateOrder(id, userID, []domain.OrderStatus{domain.OrderAssigned}, func(order *sqlOrder, now time.Time) {
 		order.Status, order.SubmittedAt = string(domain.OrderWaitingCode), &now

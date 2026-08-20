@@ -264,6 +264,29 @@ func (s *Store) ListOrdersPage(userID string, page, pageSize int) ([]domain.Orde
 	return paginate(items, page, pageSize), int64(len(items))
 }
 
+func (s *Store) ListAdminOrdersPage(filter AdminOrderFilter, page, pageSize int) ([]domain.Order, int64) {
+	items := s.ListOrders("")
+	filtered := make([]domain.Order, 0, len(items))
+	query := strings.ToLower(strings.TrimSpace(filter.Query))
+	for _, order := range items {
+		if filter.Status != "" && string(order.Status) != filter.Status {
+			continue
+		}
+		if filter.Service != "" && order.ServiceID != filter.Service && order.ServiceCode != filter.Service {
+			continue
+		}
+		if filter.UserID != "" && order.UserID != filter.UserID {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(order.ID+" "+order.UserID+" "+order.MailboxAddress), query) {
+			continue
+		}
+		filtered = append(filtered, order)
+	}
+	page, pageSize = normalizePage(page, pageSize)
+	return paginate(filtered, page, pageSize), int64(len(filtered))
+}
+
 func (s *Store) SubmitOrder(id, userID string) (domain.Order, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

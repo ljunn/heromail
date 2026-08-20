@@ -211,7 +211,7 @@ func (s *PostgresStore) ListWalletLedgersPage(userID string, page, pageSize int)
 	query.Order("created_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&rows)
 	items := make([]domain.WalletLedger, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, domain.WalletLedger{ID: row.ID, Type: row.Type, Amount: float64(row.AmountCents) / 100, BalanceAfter: float64(row.BalanceAfterCents) / 100, OrderID: row.OrderID, PaymentID: row.PaymentOrderID, Description: row.Description, CreatedAt: row.CreatedAt})
+		items = append(items, domain.WalletLedger{ID: row.ID, UserID: row.UserID, Type: row.Type, Amount: float64(row.AmountCents) / 100, BalanceAfter: float64(row.BalanceAfterCents) / 100, OrderID: row.OrderID, PaymentID: row.PaymentOrderID, Description: row.Description, CreatedAt: row.CreatedAt})
 	}
 	return items, total
 }

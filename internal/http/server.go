@@ -348,8 +348,26 @@ func serviceViews(repository store.Repository, services []domain.Service) []serv
 
 func (s *Server) adminOrders(c *gin.Context) {
 	page, pageSize := pageRequest(c)
+	filter := store.AdminOrderFilter{
+		Status:  strings.TrimSpace(c.Query("status")),
+		Service: strings.TrimSpace(c.Query("service")),
+		UserID:  strings.TrimSpace(c.Query("user_id")),
+		Query:   strings.TrimSpace(c.Query("query")),
+	}
 	items, total := s.Store.ListOrdersPage("", page, pageSize)
-	writePage(c, items, page, pageSize, total)
+	if repository, ok := s.Store.(store.AdminOrderRepository); ok {
+		items, total = repository.ListAdminOrdersPage(filter, page, pageSize)
+	}
+	type adminOrderView struct {
+		domain.Order
+		UserEmail string `json:"user_email"`
+	}
+	views := make([]adminOrderView, 0, len(items))
+	for _, order := range items {
+		user, _ := s.Store.User(order.UserID)
+		views = append(views, adminOrderView{Order: order, UserEmail: user.Email})
+	}
+	writePage(c, views, page, pageSize, total)
 }
 
 func (s *Server) ready(c *gin.Context) {

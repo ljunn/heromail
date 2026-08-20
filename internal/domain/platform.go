@@ -18,6 +18,7 @@ type APIKey struct {
 
 type WalletLedger struct {
 	ID           string    `json:"id"`
+	UserID       string    `json:"user_id,omitempty"`
 	Type         string    `json:"type"`
 	Amount       float64   `json:"amount"`
 	BalanceAfter float64   `json:"balance_after"`

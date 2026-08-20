@@ -34,6 +34,17 @@ type ServiceUsage struct {
 	Consumed  int
 }
 
+type AdminOrderFilter struct {
+	Status  string
+	Service string
+	UserID  string
+	Query   string
+}
+
+type AdminOrderRepository interface {
+	ListAdminOrdersPage(filter AdminOrderFilter, page, pageSize int) ([]domain.Order, int64)
+}
+
 type HealthRepository interface {
 	Ping(context.Context) error
 	StorageName() string

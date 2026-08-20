@@ -22,7 +22,12 @@ const state = {
   auditLogs: [],
   paymentProviders: [],
   version: null,
-  health: null
+  health: null,
+  adminTabs: { users: "accounts", payments: "orders", operations: "alerts" },
+  orderFilters: { status: "", service: "", query: "" },
+  ledgerUserID: "",
+  busyAction: "",
+  pageError: ""
 };
 
 const iconPaths = {
@@ -68,14 +73,23 @@ const adminNav = [
   ["运行", [["admin-overview", "运行概览", "dashboard"]]],
   ["资源管理", [["admin-mailboxes", "邮箱池", "database"]]],
   ["业务配置", [["admin-services", "目标平台", "globe"]]],
-  ["订单与用户", [["admin-orders", "注册订单", "receipt"], ["admin-users", "平台用户", "users"], ["admin-ledger", "余额与流水", "ledger"], ["admin-payments", "支付管理", "creditCard"]]],
-  ["系统", [["admin-alerts", "告警中心", "bell"], ["admin-audit", "审计日志", "audit"], ["admin-settings", "系统设置", "settings"], ["admin-account", "管理员账户", "shieldUser"]]]
+  ["业务运营", [["admin-orders", "注册订单", "receipt"], ["admin-users", "用户与余额", "users"], ["admin-payments", "支付管理", "creditCard"]]],
+  ["系统运维", [["admin-operations", "运维中心", "activity"], ["admin-settings", "版本升级", "settings"]]]
 ];
 
 const userRoutes = { apply: "/app", current: "/app/tasks", orders: "/app/orders", keys: "/app/developer/keys", webhooks: "/app/developer/webhooks", usage: "/app/usage", balance: "/app/wallet", settings: "/app/account" };
-const adminRoutes = { "admin-overview": "/admin", "admin-mailboxes": "/admin/mailboxes", "admin-channels": "/admin/channels", "admin-services": "/admin/services", "admin-orders": "/admin/orders", "admin-users": "/admin/users", "admin-ledger": "/admin/ledger", "admin-payments": "/admin/payments", "admin-alerts": "/admin/alerts", "admin-audit": "/admin/audit", "admin-settings": "/admin/settings", "admin-account": "/admin/account" };
+const adminRoutes = { "admin-overview": "/admin", "admin-mailboxes": "/admin/mailboxes", "admin-channels": "/admin/channels", "admin-services": "/admin/services", "admin-orders": "/admin/orders", "admin-users": "/admin/users", "admin-payments": "/admin/payments", "admin-operations": "/admin/operations", "admin-settings": "/admin/settings", "admin-account": "/admin/account" };
 
 function routeView(role, pathname = location.pathname) {
+  if (role === "admin") {
+    const tab = new URLSearchParams(location.search).get("tab");
+    if (pathname === "/admin/ledger") { state.adminTabs.users = "ledger"; return "admin-users"; }
+    if (pathname === "/admin/alerts") { state.adminTabs.operations = "alerts"; return "admin-operations"; }
+    if (pathname === "/admin/audit") { state.adminTabs.operations = "audit"; return "admin-operations"; }
+    if (pathname === "/admin/users" && ["accounts", "ledger"].includes(tab)) state.adminTabs.users = tab;
+    if (pathname === "/admin/payments" && ["orders", "providers"].includes(tab)) state.adminTabs.payments = tab;
+    if (pathname === "/admin/operations" && ["alerts", "audit"].includes(tab)) state.adminTabs.operations = tab;
+  }
   const routes = role === "admin" ? adminRoutes : userRoutes;
   return Object.entries(routes).find(([, path]) => path === pathname)?.[0] || (role === "admin" ? "admin-overview" : "apply");
 }
@@ -109,8 +123,8 @@ async function api(path, options = {}) {
 
 const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
 const money = value => `¥${Number(value || 0).toFixed(2)}`;
-const time = value => { const parsed = value ? new Date(value) : null; return parsed && Number.isFinite(parsed.getTime()) && parsed.getUTCFullYear() > 1 ? parsed.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "-"; };
-const statusMap = { assigned: ["等待提交", "orange"], waiting_code: ["收码中", "blue"], code_received: ["已收码", "green"], completed: ["已完成", "green"], canceled: ["已取消", "red"], expired_refunded: ["已超时退款", "orange"], allocation_failed: ["分配失败", "red"], disputed: ["申诉中", "orange"], pending: ["待支付", "orange"], paid: ["已支付", "blue"], active: ["正常", "green"], disabled: ["已停用", "red"], available: ["可用", "green"], leased: ["租用中", "blue"], cooldown: ["冷却中", "orange"], auth_error: ["授权异常", "red"], blocked: ["已隔离", "red"], verified: ["已验证", "green"], pending_verification: ["待验证", "orange"], failed: ["失败", "red"], idle: ["等待任务", "blue"], backing_up: ["备份中", "orange"], queued: ["已排队", "orange"], updating: ["升级中", "orange"], success: ["成功", "green"] };
+const time = value => { const parsed = value ? new Date(value) : null; return parsed && Number.isFinite(parsed.getTime()) && parsed.getUTCFullYear() > 1 ? parsed.toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }) : "-"; };
+const statusMap = { created: ["待分配", "orange"], allocating: ["分配中", "blue"], assigned: ["等待提交", "orange"], waiting_code: ["收码中", "blue"], code_received: ["已收码", "green"], completed: ["已完成", "green"], canceled: ["已取消", "red"], expired_refunded: ["已超时退款", "orange"], allocation_failed: ["分配失败", "red"], disputed: ["申诉中", "orange"], pending: ["待支付", "orange"], paid: ["已支付", "blue"], active: ["正常", "green"], disabled: ["已停用", "red"], available: ["可用", "green"], leased: ["租用中", "blue"], cooldown: ["冷却中", "orange"], auth_error: ["授权异常", "red"], blocked: ["已隔离", "red"], verified: ["已验证", "green"], pending_verification: ["待验证", "orange"], failed: ["失败", "red"], idle: ["等待任务", "blue"], backing_up: ["备份中", "orange"], queued: ["已排队", "orange"], updating: ["升级中", "orange"], success: ["成功", "green"] };
 function connectionLabel(method) { return ({ auto: "自动判定", microsoft_oauth: "Graph OAuth", microsoft_graph: "Graph", imap: "IMAP" })[method] || method || "自动判定"; }
 function providerLabel(provider) { return ({ outlook: "Outlook", outlook_de: "Outlook.de", hotmail: "Hotmail" })[provider] || provider || "未知"; }
 function providerList(providers) { return (providers || []).map(providerLabel).join(" / ") || "未配置"; }
@@ -131,10 +145,13 @@ function renderNav() {
   document.querySelector("#nav").innerHTML = adminNav.map(([title, items]) => `<div class="nav-group"><div class="nav-title">${title}</div>${items.map(([view, label, iconName]) => `<button class="nav-item ${state.view === view ? "active" : ""}" data-action="view" data-view="${view}" aria-label="${label}"><span class="nav-icon">${icon(iconName)}</span><span>${label}</span></button>`).join("")}</div>`).join("");
   document.querySelector("#user-nav").innerHTML = userNav.map(([view, label, iconName]) => `<button class="user-nav-item ${state.view === view ? "active" : ""}" data-action="view" data-view="${view}" aria-label="${label}">${icon(iconName)}<span>${label}</span></button>`).join("") + `<a class="user-nav-item" href="/docs">${icon("fileCode")}<span>文档</span></a>`;
   document.querySelector("#mobile-nav").innerHTML = mobileUserNav.map(([view, label, iconName]) => `<button class="mobile-nav-item ${state.view === view ? "active" : ""}" data-action="view" data-view="${view}" aria-label="${label}">${icon(iconName)}<span>${label}</span></button>`).join("");
+  const labels = Object.fromEntries((state.role === "admin" ? adminNav.flatMap(([, items]) => items) : userNav).map(([view, label]) => [view, label]));
+  document.querySelector("#mobile-title").textContent = labels[state.view] || (state.view === "admin-account" ? "管理员账户" : "工作台");
 }
 
 function stat(label, value, note = "") { return `<div class="stat"><div class="stat-label">${label}</div><div class="stat-value">${value}</div><div class="stat-note">${note}</div></div>`; }
 function pageHead(title, subtitle, action = "") { return `<div class="page-head"><div><h1>${title}</h1><p>${subtitle}</p></div>${action ? `<div class="head-actions">${action}</div>` : ""}</div>`; }
+function sectionTabs(group, current, items) { return `<div class="section-tabs" role="tablist">${items.map(([value, label, count]) => `<button role="tab" aria-selected="${current === value}" class="section-tab ${current === value ? "active" : ""}" data-action="admin-tab" data-group="${group}" data-tab="${value}">${label}${count === undefined ? "" : `<span>${count}</span>`}</button>`).join("")}</div>`; }
 
 function serviceCard(service) {
   const selected = service.code === state.selectedService;
@@ -186,7 +203,17 @@ function renderAdminServices() {
 
 function renderAdminOrders() {
   const total = state.pagination["admin-orders"]?.total || 0;
-  return pageHead("注册订单", "监控平台注册全链路、收码状态、退款和邮箱平台占用。", `<button class="ghost-btn" data-action="refresh">刷新数据</button>`) + `<div class="stat-grid">${stat("订单总数", total, "全部记录")}${stat("当页已收码", state.orders.filter(order => order.code).length, "验证码已匹配")}${stat("当页收码中", state.orders.filter(order => order.status === "waiting_code").length, "等待邮件")}${stat("当页已退款", state.orders.filter(order => order.refunded).length, "超时或取消")}${stat("当页异常", state.orders.filter(order => ["allocation_failed", "disputed"].includes(order.status)).length, "需要人工处理")}</div><div class="card"><div class="table-wrap"><table><thead><tr><th>订单号</th><th>用户</th><th>目标平台</th><th>分配邮箱</th><th>状态</th><th>验证码</th><th>费用</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${state.orders.map(order => `<tr class="${state.currentOrder && state.currentOrder.id === order.id ? "selected" : ""}"><td>${esc(order.id)}</td><td>${esc(order.user_id)}</td><td>${esc(order.service_name)}</td><td>${esc(order.mailbox_address)}</td><td>${statusChip(order.status)}</td><td>${esc(order.code || "—")}</td><td>${money(order.price)}</td><td>${time(order.created_at)}</td><td><button class="link-btn" data-action="select-order" data-order="${order.id}">详情</button></td></tr>`).join("") || `<tr><td colspan="9" class="empty">暂无订单</td></tr>`}</tbody></table></div>${renderPager("admin-orders")}</div>${state.currentOrder ? `<div class="card" style="margin-top:16px"><div class="card-head"><h2>订单详情 · ${esc(state.currentOrder.id)}</h2><span>${statusChip(state.currentOrder.status)}</span></div><div class="card-body drawer-grid"><div class="timeline">${[["创建订单", state.currentOrder.created_at], ["分配邮箱", state.currentOrder.assigned_at], ["用户已提交", state.currentOrder.submitted_at], ["收到验证码", state.currentOrder.code_received_at], ["完成结算", state.currentOrder.completed_at]].map(([label, value]) => `<div class="timeline-item ${value ? "done" : ""}"><span class="timeline-dot"></span><div><div class="timeline-title">${label}</div><div class="timeline-time">${time(value)}</div></div></div>`).join("")}</div><div><dl class="config-list"><div class="config-row"><dt>目标平台</dt><dd>${esc(state.currentOrder.service_name)}</dd></div><div class="config-row"><dt>分配邮箱</dt><dd>${esc(state.currentOrder.mailbox_address)}</dd></div><div class="config-row"><dt>验证码</dt><dd>${esc(state.currentOrder.code || "—")}</dd></div><div class="config-row"><dt>费用</dt><dd>${money(state.currentOrder.price)}</dd></div></dl></div></div></div>` : ""}`;
+  const filters = state.orderFilters;
+  const statusOptions = [["", "全部状态"], ["created", "待分配"], ["allocating", "分配中"], ["assigned", "等待提交"], ["waiting_code", "收码中"], ["code_received", "已收码"], ["completed", "已完成"], ["canceled", "已取消"], ["expired_refunded", "已退款"], ["allocation_failed", "分配失败"], ["disputed", "申诉中"]];
+  const rows = state.orders.map(order => `<tr class="${state.currentOrder?.id === order.id ? "selected" : ""}"><td data-label="订单号"><button class="order-id-button" data-action="select-order" data-order="${esc(order.id)}">${esc(order.id)}</button></td><td data-label="用户"><strong>${esc(order.user_email || order.user_id)}</strong><span class="table-subline">${esc(order.user_id)}</span></td><td data-label="目标平台">${esc(order.service_name)}</td><td data-label="状态">${statusChip(order.status)}</td><td data-label="费用">${money(order.price)}</td><td data-label="创建时间">${time(order.created_at)}</td><td data-label="操作" class="row-action"><button class="icon-btn compact" data-action="select-order" data-order="${esc(order.id)}" title="查看订单详情">${icon("receipt")}</button></td></tr>`).join("");
+  return pageHead("注册订单", "按状态、平台或关键字定位任务，打开右侧面板查看完整链路。", `<button class="ghost-btn" data-action="refresh">刷新</button>`) + `<div class="operation-strip"><div><span>筛选结果</span><strong>${total}</strong><small>服务端分页统计</small></div><p>订单状态、退款结果和邮箱占用由业务状态机维护，管理员在详情中核对事实。</p></div><form class="filter-bar admin-filter-bar" data-form="order-filters"><select id="admin-order-status" class="select" aria-label="订单状态">${statusOptions.map(([value, label]) => `<option value="${value}" ${filters.status === value ? "selected" : ""}>${label}</option>`).join("")}</select><select id="admin-order-service" class="select" aria-label="目标平台"><option value="">全部平台</option>${state.services.map(service => `<option value="${esc(service.code)}" ${filters.service === service.code ? "selected" : ""}>${esc(service.name)}</option>`).join("")}</select><input id="admin-order-query" class="search" aria-label="搜索订单" value="${esc(filters.query)}" placeholder="订单号、用户 ID 或邮箱"><button class="primary-btn" type="submit">查询</button>${filters.status || filters.service || filters.query ? `<button class="ghost-btn" type="button" data-action="reset-order-filters">清空</button>` : ""}</form><div class="card"><div class="table-wrap responsive-admin-table"><table class="order-table"><thead><tr><th>订单号</th><th>用户</th><th>目标平台</th><th>状态</th><th>费用</th><th>创建时间</th><th><span class="sr-only">操作</span></th></tr></thead><tbody>${rows || `<tr><td colspan="7" class="empty">没有符合条件的订单</td></tr>`}</tbody></table></div>${renderPager("admin-orders")}</div>${renderAdminOrderDrawer()}`;
+}
+
+function renderAdminOrderDrawer() {
+  const order = state.currentOrder;
+  if (!order || state.view !== "admin-orders") return "";
+  const timeline = [["创建订单", order.created_at], ["分配邮箱", order.assigned_at], ["用户已提交", order.submitted_at], ["收到验证码", order.code_received_at], ["完成结算", order.completed_at]];
+  return `<div class="detail-layer"><button class="detail-scrim" data-action="close-order-detail" aria-label="关闭订单详情"></button><aside class="detail-panel" aria-label="订单详情"><div class="detail-panel-head"><div><span class="detail-eyebrow">订单详情</span><h2>${esc(order.id)}</h2></div><button class="icon-btn" data-action="close-order-detail" title="关闭">×</button></div><div class="detail-panel-body"><div class="detail-status">${statusChip(order.status)}<span>${order.refunded ? "费用已退回" : "按订单状态结算"}</span></div><dl class="detail-list"><div><dt>用户</dt><dd>${esc(order.user_email || order.user_id)}<small>${esc(order.user_id)}</small></dd></div><div><dt>目标平台</dt><dd>${esc(order.service_name)}</dd></div><div><dt>分配邮箱</dt><dd>${esc(order.mailbox_address)}</dd></div><div><dt>验证码</dt><dd>${esc(order.code || "尚未收到")}</dd></div><div><dt>费用</dt><dd>${money(order.price)}</dd></div><div><dt>请求 ID</dt><dd>${esc(order.request_id || "—")}</dd></div><div><dt>失败原因</dt><dd class="${order.failure_reason ? "danger-text" : ""}">${esc(order.failure_reason || "无")}</dd></div></dl><section class="detail-section"><h3>状态时间线</h3><div class="timeline">${timeline.map(([label, value]) => `<div class="timeline-item ${value ? "done" : ""}"><span class="timeline-dot"></span><div><div class="timeline-title">${label}</div><div class="timeline-time">${time(value)}</div></div></div>`).join("")}</div></section></div></aside></div>`;
 }
 
 function renderPager(key) {
@@ -248,17 +275,23 @@ function renderAdminMailboxes() {
 }
 
 function renderAdminUsers() {
-  return pageHead("平台用户", "管理账户状态、角色和余额。") + `<div class="card"><div class="table-wrap"><table><thead><tr><th>邮箱</th><th>显示名称</th><th>角色</th><th>状态</th><th>余额</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${state.users.map(user => `<tr><td>${esc(user.email)}</td><td>${esc(user.display_name || "—")}</td><td>${esc(user.role)}</td><td>${statusChip(user.status)}</td><td>${money(user.balance)}</td><td>${time(user.created_at)}</td><td><button class="link-btn" data-action="adjust-balance" data-id="${user.id}" data-email="${esc(user.email)}">调整余额</button></td></tr>`).join("") || `<tr><td colspan="7" class="empty">暂无用户</td></tr>`}</tbody></table></div>${renderPager("users")}</div>`;
+  const tab = state.adminTabs.users;
+  const tabs = sectionTabs("users", tab, [["accounts", "用户账户", state.pagination.users?.total], ["ledger", "资金流水", state.pagination["admin-ledger"]?.total]]);
+  if (tab === "ledger") {
+    const rows = state.ledgers.map(item => `<tr><td data-label="用户 ID">${esc(item.user_id || "—")}</td><td data-label="流水号"><code>${esc(item.id)}</code></td><td data-label="类型">${esc(item.type)}</td><td data-label="金额" class="${item.amount >= 0 ? "positive" : "negative"}">${item.amount >= 0 ? "+" : ""}${money(item.amount)}</td><td data-label="变动后余额">${money(item.balance_after)}</td><td data-label="关联业务">${esc(item.order_id || item.payment_order_id || "—")}</td><td data-label="原因">${esc(item.description)}</td><td data-label="时间">${time(item.created_at)}</td></tr>`).join("");
+    return pageHead("用户与余额", "在同一处管理用户账户和每一笔资金变动。") + tabs + `${state.ledgerUserID ? `<div class="active-filter"><span>正在查看用户 <code>${esc(state.ledgerUserID)}</code> 的流水</span><button class="link-btn" data-action="clear-ledger-user">查看全部流水</button></div>` : ""}<div class="card"><div class="table-wrap responsive-admin-table"><table><thead><tr><th>用户 ID</th><th>流水号</th><th>类型</th><th>金额</th><th>变动后余额</th><th>关联业务</th><th>原因</th><th>时间</th></tr></thead><tbody>${rows || `<tr><td colspan="8" class="empty">暂无资金流水</td></tr>`}</tbody></table></div>${renderPager("admin-ledger")}</div>`;
+  }
+  const rows = state.users.map(user => `<tr><td data-label="用户"><strong>${esc(user.email)}</strong><span class="table-subline">${esc(user.id)}</span></td><td data-label="显示名称">${esc(user.display_name || "—")}</td><td data-label="角色">${user.role === "admin" ? "管理员" : "普通用户"}</td><td data-label="状态">${statusChip(user.status)}</td><td data-label="余额"><strong>${money(user.balance)}</strong></td><td data-label="创建时间">${time(user.created_at)}</td><td data-label="操作"><div class="table-actions"><button class="link-btn" data-action="view-user-ledger" data-id="${esc(user.id)}">查看流水</button><button class="link-btn" data-action="adjust-balance" data-id="${esc(user.id)}">调整余额</button></div></td></tr>`).join("");
+  return pageHead("用户与余额", "账户资料、可用余额和人工补偿集中管理。") + tabs + `<div class="card"><div class="table-wrap responsive-admin-table"><table><thead><tr><th>用户</th><th>显示名称</th><th>角色</th><th>状态</th><th>余额</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="7" class="empty">暂无用户</td></tr>`}</tbody></table></div>${renderPager("users")}</div>`;
 }
 
-function renderAdminLedger() { return pageHead("余额与流水", "查看全平台资金变动与关联业务。") + `<div class="card"><div class="table-wrap"><table><thead><tr><th>流水号</th><th>类型</th><th>金额</th><th>余额</th><th>关联业务</th><th>说明</th><th>时间</th></tr></thead><tbody>${state.ledgers.map(item => `<tr><td>${esc(item.id)}</td><td>${esc(item.type)}</td><td>${money(item.amount)}</td><td>${money(item.balance_after)}</td><td>${esc(item.order_id || item.payment_order_id || "—")}</td><td>${esc(item.description)}</td><td>${time(item.created_at)}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">暂无流水</td></tr>`}</tbody></table></div>${renderPager("admin-ledger")}</div>`; }
-
-function renderAdminAudit() { return pageHead("审计日志", "追踪管理操作、资金变动、配置和升级行为。") + `<div class="card"><div class="table-wrap"><table><thead><tr><th>操作者</th><th>动作</th><th>资源</th><th>详情</th><th>IP</th><th>时间</th></tr></thead><tbody>${state.auditLogs.map(item => `<tr><td>${esc(item.actor_id)}</td><td><code>${esc(item.action)}</code></td><td>${esc(item.resource_type)} · ${esc(item.resource_id)}</td><td>${esc(item.detail)}</td><td>${esc(item.ip || "—")}</td><td>${time(item.created_at)}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">暂无审计记录</td></tr>`}</tbody></table></div>${renderPager("audit")}</div>`; }
-
 function renderAdminPayments() {
+  const tab = state.adminTabs.payments;
   const providerRows = state.paymentProviders.map(item => `<tr><td><strong>${esc(item.name)}</strong></td><td>${item.type === "easypay" ? "易支付" : "支付宝官方"}</td><td>${esc(item.methods.map(method => method === "alipay" ? "支付宝" : method).join(", "))}</td><td>${item.priority}</td><td>${item.enabled ? `<span class="chip green">启用</span>` : `<span class="chip red">停用</span>`}</td><td><div class="table-actions"><button class="link-btn" data-action="edit-payment-provider" data-id="${esc(item.id)}">编辑</button><button class="link-btn danger-text" data-action="delete-payment-provider" data-id="${esc(item.id)}" data-name="${esc(item.name)}">删除</button></div></td></tr>`).join("");
-  const orderRows = state.paymentOrders.map(item => `<tr><td>${esc(item.id)}</td><td>${esc(item.user_id)}</td><td>${esc(item.provider_name)}</td><td>${money(item.amount)}</td><td>${statusChip(item.status)}</td><td>${esc(item.provider_trade_no || "—")}</td><td>${time(item.created_at)}</td></tr>`).join("");
-  return pageHead("支付管理", "分别配置易支付和支付宝官方通道，并管理充值订单。", `<button class="primary-btn" data-action="edit-payment-provider">新增服务商</button>`) + `<div class="card"><div class="card-head"><h2>支付服务商</h2><span class="muted">敏感凭证使用 AES-256-GCM 加密保存</span></div><div class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>支付方式</th><th>优先级</th><th>状态</th><th>操作</th></tr></thead><tbody>${providerRows || `<tr><td colspan="6" class="empty">暂无支付服务商</td></tr>`}</tbody></table></div>${renderPager("payment-providers")}</div><div class="provider-guidance"><div><span class="provider-badge easypay">易</span><strong>易支付</strong><p>需要 API 地址、商户 ID（PID）和商户密钥（PKey）。</p></div><div><span class="provider-badge alipay">支</span><strong>支付宝官方</strong><p>官方网关已内置，只需 AppID、应用私钥和支付宝公钥。</p></div></div><div class="card" style="margin-top:16px"><div class="card-head"><h2>充值订单</h2></div><div class="table-wrap"><table><thead><tr><th>支付单</th><th>用户</th><th>服务商</th><th>金额</th><th>状态</th><th>上游流水</th><th>创建时间</th></tr></thead><tbody>${orderRows || `<tr><td colspan="7" class="empty">暂无支付订单</td></tr>`}</tbody></table></div>${renderPager("admin-payments")}</div>`;
+  const orderRows = state.paymentOrders.map(item => `<tr><td data-label="支付单">${esc(item.id)}</td><td data-label="用户">${esc(item.user_id)}</td><td data-label="服务商">${esc(item.provider_name)}</td><td data-label="金额">${money(item.amount)}</td><td data-label="状态">${statusChip(item.status)}</td><td data-label="上游流水">${esc(item.provider_trade_no || "—")}</td><td data-label="创建时间">${time(item.created_at)}</td></tr>`).join("");
+  const tabs = sectionTabs("payments", tab, [["orders", "充值订单", state.pagination["admin-payments"]?.total], ["providers", "支付通道", state.pagination["payment-providers"]?.total]]);
+  if (tab === "providers") return pageHead("支付管理", "支付通道和充值订单分开维护，减少误操作。", `<button class="primary-btn" data-action="edit-payment-provider">新增支付通道</button>`) + tabs + `<div class="provider-guidance"><div><span class="provider-badge easypay">易</span><strong>易支付</strong><p>API 地址、PID 和 PKey。</p></div><div><span class="provider-badge alipay">支</span><strong>支付宝官方</strong><p>AppID、应用私钥和支付宝公钥。</p></div></div><div class="card"><div class="card-head"><h2>支付通道</h2><span class="muted">敏感凭证使用 AES-256-GCM 加密保存</span></div><div class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>支付方式</th><th>优先级</th><th>状态</th><th>操作</th></tr></thead><tbody>${providerRows || `<tr><td colspan="6" class="empty">暂无支付通道，用户暂时无法充值</td></tr>`}</tbody></table></div>${renderPager("payment-providers")}</div>`;
+  return pageHead("支付管理", "先处理用户充值订单，需要时再切换到支付通道。") + tabs + `<div class="card"><div class="table-wrap responsive-admin-table"><table><thead><tr><th>支付单</th><th>用户</th><th>服务商</th><th>金额</th><th>状态</th><th>上游流水</th><th>创建时间</th></tr></thead><tbody>${orderRows || `<tr><td colspan="7" class="empty">暂无充值订单</td></tr>`}</tbody></table></div>${renderPager("admin-payments")}</div>`;
 }
 
 async function showPaymentProviderEditor(providerID = "") {
@@ -284,13 +317,28 @@ function renderAdminSettings() {
   const release = version.latest_release || {}; const hasRelease = Boolean(release.tag);
   const normalizeReleaseVersion = value => String(value || "").trim().replace(/^v/i, "");
   const upgradeAvailable = hasRelease && normalizeReleaseVersion(version.current_version) !== normalizeReleaseVersion(release.tag);
-  const upgradeLabel = upgradeAvailable ? `升级到 ${esc(release.tag)}` : hasRelease ? "已是最新版本" : "暂无可用版本";
-  return pageHead("系统设置", "检查 GitHub 正式版本并从管理后台完成升级。", `<button class="ghost-btn" data-action="check-updates">检查更新</button>`) + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>版本信息</h2>${statusChip(version.upgrade.state)}</div><div class="card-body"><dl class="config-list"><div class="config-row"><dt>当前版本</dt><dd>${esc(version.current_version)}</dd></div><div class="config-row"><dt>最新版本</dt><dd>${esc(release.tag || "暂未获取")}</dd></div><div class="config-row"><dt>提交</dt><dd><code>${esc(version.commit)}</code></dd></div><div class="config-row"><dt>构建时间</dt><dd>${esc(version.build_time)}</dd></div><div class="config-row"><dt>升级状态</dt><dd>${esc(version.upgrade.message)}</dd></div></dl></div></div><div class="card"><div class="card-head"><h2>在线升级</h2>${icon("activity", "section-icon")}</div><div class="card-body form-grid"><button class="primary-btn" data-action="upgrade" ${version.online_upgrade_enabled && upgradeAvailable ? "" : "disabled"}>${upgradeLabel}</button><div class="notice warning">升级前会自动创建并校验 PostgreSQL 备份。确认后仅拉取 GitHub Release 工作流发布的 <code>ghcr.io/ljunn/heromail:latest</code>，不会更改 PostgreSQL 和 Redis 数据卷。</div></div></div></div><div class="card" style="margin-top:16px"><div class="card-head"><h2>最新版本日志 · ${esc(release.tag || "暂无")}</h2>${release.url ? `<a class="link-btn" href="${esc(release.url)}" target="_blank" rel="noopener">查看 GitHub Release</a>` : ""}</div><div class="card-body">${hasRelease ? `<pre class="release-notes">${esc(release.notes || "该版本未提供更新日志。")}</pre>` : `<div class="empty">无法获取 GitHub 最新正式版本，已禁用升级按钮。</div>`}</div></div>`;
+  const running = ["backing_up", "queued", "updating"].includes(version.upgrade.state);
+  const upgradeLabel = running ? "升级进行中" : upgradeAvailable ? `升级到 ${esc(release.tag)}` : hasRelease ? "当前已是最新版本" : "暂未获取正式版本";
+  const stageIndex = ({ idle: -1, backing_up: 0, queued: 1, updating: 2, success: 4, failed: -1 })[version.upgrade.state] ?? -1;
+  const stages = ["备份数据库", "提交任务", "拉取并重启", "健康检查"];
+  const stageMarkup = stages.map((label, index) => `<div class="upgrade-step ${stageIndex > index ? "done" : stageIndex === index ? "active" : ""}"><span>${stageIndex > index ? "✓" : index + 1}</span><strong>${label}</strong></div>`).join("");
+  const unavailableReason = !version.online_upgrade_enabled ? "当前部署未配置在线升级器或数据库备份目录。" : !hasRelease ? "暂时无法连接 GitHub Release，请稍后重新检查。" : "";
+  return pageHead("版本升级", "只负责检查正式版本、备份数据库和切换官方镜像。", `<button class="ghost-btn" data-action="check-updates" ${running ? "disabled" : ""}>重新检查</button>`) + `<section class="version-console"><div class="version-route"><div><span>当前运行</span><strong>${esc(version.current_version)}</strong><small><code>${esc(String(version.commit || "").slice(0, 12))}</code></small></div><span class="version-arrow">→</span><div><span>GitHub 正式版</span><strong>${esc(release.tag || "未获取")}</strong><small>${release.published_at ? time(release.published_at) : "等待检查"}</small></div></div><div class="version-action"><div class="detail-status">${statusChip(version.upgrade.state)}<span>${esc(version.upgrade.message || "尚未执行在线升级")}</span></div><button class="primary-btn" data-action="upgrade" ${version.online_upgrade_enabled && upgradeAvailable && !running ? "" : "disabled"}>${upgradeLabel}</button>${unavailableReason ? `<p class="inline-error">${esc(unavailableReason)}</p>` : ""}</div></section><div class="upgrade-progress" aria-label="升级流程">${stageMarkup}</div><div class="upgrade-safety"><div>${icon("database")}<span><strong>自动备份</strong>升级前创建并校验 PostgreSQL 备份</span></div><div>${icon("shieldUser")}<span><strong>数据卷不变</strong>PostgreSQL 与 Redis 数据卷不会替换</span></div><div>${icon("activity")}<span><strong>健康确认</strong>新容器通过检查后才标记成功</span></div></div><details class="release-details"><summary><span>版本日志 · ${esc(release.tag || "暂无")}</span><span>展开查看</span></summary><div>${hasRelease ? `<pre class="release-notes">${esc(release.notes || "该版本未提供更新日志。")}</pre>${release.url ? `<a class="link-btn release-link" href="${esc(release.url)}" target="_blank" rel="noopener">在 GitHub 查看完整 Release</a>` : ""}` : `<div class="empty">暂时没有可显示的正式版本日志</div>`}</div></details>`;
 }
 
 function renderAdminChannels() { return pageHead("接入渠道", "通过 Microsoft OAuth2 接入统一邮箱池。") + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>Microsoft Graph OAuth2</h2></div><div class="card-body"><div class="status-list"><div class="status-item"><i class="status-dot"></i> OAuth 授权流程 <span class="status-ok">服务端验证</span></div><div class="status-item"><i class="status-dot"></i> Token 存储 <span class="status-ok">AES-256-GCM</span></div><div class="status-item"><i class="status-dot"></i> 已接入邮箱 <strong style="margin-left:auto">${state.pagination.mailboxes?.total || 0}</strong></div></div></div></div><div class="card"><div class="card-head"><h2>连接 Microsoft 邮箱</h2></div><div class="card-body form-grid"><button class="primary-btn" data-action="microsoft-oauth">连接 Microsoft 邮箱</button><div class="notice">OAuth 完成后自动识别 Outlook、Outlook.de 或 Hotmail，并加入唯一邮箱池。</div></div></div></div>`; }
 
-function renderAdminAlerts() { const overview = state.overview || {}; const alerts = []; if (!overview.available_mailboxes) alerts.push(["库存告警", "没有可分配邮箱", "red"]); if (overview.auth_errors) alerts.push(["授权异常", `${overview.auth_errors} 个邮箱需要重新授权`, "orange"]); if (overview.blocked_mailboxes) alerts.push(["邮箱隔离", `${overview.blocked_mailboxes} 个邮箱已隔离`, "red"]); return pageHead("告警中心", "根据库存、授权和邮箱状态生成运行告警。") + `<div class="card"><div class="card-body status-list">${alerts.map(item => `<div class="status-item"><i class="status-dot ${item[2]}"></i><strong>${item[0]}</strong><span class="muted">${item[1]}</span></div>`).join("") || `<div class="empty">当前没有运行告警</div>`}</div></div>`; }
+function renderAdminOperations() {
+  const tab = state.adminTabs.operations;
+  const tabs = sectionTabs("operations", tab, [["alerts", "运行异常"], ["audit", "审计记录", state.pagination.audit?.total]]);
+  if (tab === "audit") return pageHead("运维中心", "运行异常用于处置，审计记录用于追溯。") + tabs + `<div class="card"><div class="table-wrap responsive-admin-table"><table><thead><tr><th>操作者</th><th>动作</th><th>资源</th><th>详情</th><th>IP</th><th>时间</th></tr></thead><tbody>${state.auditLogs.map(item => `<tr><td data-label="操作者">${esc(item.actor_id)}</td><td data-label="动作"><code>${esc(item.action)}</code></td><td data-label="资源">${esc(item.resource_type)} · ${esc(item.resource_id)}</td><td data-label="详情" class="wrap-cell">${esc(item.detail)}</td><td data-label="IP">${esc(item.ip || "—")}</td><td data-label="时间">${time(item.created_at)}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">暂无审计记录</td></tr>`}</tbody></table></div>${renderPager("audit")}</div>`;
+  const overview = state.overview || {};
+  const alerts = [];
+  if (!overview.available_mailboxes) alerts.push(["库存不可用", "当前没有可分配邮箱，用户无法创建新订单。", "red", "admin-mailboxes", "检查邮箱池"]);
+  if (overview.auth_errors) alerts.push(["邮箱授权异常", `${overview.auth_errors} 个邮箱需要重新授权或重新验证。`, "orange", "admin-mailboxes", "处理邮箱"]);
+  if (overview.blocked_mailboxes) alerts.push(["邮箱已隔离", `${overview.blocked_mailboxes} 个邮箱已被系统隔离。`, "red", "admin-mailboxes", "查看隔离项"]);
+  return pageHead("运维中心", "只展示当前需要处理的运行问题，历史操作在审计记录中查看。", `<button class="ghost-btn" data-action="refresh">刷新</button>`) + tabs + `<div class="ops-list">${alerts.map(item => `<article class="ops-alert"><i class="status-dot ${item[2]}"></i><div><strong>${item[0]}</strong><p>${item[1]}</p></div><button class="ghost-btn" data-action="view" data-view="${item[3]}">${item[4]}</button></article>`).join("") || `<div class="healthy-state">${icon("activity")}<strong>当前运行正常</strong><span>邮箱库存、授权和隔离状态均无待处理问题。</span></div>`}</div>`;
+}
 
 
 function render() {
@@ -299,8 +347,10 @@ function render() {
   document.body.classList.toggle("user-shell", state.role !== "admin");
   document.body.classList.remove("auth-mode");
   renderNav();
-  const views = { apply: renderApply, current: renderCurrent, orders: () => renderOrders() + renderPager("orders"), docs: renderDocs, keys: renderAPIKeys, webhooks: renderWebhooks, usage: renderUsage, balance: renderBalance, settings: renderSettings, "admin-overview": renderAdminOverview, "admin-mailboxes": renderAdminMailboxes, "admin-channels": renderAdminChannels, "admin-services": renderAdminServices, "admin-orders": renderAdminOrders, "admin-users": renderAdminUsers, "admin-ledger": renderAdminLedger, "admin-payments": renderAdminPayments, "admin-alerts": renderAdminAlerts, "admin-audit": renderAdminAudit, "admin-settings": renderAdminSettings, "admin-account": renderAdminAccount };
-  document.querySelector("#content").innerHTML = (views[state.view] || views.apply)();
+  const views = { apply: renderApply, current: renderCurrent, orders: () => renderOrders() + renderPager("orders"), docs: renderDocs, keys: renderAPIKeys, webhooks: renderWebhooks, usage: renderUsage, balance: renderBalance, settings: renderSettings, "admin-overview": renderAdminOverview, "admin-mailboxes": renderAdminMailboxes, "admin-channels": renderAdminChannels, "admin-services": renderAdminServices, "admin-orders": renderAdminOrders, "admin-users": renderAdminUsers, "admin-payments": renderAdminPayments, "admin-operations": renderAdminOperations, "admin-settings": renderAdminSettings, "admin-account": renderAdminAccount };
+  const content = (views[state.view] || views.apply)();
+  const error = state.pageError ? `<div class="page-error" role="alert"><div>${icon("activity")}<span><strong>当前页面加载失败</strong>${esc(state.pageError)}</span></div><button class="ghost-btn" data-action="refresh">重新加载</button></div>` : "";
+  document.querySelector("#content").innerHTML = error + content;
   document.querySelector("#balance").textContent = `余额 ${money(state.user.balance)}`;
   document.querySelector(".avatar").textContent = (state.user.display_name || state.user.email || "U").slice(0, 1).toUpperCase();
   if (state.version?.current_version) document.querySelector("#app-version").textContent = state.version.current_version;
@@ -323,16 +373,42 @@ async function loadUserModule(view) {
   if (view === "webhooks") { state.webhookEndpoints = rememberPage("webhooks", await api(`/api/v1/webhooks?page=${requestedPage("webhooks")}&page_size=20`)); state.webhookDeliveries = rememberPage("webhook-deliveries", await api(`/api/v1/webhook-deliveries?page=${requestedPage("webhook-deliveries")}&page_size=20`)); }
 }
 async function loadAdmin() {
-  const [me, overview, services, mailboxes, orders] = await Promise.all([api("/api/v1/me"), api("/api/v1/admin/overview"), api(`/api/v1/admin/services?page=${requestedPage("admin-services")}&page_size=20`), api(`/api/v1/admin/mailboxes?page=${requestedPage("mailboxes")}&page_size=20`), api(`/api/v1/admin/orders?page=${requestedPage("admin-orders")}&page_size=20`)]);
-  state.user = me; state.overview = overview.data; state.services = rememberPage("admin-services", services); state.mailboxes = rememberPage("mailboxes", mailboxes); state.orders = rememberPage("admin-orders", orders);
-  if (state.view === "admin-users") state.users = rememberPage("users", await api(`/api/v1/admin/users?page=${requestedPage("users")}&page_size=20`));
-  if (state.view === "admin-ledger") state.ledgers = rememberPage("admin-ledger", await api(`/api/v1/admin/wallet/ledgers?page=${requestedPage("admin-ledger")}&page_size=20`));
-  if (state.view === "admin-audit") state.auditLogs = rememberPage("audit", await api(`/api/v1/admin/audit-logs?page=${requestedPage("audit")}&page_size=20`));
-  if (state.view === "admin-payments") { state.paymentProviders = rememberPage("payment-providers", await api(`/api/v1/admin/payment/providers?page=${requestedPage("payment-providers")}&page_size=20`)); state.paymentOrders = rememberPage("admin-payments", await api(`/api/v1/admin/payment/orders?page=${requestedPage("admin-payments")}&page_size=20`)); }
+  state.user = await api("/api/v1/me");
+  if (["admin-overview", "admin-mailboxes"].includes(state.view) || (state.view === "admin-operations" && state.adminTabs.operations === "alerts")) state.overview = (await api("/api/v1/admin/overview")).data;
+  if (["admin-overview", "admin-services", "admin-orders"].includes(state.view)) state.services = rememberPage("admin-services", await api(`/api/v1/admin/services?page=${requestedPage("admin-services")}&page_size=20`));
+  if (state.view === "admin-mailboxes") state.mailboxes = rememberPage("mailboxes", await api(`/api/v1/admin/mailboxes?page=${requestedPage("mailboxes")}&page_size=20`));
+  if (state.view === "admin-overview") state.orders = rememberPage("admin-orders", await api("/api/v1/admin/orders?page=1&page_size=6"));
+  if (state.view === "admin-orders") {
+    const params = new URLSearchParams({ page: requestedPage("admin-orders"), page_size: 20 });
+    if (state.orderFilters.status) params.set("status", state.orderFilters.status);
+    if (state.orderFilters.service) params.set("service", state.orderFilters.service);
+    if (state.orderFilters.query) params.set("query", state.orderFilters.query);
+    const selectedID = state.currentOrder?.id;
+    state.orders = rememberPage("admin-orders", await api(`/api/v1/admin/orders?${params}`));
+    state.currentOrder = state.orders.find(order => order.id === selectedID) || null;
+  }
+  if (state.view === "admin-users" && state.adminTabs.users === "accounts") state.users = rememberPage("users", await api(`/api/v1/admin/users?page=${requestedPage("users")}&page_size=20`));
+  if (state.view === "admin-users" && state.adminTabs.users === "ledger") {
+    const userFilter = state.ledgerUserID ? `&user_id=${encodeURIComponent(state.ledgerUserID)}` : "";
+    state.ledgers = rememberPage("admin-ledger", await api(`/api/v1/admin/wallet/ledgers?page=${requestedPage("admin-ledger")}&page_size=20${userFilter}`));
+  }
+  if (state.view === "admin-operations" && state.adminTabs.operations === "audit") state.auditLogs = rememberPage("audit", await api(`/api/v1/admin/audit-logs?page=${requestedPage("audit")}&page_size=20`));
+  if (state.view === "admin-payments" && state.adminTabs.payments === "providers") state.paymentProviders = rememberPage("payment-providers", await api(`/api/v1/admin/payment/providers?page=${requestedPage("payment-providers")}&page_size=20`));
+  if (state.view === "admin-payments" && state.adminTabs.payments === "orders") state.paymentOrders = rememberPage("admin-payments", await api(`/api/v1/admin/payment/orders?page=${requestedPage("admin-payments")}&page_size=20`));
   if (state.view === "admin-settings") state.version = (await api("/api/v1/admin/system/version")).data;
 }
 
-async function refresh() { try { if (!state.user && !state.token) { redirectToLogin(); return; } if (state.role === "admin") await loadAdmin(); else await loadUser(); await render(); } catch (error) { toast(error.message); } }
+async function refresh() {
+  state.pageError = "";
+  try {
+    if (!state.user && !state.token) { redirectToLogin(); return; }
+    if (state.role === "admin") await loadAdmin(); else await loadUser();
+  } catch (error) {
+    state.pageError = error.message;
+    toast(error.message);
+  }
+  await render();
+}
 function stopPolling() { if (state.polling) { clearInterval(state.polling); state.polling = null; } }
 function startPolling(orderID) {
   stopPolling();
@@ -397,7 +473,44 @@ async function changePassword() {
 async function logout() { try { await api("/api/v1/auth/logout", { method: "POST" }); } finally { state.token = ""; state.user = null; localStorage.removeItem("heromail_token"); redirectToLogin(); } }
 async function createPayment() { const amount = Number(document.querySelector("#topup-amount")?.value); const method = document.querySelector("#topup-method")?.value; const result = await api("/api/v1/payment/orders", { method: "POST", body: JSON.stringify({ amount, method, mobile: /Android|iPhone|iPad/i.test(navigator.userAgent) }) }); location.href = result.data.pay_url; }
 async function createWebhook() { const url = document.querySelector("#webhook-url")?.value.trim(); const result = await api("/api/v1/webhooks", { method: "POST", body: JSON.stringify({ url }) }); showSecret("Webhook 签名密钥", result.data.secret); await refresh(); }
-async function adjustBalance(target) { const amount = Number(window.prompt(`调整 ${target.dataset.email} 的余额，正数充值、负数扣减：`, "10")); if (!amount) return; const description = window.prompt("请输入调整原因：", "管理员人工补偿"); if (!description) return; await api(`/api/v1/admin/users/${target.dataset.id}/balance`, { method: "POST", body: JSON.stringify({ amount, description }) }); await refresh(); toast("余额已调整并写入审计"); }
+function showBalanceEditor(userID) {
+  const user = state.users.find(item => item.id === userID);
+  if (!user) return toast("用户数据已变化，请刷新后重试");
+  document.querySelector("#secret-modal")?.remove();
+  document.body.insertAdjacentHTML("beforeend", `<div id="secret-modal" class="modal-backdrop"><div class="modal balance-modal"><div class="card-head"><div><h2>调整用户余额</h2><div class="modal-subtitle">${esc(user.email)}</div></div><button class="icon-btn" data-action="close-modal" title="关闭">×</button></div><div class="card-body form-grid"><input id="balance-user-id" type="hidden" value="${esc(user.id)}"><input id="balance-current" type="hidden" value="${Number(user.balance)}"><fieldset class="balance-mode"><legend>调整类型</legend><label><input type="radio" name="balance-mode" value="add" checked><span>增加余额</span></label><label><input type="radio" name="balance-mode" value="deduct"><span>扣减余额</span></label></fieldset><label>调整金额<input id="balance-amount" class="field" type="number" min="0.01" step="0.01" placeholder="0.00" inputmode="decimal"></label><label>调整原因<textarea id="balance-description" class="field" rows="3" maxlength="500" placeholder="例如：订单申诉人工补偿"></textarea></label><div id="balance-preview" class="balance-preview"><span>当前余额 <strong>${money(user.balance)}</strong></span><span>调整后 <strong>${money(user.balance)}</strong></span></div><div class="notice">提交后立即记入用户余额，同时写入资金流水和管理审计。</div></div><div class="modal-footer"><button class="ghost-btn" data-action="close-modal">取消</button><button class="primary-btn" data-action="confirm-adjust-balance">确认调整</button></div></div></div>`);
+  document.querySelector("#balance-amount")?.focus();
+}
+
+function updateBalancePreview() {
+  const current = Number(document.querySelector("#balance-current")?.value || 0);
+  const amount = Number(document.querySelector("#balance-amount")?.value || 0);
+  const mode = document.querySelector('input[name="balance-mode"]:checked')?.value || "add";
+  const next = current + (mode === "deduct" ? -amount : amount);
+  const preview = document.querySelector("#balance-preview");
+  if (preview) preview.innerHTML = `<span>当前余额 <strong>${money(current)}</strong></span><span>调整后 <strong class="${next < 0 ? "danger-text" : ""}">${money(next)}</strong></span>`;
+}
+
+async function confirmBalanceAdjustment() {
+  const userID = document.querySelector("#balance-user-id")?.value || "";
+  const current = Number(document.querySelector("#balance-current")?.value || 0);
+  const rawAmount = Number(document.querySelector("#balance-amount")?.value || 0);
+  const mode = document.querySelector('input[name="balance-mode"]:checked')?.value || "add";
+  const description = document.querySelector("#balance-description")?.value.trim() || "";
+  if (!Number.isFinite(rawAmount) || rawAmount <= 0) return toast("请输入大于 0 的调整金额");
+  if (!description) return toast("请填写调整原因");
+  const amount = mode === "deduct" ? -rawAmount : rawAmount;
+  if (current + amount < 0) return toast("扣减后余额不能小于 0");
+  state.busyAction = "balance";
+  const button = document.querySelector('[data-action="confirm-adjust-balance"]');
+  if (button) { button.disabled = true; button.textContent = "正在调整…"; }
+  try {
+    await api(`/api/v1/admin/users/${userID}/balance`, { method: "POST", body: JSON.stringify({ amount, description }) });
+    document.querySelector("#secret-modal")?.remove();
+    state.adminTabs.users = "ledger"; state.ledgerUserID = userID; state.pagination["admin-ledger"] = { page: 1 };
+    history.replaceState({ view: "admin-users" }, "", "/admin/users?tab=ledger");
+    await refresh(); toast("余额调整成功，已打开该用户资金流水");
+  } finally { state.busyAction = ""; }
+}
 async function savePaymentProvider() {
   const id = document.querySelector("#pay-provider-id")?.value || "";
   const name = document.querySelector("#pay-provider-name")?.value.trim() || "";
@@ -430,16 +543,35 @@ async function checkUpdates() {
   const latest = String(state.version.latest_release?.tag || "").replace(/^v/i, "");
   toast(current && current === latest ? "当前已是最新正式版本" : latest ? `发现新版本 ${state.version.latest_release.tag}` : "暂时无法获取最新版本");
 }
+function showUpgradeConfirmation() {
+  const target = state.version?.latest_release?.tag;
+  if (!target) return toast("请先检查更新");
+  document.querySelector("#secret-modal")?.remove();
+  document.body.insertAdjacentHTML("beforeend", `<div id="secret-modal" class="modal-backdrop"><div class="modal upgrade-modal"><div class="card-head"><div><h2>确认在线升级</h2><div class="modal-subtitle">${esc(state.version.current_version)} → ${esc(target)}</div></div><button class="icon-btn" data-action="close-modal" title="关闭">×</button></div><div class="card-body"><div class="upgrade-confirm-list"><div><span>1</span><p><strong>创建数据库备份</strong>备份验证失败时不会继续升级。</p></div><div><span>2</span><p><strong>切换官方镜像</strong>只使用 <code>ghcr.io/ljunn/heromail:latest</code>。</p></div><div><span>3</span><p><strong>等待健康检查</strong>升级期间页面可能短暂断开，恢复后会继续显示状态。</p></div></div></div><div class="modal-footer"><button class="ghost-btn" data-action="close-modal">暂不升级</button><button class="primary-btn" data-action="confirm-upgrade">开始备份并升级</button></div></div></div>`);
+}
 async function requestUpgrade() {
   const target = state.version?.latest_release?.tag;
   if (!target) return toast("请先检查更新");
-  if (!window.confirm(`确认升级到 ${target}？升级期间服务会短暂重启。`)) return;
-  await api("/api/v1/admin/system/upgrade", { method: "POST", headers: { "X-HeroMail-Target-Version": target } });
-  toast("升级任务已提交，服务将短暂重启"); startUpgradePolling();
+  state.busyAction = "upgrade";
+  const button = document.querySelector('[data-action="confirm-upgrade"]');
+  if (button) { button.disabled = true; button.textContent = "正在提交…"; }
+  try {
+    await api("/api/v1/admin/system/upgrade", { method: "POST", headers: { "X-HeroMail-Target-Version": target } });
+    document.querySelector("#secret-modal")?.remove();
+    toast("升级任务已提交，服务将短暂重启"); startUpgradePolling();
+  } catch (error) {
+    toast(error.message);
+    if (button) { button.disabled = false; button.textContent = "开始备份并升级"; }
+  } finally { state.busyAction = ""; }
 }
 function startUpgradePolling() { clearInterval(state.upgradePolling); state.upgradePolling = setInterval(async () => { try { state.version = (await api("/api/v1/admin/system/version")).data; await render(); if (["success", "failed"].includes(state.version.upgrade.state)) clearInterval(state.upgradePolling); } catch (_) {} }, 3000); }
 
 document.addEventListener("click", async event => {
+  if (document.body.classList.contains("mobile-nav-open") && !event.target.closest(".sidebar, .mobile-admin-menu")) {
+    document.body.classList.remove("mobile-nav-open");
+    document.querySelector(".mobile-admin-menu")?.setAttribute("aria-expanded", "false");
+  }
+  if (event.target.classList.contains("modal-backdrop")) { event.target.remove(); return; }
   const target = event.target.closest("[data-action]"); if (!target) return;
   const action = target.dataset.action;
   if (action === "role") { location.href = state.role === "admin" ? "/app" : "/admin"; return; }
@@ -455,12 +587,25 @@ document.addEventListener("click", async event => {
     document.querySelector(".mobile-admin-menu")?.setAttribute("aria-expanded", "false");
     await navigate(target.dataset.view); return;
   }
+  if (action === "admin-tab") {
+    const group = target.dataset.group; const tab = target.dataset.tab;
+    if (!state.adminTabs[group]) return;
+    state.adminTabs[group] = tab;
+    if (group === "users") state.pagination[tab === "ledger" ? "admin-ledger" : "users"] = { page: 1 };
+    if (group === "payments") state.pagination[tab === "providers" ? "payment-providers" : "admin-payments"] = { page: 1 };
+    if (group === "operations" && tab === "audit") state.pagination.audit = { page: 1 };
+    const path = adminRoutes[state.view] || location.pathname;
+    history.replaceState({ view: state.view }, "", `${path}?tab=${encodeURIComponent(tab)}`);
+    await refresh(); return;
+  }
   if (action === "service") { state.selectedService = target.dataset.service; await render(); return; }
   if (action === "create") { await createOrder(); return; }
   if (action === "submit") { state.currentOrder = state.orders.find(order => order.id === target.dataset.order) || state.currentOrder; await mutateOrder("submitted"); return; }
   if (action === "complete") { await mutateOrder("complete"); return; }
   if (action === "cancel") { await mutateOrder("cancel"); return; }
   if (action === "select-order") { await selectOrder(target.dataset.order); return; }
+  if (action === "close-order-detail") { state.currentOrder = null; await render(); return; }
+  if (action === "reset-order-filters") { state.orderFilters = { status: "", service: "", query: "" }; state.pagination["admin-orders"] = { page: 1 }; await refresh(); return; }
   if (action === "refresh") { await refresh(); return; }
   if (action === "copy") { await navigator.clipboard?.writeText(target.dataset.copy || ""); toast("已复制"); return; }
   if (action === "message") { toast(target.dataset.message || "该功能正在接入中"); }
@@ -480,13 +625,17 @@ document.addEventListener("click", async event => {
   if (action === "edit-service") { showServiceEditor(target.dataset.id || ""); return; }
   if (action === "save-service") { await saveService(); return; }
   if (action === "delete-service") { await deleteService(target.dataset.id); return; }
-  if (action === "adjust-balance") { await adjustBalance(target); return; }
+  if (action === "adjust-balance") { showBalanceEditor(target.dataset.id); return; }
+  if (action === "confirm-adjust-balance") { await confirmBalanceAdjustment(); return; }
+  if (action === "view-user-ledger") { state.adminTabs.users = "ledger"; state.ledgerUserID = target.dataset.id; state.pagination["admin-ledger"] = { page: 1 }; history.replaceState({ view: "admin-users" }, "", "/admin/users?tab=ledger"); await refresh(); return; }
+  if (action === "clear-ledger-user") { state.ledgerUserID = ""; state.pagination["admin-ledger"] = { page: 1 }; await refresh(); return; }
   if (action === "edit-payment-provider") { await showPaymentProviderEditor(target.dataset.id || ""); return; }
   if (action === "save-payment-provider") { await savePaymentProvider(); return; }
   if (action === "delete-payment-provider") { await deletePaymentProvider(target); return; }
   if (action === "microsoft-oauth") { await startMicrosoftOAuth(); return; }
   if (action === "check-updates") { await checkUpdates(); return; }
-  if (action === "upgrade") { await requestUpgrade(); return; }
+  if (action === "upgrade") { showUpgradeConfirmation(); return; }
+  if (action === "confirm-upgrade") { await requestUpgrade(); return; }
   if (action === "close-modal") { document.querySelector("#secret-modal")?.remove(); return; }
 });
 
@@ -494,6 +643,18 @@ document.addEventListener("change", event => {
   if (event.target.id === "mailbox-file") {
     document.querySelector("#mailbox-file-name").textContent = event.target.files?.[0]?.name || "尚未选择文件";
   }
+  if (event.target.matches('input[name="balance-mode"]')) updateBalancePreview();
+});
+document.addEventListener("input", event => {
+  if (event.target.id === "balance-amount") updateBalancePreview();
+});
+document.addEventListener("submit", async event => {
+  if (event.target.dataset.form !== "order-filters") return;
+  event.preventDefault();
+  state.orderFilters = { status: document.querySelector("#admin-order-status")?.value || "", service: document.querySelector("#admin-order-service")?.value || "", query: document.querySelector("#admin-order-query")?.value.trim() || "" };
+  state.pagination["admin-orders"] = { page: 1 };
+  state.currentOrder = null;
+  await refresh();
 });
 document.addEventListener("dragover", event => {
   if (event.target.closest(".mailbox-dropzone")) event.preventDefault();
@@ -512,6 +673,16 @@ window.addEventListener("popstate", async () => {
   if (!state.user) return;
   state.view = routeView(state.role);
   await refresh();
+});
+window.addEventListener("keydown", async event => {
+  if (event.key !== "Escape") return;
+  if (document.body.classList.contains("mobile-nav-open")) {
+    document.body.classList.remove("mobile-nav-open");
+    document.querySelector(".mobile-admin-menu")?.setAttribute("aria-expanded", "false");
+    return;
+  }
+  if (document.querySelector("#secret-modal")) { document.querySelector("#secret-modal")?.remove(); return; }
+  if (state.currentOrder && state.view === "admin-orders") { state.currentOrder = null; await render(); }
 });
 
 async function boot() {
