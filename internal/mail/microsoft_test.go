@@ -50,6 +50,51 @@ func (codeReceiverStub) ReceiveCodeValue(string, string) (domain.Order, error) {
 	return domain.Order{}, nil
 }
 
+type earlyMailRepository struct {
+	order   domain.Order
+	service domain.Service
+	marked  bool
+}
+
+func (*earlyMailRepository) ListMailboxCredentialsPage(string, int) ([]store.MailboxCredential, error) {
+	return nil, nil
+}
+func (*earlyMailRepository) UpdateMailboxCredential(string, string, map[string]string, time.Time, string) error {
+	return nil
+}
+func (*earlyMailRepository) UpdateMailboxVerification(string, string, string, string, string, time.Time, string) error {
+	return nil
+}
+func (s *earlyMailRepository) WaitingOrdersForMailbox(string) []domain.Order {
+	return []domain.Order{s.order}
+}
+func (s *earlyMailRepository) ServiceByID(string) (domain.Service, bool) {
+	return s.service, true
+}
+func (s *earlyMailRepository) MarkMailEvent(string, string, string, string, time.Time) (bool, error) {
+	s.marked = true
+	return true, nil
+}
+
+type messageConnectorStub struct {
+	messages []Message
+}
+
+func (*messageConnectorStub) Verify(context.Context, string, map[string]string) error { return nil }
+func (s *messageConnectorStub) Messages(context.Context, string, map[string]string) ([]Message, error) {
+	return s.messages, nil
+}
+
+type recordingCodeReceiver struct {
+	orderID string
+	code    string
+}
+
+func (s *recordingCodeReceiver) ReceiveCodeValue(orderID, code string) (domain.Order, error) {
+	s.orderID, s.code = orderID, code
+	return domain.Order{ID: orderID, Code: code, Status: domain.OrderCodeReceived}, nil
+}
+
 func TestWorkerScansMailboxCredentialsPastFirstPage(t *testing.T) {
 	repository := &pagingWorkerRepository{mailboxes: make([]store.MailboxCredential, 205)}
 	for index := range repository.mailboxes {
@@ -59,6 +104,75 @@ func TestWorkerScansMailboxCredentialsPastFirstPage(t *testing.T) {
 	worker.poll(context.Background())
 	if repository.pages != 3 {
 		t.Fatalf("邮箱凭证分页次数 = %d，期望 3", repository.pages)
+	}
+}
+
+func TestWorkerReceivesMailSentBeforeUserConfirmation(t *testing.T) {
+	now := time.Now().UTC()
+	repository := &earlyMailRepository{
+		order: domain.Order{
+			ID:          "order-early-mail",
+			ServiceID:   "service-openai",
+			Status:      domain.OrderWaitingCode,
+			AssignedAt:  now.Add(-5 * time.Minute),
+			SubmittedAt: now,
+			ExpiresAt:   now.Add(5 * time.Minute),
+		},
+		service: domain.Service{ID: "service-openai", SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
+	}
+	receiver := &recordingCodeReceiver{}
+	worker := NewWorker(repository, receiver, NewMicrosoftClient(MicrosoftConfig{}), time.Minute)
+	worker.imap = &messageConnectorStub{messages: []Message{{
+		ID:          "message-before-click",
+		Sender:      "noreply@openai.com",
+		Subject:     "Verification code",
+		BodyPreview: "Your code is 628419",
+		ReceivedAt:  now.Add(-3 * time.Minute),
+	}}}
+
+	worker.pollMailbox(context.Background(), store.MailboxCredential{
+		Mailbox: domain.Mailbox{ID: "mailbox-1", Address: "user@outlook.com", ConnectionMethod: domain.MailboxConnectionIMAP},
+		Config:  map[string]string{"password": "test-only"},
+	})
+
+	if !repository.marked {
+		t.Fatal("用户确认前已到达的邮件没有进入去重记录")
+	}
+	if receiver.orderID != repository.order.ID || receiver.code != "628419" {
+		t.Fatalf("用户确认前已到达的验证码未写入订单：order=%q code=%q", receiver.orderID, receiver.code)
+	}
+}
+
+func TestWorkerIgnoresMailBeforeMailboxAssignment(t *testing.T) {
+	now := time.Now().UTC()
+	repository := &earlyMailRepository{
+		order: domain.Order{
+			ID:          "order-stale-mail",
+			ServiceID:   "service-openai",
+			Status:      domain.OrderWaitingCode,
+			AssignedAt:  now.Add(-5 * time.Minute),
+			SubmittedAt: now,
+			ExpiresAt:   now.Add(5 * time.Minute),
+		},
+		service: domain.Service{ID: "service-openai", SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
+	}
+	receiver := &recordingCodeReceiver{}
+	worker := NewWorker(repository, receiver, NewMicrosoftClient(MicrosoftConfig{}), time.Minute)
+	worker.imap = &messageConnectorStub{messages: []Message{{
+		ID:          "message-before-assignment",
+		Sender:      "noreply@openai.com",
+		Subject:     "Verification code",
+		BodyPreview: "Your code is 123456",
+		ReceivedAt:  now.Add(-10 * time.Minute),
+	}}}
+
+	worker.pollMailbox(context.Background(), store.MailboxCredential{
+		Mailbox: domain.Mailbox{ID: "mailbox-1", Address: "user@outlook.com", ConnectionMethod: domain.MailboxConnectionIMAP},
+		Config:  map[string]string{"password": "test-only"},
+	})
+
+	if repository.marked || receiver.orderID != "" {
+		t.Fatalf("分配前的历史邮件不应匹配当前订单：marked=%v order=%q", repository.marked, receiver.orderID)
 	}
 }
 

@@ -298,14 +298,25 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 		return
 	}
 	for _, message := range messages {
-		if message.ReceivedAt.Before(orders[0].SubmittedAt.Add(-time.Minute)) {
+		messageOrders := make([]domain.Order, 0, len(orders))
+		for _, order := range orders {
+			listeningStartedAt := order.AssignedAt
+			if listeningStartedAt.IsZero() {
+				listeningStartedAt = order.SubmittedAt
+			}
+			if !listeningStartedAt.IsZero() && message.ReceivedAt.Before(listeningStartedAt.Add(-time.Minute)) {
+				continue
+			}
+			messageOrders = append(messageOrders, order)
+		}
+		if len(messageOrders) == 0 {
 			continue
 		}
 		fresh, markErr := w.repository.MarkMailEvent(mailbox.Mailbox.ID, message.ID, message.Sender, message.Subject, message.ReceivedAt)
 		if markErr != nil || !fresh {
 			continue
 		}
-		for _, order := range orders {
+		for _, order := range messageOrders {
 			service, ok := w.repository.ServiceByID(order.ServiceID)
 			if !ok {
 				continue
