@@ -61,6 +61,14 @@ type sqlService struct {
 
 func (sqlService) TableName() string { return "target_services" }
 
+// sqlSeedState 记录一次性初始化是否已经完成，避免运行时配置被重复种回数据库。
+type sqlSeedState struct {
+	Key       string `gorm:"primaryKey;size:120"`
+	CreatedAt time.Time
+}
+
+func (sqlSeedState) TableName() string { return "seed_states" }
+
 type sqlMailbox struct {
 	ID                  string    `gorm:"primaryKey;size:64"`
 	Address             string    `gorm:"uniqueIndex;size:320;not null"`

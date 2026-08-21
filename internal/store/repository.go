@@ -41,6 +41,16 @@ type AdminOrderFilter struct {
 	Query   string
 }
 
+type UserOrderFilter struct {
+	Status  string
+	Service string
+	Query   string
+}
+
+type UserOrderFilterRepository interface {
+	ListUserOrdersPage(userID string, filter UserOrderFilter, page, pageSize int) ([]domain.Order, int64)
+}
+
 type AdminOrderRepository interface {
 	ListAdminOrdersPage(filter AdminOrderFilter, page, pageSize int) ([]domain.Order, int64)
 }

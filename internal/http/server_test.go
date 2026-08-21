@@ -115,6 +115,37 @@ func TestAdminOrdersFiltersOnServerAndIncludesUserEmail(t *testing.T) {
 	}
 }
 
+func TestUserOrdersFiltersOnServer(t *testing.T) {
+	repository := store.New()
+	github, err := repository.CreateOrder("user-001", "svc-github", "user-filter-github")
+	if err != nil {
+		t.Fatalf("创建订单失败：%v", err)
+	}
+	if _, err := repository.CancelOrder(github.ID, "user-001"); err != nil {
+		t.Fatalf("取消订单失败：%v", err)
+	}
+	server := NewServer(repository)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/orders?page=1&page_size=20&status=canceled&service=github&query=ORD", nil)
+	request.Header.Set("X-HeroMail-User", "user-001")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("用户订单筛选返回 %d，响应：%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Data       []domain.Order `json:"data"`
+		Pagination struct {
+			Total int64 `json:"total"`
+		} `json:"pagination"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("解析用户订单响应失败：%v", err)
+	}
+	if len(body.Data) != 1 || body.Pagination.Total != 1 || body.Data[0].ID != github.ID {
+		t.Fatalf("用户订单筛选结果不正确：data=%d total=%d", len(body.Data), body.Pagination.Total)
+	}
+}
+
 func TestStaticAssetsUseBuildVersion(t *testing.T) {
 	originalCommit := buildinfo.Commit
 	buildinfo.Commit = "static-test-commit"

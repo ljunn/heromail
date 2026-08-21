@@ -92,6 +92,36 @@ func TestServiceAvailabilityTracksAllocatableMailboxes(t *testing.T) {
 	}
 }
 
+func TestUserOrderFilterIsServerSideSemantics(t *testing.T) {
+	s := New()
+	github, err := s.CreateOrder("user-001", "svc-github", "filter-github")
+	if err != nil {
+		t.Fatalf("创建 GitHub 订单失败：%v", err)
+	}
+	if _, err := s.CancelOrder(github.ID, "user-001"); err != nil {
+		t.Fatalf("取消 GitHub 订单失败：%v", err)
+	}
+	if _, err := s.CreateOrder("user-001", "svc-openai", "filter-openai"); err != nil {
+		t.Fatalf("创建 OpenAI 订单失败：%v", err)
+	}
+	items, total := s.ListUserOrdersPage("user-001", UserOrderFilter{Status: string(domain.OrderCanceled), Service: "github", Query: "ORD"}, 1, 20)
+	if total != 1 || len(items) != 1 || items[0].ID != github.ID {
+		t.Fatalf("用户订单筛选结果不正确：total=%d items=%+v", total, items)
+	}
+}
+
+func TestDefaultServiceSeedDoesNotRestoreDeletedConfiguration(t *testing.T) {
+	if !shouldSeedDefaultServices(0, false) {
+		t.Fatal("空库首次初始化应创建默认平台")
+	}
+	if shouldSeedDefaultServices(0, true) {
+		t.Fatal("已有初始化标记时不得重新创建平台")
+	}
+	if shouldSeedDefaultServices(3, false) {
+		t.Fatal("已有平台的数据库不得补种缺失平台")
+	}
+}
+
 func findMailbox(mailboxes []domain.Mailbox, address string) (domain.Mailbox, bool) {
 	for _, mailbox := range mailboxes {
 		if mailbox.Address == address {

@@ -25,9 +25,12 @@ const state = {
   health: null,
   adminTabs: { users: "accounts", payments: "orders", operations: "alerts" },
   orderFilters: { status: "", service: "", query: "" },
+  userOrderFilters: { status: "", service: "", query: "" },
   ledgerUserID: "",
   busyAction: "",
-  pageError: ""
+  pageError: "",
+  orderError: "",
+  loading: false
 };
 
 const iconPaths = {
@@ -67,7 +70,7 @@ function icon(name, className = "") {
 }
 
 const userNav = [["apply", "申请邮箱", "inbox"], ["current", "当前任务", "clock"], ["orders", "订单", "receipt"], ["balance", "余额", "wallet"], ["keys", "开发者", "key"], ["settings", "账户", "userCog"]];
-const mobileUserNav = [["apply", "申请", "inbox"], ["current", "任务", "clock"], ["orders", "订单", "receipt"], ["settings", "账户", "userCog"]];
+const mobileUserNav = [["apply", "申请", "inbox"], ["current", "任务", "clock"], ["orders", "订单", "receipt"], ["balance", "余额", "wallet"]];
 
 const adminNav = [
   ["运行", [["admin-overview", "运行概览", "dashboard"]]],
@@ -165,29 +168,34 @@ function renderApply() {
   const service = selectedService();
   const current = state.currentOrder;
   const inventory = Number(service.available_mailboxes || 0); const ttlMinutes = Math.max(1, Math.round(Number(service.ttl_seconds || 600) / 60)); const providers = providerList(service.allowed_providers);
-  return `<section class="portal-intro"><div><span>邮箱申请</span><h1>选择平台，开始收码任务</h1><p>系统自动分配可用邮箱。你只会看到本次任务需要的邮箱地址和验证码。</p></div><button class="ghost-btn" data-action="view" data-view="orders">查看订单</button></section><section class="portal-service-section"><div class="portal-section-head"><div><h2>目标平台</h2><p>价格、库存和有效期由管理员统一配置</p></div><span class="portal-balance">当前余额 ${money(state.user?.balance)}</span></div><div class="service-grid">${state.services.map(serviceCard).join("") || `<div class="empty">管理员尚未启用目标平台</div>`}</div></section><div class="portal-layout"><section class="card portal-order-tool"><div class="card-head"><h2>确认申请</h2><span class="muted">系统自动选择邮箱</span></div><div class="card-body"><dl class="config-list"><div class="config-row"><dt>目标平台</dt><dd>${esc(service.name)}</dd></div><div class="config-row"><dt>邮箱类型</dt><dd>${esc(providers)}</dd></div><div class="config-row"><dt>可用库存</dt><dd>${inventory} 个</dd></div><div class="config-row"><dt>任务有效期</dt><dd>${ttlMinutes} 分钟</dd></div><div class="config-row"><dt>本次费用</dt><dd>${money(service.price)}</dd></div></dl><button class="primary-btn portal-submit" data-action="create" ${state.busy || !inventory ? "disabled" : ""}>${state.busy ? "正在分配…" : inventory ? "申请邮箱" : "库存不足"}</button><p class="portal-policy">创建时预扣余额。分配失败不扣款，超时未收码自动退款。</p></div></section><section class="card task-card portal-task-tool"><div class="card-head"><h2>当前任务</h2>${current ? statusChip(current.status) : ""}</div><div class="card-body">${current ? renderTask(current) : `<div class="portal-empty-task">${icon("clock")}<strong>暂无进行中的任务</strong><span>申请成功后，邮箱、倒计时和验证码会集中显示在这里。</span></div>`}</div></section></div>${renderRecentOrders()}`;
+  const balance = Number(state.user?.balance || 0); const price = Number(service.price || 0); const enoughBalance = balance >= price;
+  const submit = state.busy ? `<button class="primary-btn portal-submit" disabled>正在分配…</button>` : !inventory ? `<button class="ghost-btn portal-submit" disabled>当前无可用库存</button>` : !enoughBalance ? `<button class="primary-btn portal-submit" data-action="view" data-view="balance">余额不足，去充值</button>` : `<button class="primary-btn portal-submit" data-action="create">申请邮箱</button>`;
+  return `<section class="portal-intro"><div><span>邮箱申请</span><h1>选择平台，开始收码任务</h1><p>系统自动分配可用邮箱。你只会看到本次任务需要的邮箱地址和验证码。</p></div><div class="portal-intro-actions"><span class="portal-balance">余额 ${money(balance)}</span><button class="ghost-btn" data-action="view" data-view="orders">查看订单</button></div></section><section class="portal-service-section"><div class="portal-section-head"><div><h2>目标平台</h2><p>价格、库存和有效期由管理员统一配置</p></div><span class="portal-balance">已选择 ${esc(service.name)}</span></div><div class="service-grid">${state.services.map(serviceCard).join("") || `<div class="empty portal-empty-service"><strong>暂时没有可用平台</strong><span>请稍后刷新，或联系管理员确认服务状态。</span><button class="ghost-btn" data-action="refresh">刷新平台</button></div>`}</div></section><div class="portal-layout"><section class="card portal-order-tool"><div class="card-head"><h2>申请摘要</h2><span class="muted">系统自动选择邮箱</span></div><div class="card-body">${state.orderError ? `<div class="inline-error" role="alert">${icon("activity")}<span>${esc(state.orderError)}</span></div>` : ""}<dl class="config-list"><div class="config-row"><dt>目标平台</dt><dd>${esc(service.name)}</dd></div><div class="config-row"><dt>邮箱类型</dt><dd>${esc(providers)}</dd></div><div class="config-row"><dt>可用库存</dt><dd>${inventory} 个</dd></div><div class="config-row"><dt>任务有效期</dt><dd>${ttlMinutes} 分钟</dd></div><div class="config-row"><dt>本次费用</dt><dd>${money(price)}</dd></div><div class="config-row"><dt>扣款规则</dt><dd>分配失败不扣，超时自动退</dd></div></dl>${submit}<p class="portal-policy">点击申请后会预扣本次费用。验证码到账后再完成结算。</p></div></section><section class="card task-card portal-task-tool"><div class="card-head"><h2>当前任务</h2>${current ? statusChip(current.status) : ""}</div><div class="card-body">${current ? renderTask(current) : `<div class="portal-empty-task">${icon("clock")}<strong>暂无进行中的任务</strong><span>申请成功后，邮箱、倒计时和验证码会集中显示在这里。</span><button class="link-btn" data-action="view" data-view="orders">查看历史订单</button></div>`}</div></section></div>${renderRecentOrders()}`;
 }
 
 function renderTask(order) {
   const status = order.status;
-  const steps = [["assigned", "已分配邮箱"], ["waiting_code", "等待用户提交"], ["code_received", "正在收取验证码"], ["completed", "完成"]];
-  const index = status === "completed" ? 4 : status === "code_received" ? 3 : status === "waiting_code" ? 2 : 1;
+  const steps = [["assigned", "邮箱已分配"], ["waiting_code", "等待收码"], ["code_received", "验证码已收到"], ["completed", "任务完成"]];
+  const index = { assigned: 0, waiting_code: 1, code_received: 2, completed: 3 }[status] ?? 0;
   const remain = Math.max(0, Math.floor((new Date(order.expires_at) - Date.now()) / 1000));
-  return `<div class="steps">${steps.map(([key, label], i) => `<div class="step ${i < index ? "done" : i === index ? "current" : ""}">${label}</div>`).join("")}</div><div class="task-mail"><code>${esc(order.mailbox_address)}</code><button class="link-btn" data-action="copy" data-copy="${esc(order.mailbox_address)}">复制</button></div><div class="notice">请将此邮箱填写到 ${esc(order.service_name)} 注册页面，提交后点击下方按钮。</div>${status === "assigned" ? `<div class="action-row"><button class="primary-btn" data-action="submit" data-order="${order.id}">我已提交注册</button><button class="danger-btn" data-action="cancel" data-order="${order.id}">取消并退款</button></div>` : ""}${status === "waiting_code" ? `<div class="notice warning">正在等待平台注册邮件，剩余 ${Math.floor(remain / 60)}:${String(remain % 60).padStart(2, "0")}。</div>` : ""}${order.code ? `<div class="code-box"><div><div class="code-label">验证码（已收到）</div><div class="code">${esc(order.code)}</div></div><div class="timer">${Math.floor(remain / 60)}:${String(remain % 60).padStart(2, "0")}</div></div><div class="notice success">验证码已提取成功，请在目标平台完成验证。</div>${status === "code_received" ? `<div class="action-row"><button class="primary-btn" data-action="complete" data-order="${order.id}">完成注册</button></div>` : ""}` : ""}`;
+  const actionBusy = state.busyAction && state.busyAction !== "";
+  const countdown = `${Math.floor(remain / 60)}:${String(remain % 60).padStart(2, "0")}`;
+  return `<div class="steps">${steps.map(([key, label], i) => `<div class="step ${i < index ? "done" : i === index ? "current" : ""}">${label}</div>`).join("")}</div><div class="task-mail"><code>${esc(order.mailbox_address)}</code><button class="link-btn" data-action="copy" data-copy="${esc(order.mailbox_address)}">复制邮箱</button></div><div class="notice">请将此邮箱填写到 ${esc(order.service_name)} 注册页面，提交后点击下方按钮。</div>${status === "assigned" ? `<div class="action-row"><button class="primary-btn" data-action="submit" data-order="${order.id}" ${actionBusy ? "disabled" : ""}>${state.busyAction === "submitted" ? "正在提交…" : "我已提交注册"}</button><button class="danger-btn" data-action="cancel" data-order="${order.id}" ${actionBusy ? "disabled" : ""}>取消并退款</button></div>` : ""}${status === "waiting_code" ? `<div class="notice warning">正在等待平台注册邮件，剩余 ${countdown}。</div>` : ""}${order.code ? `<div class="code-box"><div><div class="code-label">验证码（已收到）</div><div class="code">${esc(order.code)}</div></div><div class="timer">${countdown}</div></div><div class="notice success">验证码已提取成功，请在目标平台完成验证。</div>${status === "code_received" ? `<div class="action-row"><button class="primary-btn" data-action="complete" data-order="${order.id}" ${actionBusy ? "disabled" : ""}>${state.busyAction === "complete" ? "正在完成…" : "完成注册"}</button></div>` : ""}` : ""}`;
 }
 
 function renderRecentOrders() {
   const orders = state.orders.slice(0, 5);
-  return `<div class="card recent-card"><div class="card-head"><h2>最近订单</h2><button class="link-btn" data-action="view" data-view="orders">查看全部订单 →</button></div><div class="table-wrap">${orders.length ? `<table><thead><tr><th>订单号</th><th>目标平台</th><th>分配邮箱</th><th>状态</th><th>验证码</th><th>费用</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${orders.map(order => `<tr><td>${esc(order.id)}</td><td>${esc(order.service_name)}</td><td>${esc(order.mailbox_address)}</td><td>${statusChip(order.status)}</td><td>${esc(order.code || "—")}</td><td>${money(order.price)}</td><td>${time(order.created_at)}</td><td><button class="link-btn" data-action="select-order" data-order="${order.id}">详情</button></td></tr>`).join("")}</tbody></table>` : `<div class="empty">暂无订单</div>`}</div></div>`;
+  return `<div class="card recent-card"><div class="card-head"><h2>最近订单</h2><button class="link-btn" data-action="view" data-view="orders">查看全部订单 →</button></div><div class="table-wrap">${orders.length ? `<table><thead><tr><th>订单号</th><th>目标平台</th><th>状态</th><th>费用</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${orders.map(order => `<tr><td>${esc(order.id)}</td><td>${esc(order.service_name)}</td><td>${statusChip(order.status)}</td><td>${money(order.price)}</td><td>${time(order.created_at)}</td><td><button class="link-btn" data-action="select-order" data-order="${order.id}">查看详情</button></td></tr>`).join("")}</tbody></table>` : `<div class="empty">暂无订单，申请一个邮箱开始任务</div>`}</div></div>`;
 }
 
 function renderOrders() {
-  const counts = { all: state.orders.length, success: state.orders.filter(order => ["code_received", "completed"].includes(order.status)).length, waiting: state.orders.filter(order => ["assigned", "waiting_code"].includes(order.status)).length, refund: state.orders.filter(order => order.refunded).length };
-  return pageHead("订单记录", "查看每次平台注册任务、分配邮箱、验证码和结算结果。", `<button class="primary-btn" data-action="view" data-view="apply">申请邮箱</button>`) + `<div class="stat-grid">${stat("全部订单", counts.all, "累计任务")}${stat("成功收码", counts.success, "已提取验证码")}${stat("等待中", counts.waiting, "有效期内")}${stat("已退款", counts.refund, "超时自动退款")}${stat("今日消费", money(state.orders.reduce((sum, order) => sum + (order.refunded ? 0 : order.price), 0)), "预扣后结算")}</div><div class="card"><div class="filter-bar"><select class="select"><option>全部平台</option>${state.services.map(service => `<option>${esc(service.name)}</option>`).join("")}</select><select class="select"><option>全部状态</option><option>已完成</option><option>收码中</option><option>已退款</option></select><input class="search" placeholder="搜索订单号或邮箱"></div><div class="table-wrap">${state.orders.length ? `<table><thead><tr><th>订单号</th><th>目标平台</th><th>分配邮箱</th><th>状态</th><th>验证码</th><th>费用</th><th>有效期</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${state.orders.map(order => `<tr class="${state.currentOrder && state.currentOrder.id === order.id ? "selected" : ""}"><td>${esc(order.id)}</td><td>${esc(order.service_name)}</td><td>${esc(order.mailbox_address)}</td><td>${statusChip(order.status)}</td><td>${esc(order.code || "—")}</td><td>${money(order.price)}</td><td>${order.status === "completed" ? "—" : time(order.expires_at)}</td><td>${time(order.created_at)}</td><td><button class="link-btn" data-action="select-order" data-order="${order.id}">详情</button></td></tr>`).join("")}</tbody></table>` : `<div class="empty">暂无订单</div>`}</div></div>${state.currentOrder ? `<div class="card" style="margin-top:16px"><div class="card-head"><h2>订单详情 · ${esc(state.currentOrder.id)}</h2></div><div class="card-body"><div class="timeline">${[["创建订单", state.currentOrder.created_at], ["分配邮箱", state.currentOrder.assigned_at], ["用户已提交", state.currentOrder.submitted_at], ["收到验证码", state.currentOrder.code_received_at], ["完成结算", state.currentOrder.completed_at]].map(([label, value], i) => `<div class="timeline-item ${value ? "done" : ""}"><span class="timeline-dot"></span><div><div class="timeline-title">${label}</div><div class="timeline-time">${time(value)}</div></div></div>`).join("")}</div><div class="notice">邮箱凭证和完整邮件内容不会提供。提交后 10 分钟未收到验证码会自动退款。</div></div></div>` : ""}`;
+  const filters = state.userOrderFilters; const total = state.pagination.orders?.total || 0;
+  const statusOptions = [["", "全部状态"], ["assigned", "等待提交"], ["waiting_code", "收码中"], ["code_received", "已收码"], ["completed", "已完成"], ["canceled", "已取消"], ["expired_refunded", "已退款"]];
+  return pageHead("订单记录", "按平台、状态或订单号查找历史任务。敏感邮箱和验证码只在订单详情中显示。", `<button class="primary-btn" data-action="view" data-view="apply">申请邮箱</button>`) + `<div class="stat-grid">${stat("筛选结果", total, "服务端分页")}${stat("当前任务", state.currentOrder ? 1 : 0, "正在处理")}${stat("当前页", state.orders.length, "本页记录")}</div><form class="filter-bar" data-form="user-order-filters"><select id="user-order-service" class="select" aria-label="目标平台"><option value="">全部平台</option>${state.services.map(service => `<option value="${esc(service.code)}" ${filters.service === service.code ? "selected" : ""}>${esc(service.name)}</option>`).join("")}</select><select id="user-order-status" class="select" aria-label="订单状态">${statusOptions.map(([value, label]) => `<option value="${value}" ${filters.status === value ? "selected" : ""}>${label}</option>`).join("")}</select><input id="user-order-query" class="search" value="${esc(filters.query)}" placeholder="订单号或邮箱"><button class="primary-btn" type="submit">查询</button>${filters.status || filters.service || filters.query ? `<button class="ghost-btn" type="button" data-action="reset-user-order-filters">清空</button>` : ""}</form><div class="card"><div class="table-wrap"><table><thead><tr><th>订单号</th><th>目标平台</th><th>状态</th><th>费用</th><th>有效期</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${state.orders.length ? state.orders.map(order => `<tr class="${state.currentOrder && state.currentOrder.id === order.id ? "selected" : ""}"><td>${esc(order.id)}</td><td>${esc(order.service_name)}</td><td>${statusChip(order.status)}</td><td>${money(order.price)}</td><td>${order.status === "completed" ? "—" : time(order.expires_at)}</td><td>${time(order.created_at)}</td><td><button class="link-btn" data-action="select-order" data-order="${order.id}">查看详情</button></td></tr>`).join("") : `<tr><td colspan="7" class="empty">没有符合条件的订单，可清空筛选或申请新邮箱</td></tr>`}</tbody></table></div>${renderPager("orders")}</div>${state.currentOrder ? `<div class="card order-detail-card"><div class="card-head"><h2>订单详情 · ${esc(state.currentOrder.id)}</h2>${statusChip(state.currentOrder.status)}</div><div class="card-body"><div class="task-mail"><code>${esc(state.currentOrder.mailbox_address)}</code><button class="link-btn" data-action="copy" data-copy="${esc(state.currentOrder.mailbox_address)}">复制邮箱</button></div>${state.currentOrder.code ? `<div class="code-box"><div><div class="code-label">验证码</div><div class="code">${esc(state.currentOrder.code)}</div></div></div>` : ""}<div class="timeline">${[["创建订单", state.currentOrder.created_at], ["分配邮箱", state.currentOrder.assigned_at], ["用户已提交", state.currentOrder.submitted_at], ["收到验证码", state.currentOrder.code_received_at], ["完成结算", state.currentOrder.completed_at]].map(([label, value]) => `<div class="timeline-item ${value ? "done" : ""}"><span class="timeline-dot"></span><div><div class="timeline-title">${label}</div><div class="timeline-time">${time(value)}</div></div></div>`).join("")}</div><div class="notice">邮箱凭证和完整邮件内容不会提供。提交后未收到验证码会按规则自动退款。</div></div></div>` : ""}`;
 }
 
 function renderCurrent() {
-  return pageHead("当前任务", "正在进行的平台注册任务会在这里显示。", `<button class="ghost-btn" data-action="view" data-view="apply">申请新邮箱</button>`) + `<div class="card"><div class="card-body">${state.currentOrder ? renderTask(state.currentOrder) : `<div class="empty">当前没有进行中的注册任务。</div>`}</div></div>`;
+  return pageHead("当前任务", "正在进行的平台注册任务会在这里显示。", `<button class="ghost-btn" data-action="view" data-view="apply">申请新邮箱</button>`) + `<div class="card"><div class="card-body">${state.currentOrder ? renderTask(state.currentOrder) : `<div class="portal-empty-task">${icon("clock")}<strong>当前没有进行中的注册任务</strong><span>从申请邮箱开始，系统会在这里持续更新状态和验证码。</span><button class="primary-btn" data-action="view" data-view="apply">申请邮箱</button></div>`}</div></div>`;
 }
 
 function renderAdminOverview() {
@@ -222,7 +230,7 @@ function renderPager(key) {
 }
 
 function renderAPIKeys() {
-  return pageHead("API 密钥", "管理用于服务端调用订单接口的访问密钥。") + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>密钥列表</h2></div><div class="table-wrap"><table><thead><tr><th>名称</th><th>前缀</th><th>权限</th><th>最后使用</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${state.apiKeys.map(key => `<tr><td>${esc(key.name)}</td><td><code>${esc(key.prefix)}…</code></td><td>${esc(key.scopes.join(", "))}</td><td>${time(key.last_used_at)}</td><td>${time(key.created_at)}</td><td><button class="link-btn danger-text" data-action="revoke-key" data-id="${key.id}">吊销</button></td></tr>`).join("") || `<tr><td colspan="6" class="empty">暂无 API Key</td></tr>`}</tbody></table></div>${renderPager("keys")}</div><div class="card"><div class="card-head"><h2>创建密钥</h2></div><div class="card-body form-grid"><label>密钥名称<input id="key-name" class="field" placeholder="生产环境"></label><label>权限范围<select id="key-scope" class="field"><option value="orders">订单读写</option><option value="read">仅订单读取</option></select></label><button class="primary-btn" data-action="create-key">创建 API Key</button><div class="notice">密钥明文只显示一次，服务端仅保存 SHA-256 哈希。</div></div></div></div>`;
+  return pageHead("开发者", "管理 API 密钥、Webhook 和接口文档。", `<div class="page-head-tabs"><button class="ghost-btn" data-action="view" data-view="webhooks">Webhook</button><button class="ghost-btn" data-action="view" data-view="docs">API 文档</button></div>`) + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>密钥列表</h2></div><div class="table-wrap"><table><thead><tr><th>名称</th><th>前缀</th><th>权限</th><th>最后使用</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${state.apiKeys.map(key => `<tr><td>${esc(key.name)}</td><td><code>${esc(key.prefix)}…</code></td><td>${esc(key.scopes.join(", "))}</td><td>${time(key.last_used_at)}</td><td>${time(key.created_at)}</td><td><button class="link-btn danger-text" data-action="revoke-key" data-id="${key.id}">吊销</button></td></tr>`).join("") || `<tr><td colspan="6" class="empty">暂无 API Key，创建一个给服务端调用</td></tr>`}</tbody></table></div>${renderPager("keys")}</div><div class="card"><div class="card-head"><h2>创建密钥</h2></div><div class="card-body form-grid"><label>密钥名称<input id="key-name" class="field" placeholder="生产环境"></label><label>权限范围<select id="key-scope" class="field"><option value="orders">订单读写</option><option value="read">仅订单读取</option></select></label><button class="primary-btn" data-action="create-key">创建 API Key</button><div class="notice">密钥明文只显示一次，服务端仅保存 SHA-256 哈希。</div></div></div></div>`;
 }
 
 function renderUsage() {
@@ -230,7 +238,7 @@ function renderUsage() {
 }
 
 function renderBalance() {
-  return pageHead("余额充值", "通过管理员配置的支付宝官方或易支付通道充值。") + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>创建充值订单</h2><strong>${money(state.user.balance)}</strong></div><div class="card-body form-grid"><label>充值金额<input id="topup-amount" class="field" type="number" min="1" max="100000" step="0.01" value="50"></label><label>支付方式<select id="topup-method" class="field">${state.paymentMethods.map(method => `<option value="${esc(method)}">${method === "alipay" ? "支付宝" : esc(method)}</option>`).join("")}</select></label><button class="primary-btn" data-action="create-payment" ${state.paymentMethods.length ? "" : "disabled"}>前往支付</button>${state.paymentMethods.length ? "" : `<div class="notice warning">管理员尚未启用支付服务商。</div>`}</div></div><div class="card"><div class="card-head"><h2>充值记录</h2></div><div class="table-wrap"><table><thead><tr><th>支付单</th><th>通道</th><th>金额</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${state.paymentOrders.map(order => `<tr><td>${esc(order.id)}</td><td>${esc(order.provider_name)}</td><td>${money(order.amount)}</td><td>${statusChip(order.status)}</td><td>${time(order.created_at)}</td><td>${order.status === "pending" && order.pay_url ? `<a class="link-btn" href="${esc(order.pay_url)}" target="_blank" rel="noopener">继续支付</a>` : "—"}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">暂无充值记录</td></tr>`}</tbody></table></div>${renderPager("payments")}</div></div>`;
+  return pageHead("余额与充值", "充值用于申请邮箱；支付订单和资金流水分别记录，方便核对。", `<button class="ghost-btn" data-action="view" data-view="usage">查看资金流水</button>`) + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>创建充值订单</h2><strong>${money(state.user.balance)}</strong></div><div class="card-body form-grid"><label>充值金额<input id="topup-amount" class="field" type="number" min="1" max="100000" step="0.01" value="50"></label><label>支付方式<select id="topup-method" class="field">${state.paymentMethods.map(method => `<option value="${esc(method)}">${method === "alipay" ? "支付宝" : esc(method)}</option>`).join("")}</select></label><button class="primary-btn" data-action="create-payment" ${state.paymentMethods.length ? "" : "disabled"}>前往支付</button>${state.paymentMethods.length ? "" : `<div class="notice warning">暂时没有可用支付方式，请联系管理员。</div>`}</div></div><div class="card balance-guide"><div class="card-head"><h2>余额怎么使用</h2></div><div class="card-body"><ol><li>选择目标平台并申请邮箱</li><li>系统预扣费用，收码成功后结算</li><li>超时未收到验证码自动退款</li></ol><button class="link-btn" data-action="view" data-view="apply">返回申请邮箱 →</button></div></div></div><div class="card"><div class="card-head"><h2>充值记录</h2></div><div class="table-wrap"><table><thead><tr><th>支付单</th><th>通道</th><th>金额</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${state.paymentOrders.map(order => `<tr><td>${esc(order.id)}</td><td>${esc(order.provider_name)}</td><td>${money(order.amount)}</td><td>${statusChip(order.status)}</td><td>${time(order.created_at)}</td><td>${order.status === "pending" && order.pay_url ? `<a class="link-btn" href="${esc(order.pay_url)}" target="_blank" rel="noopener">继续支付</a>` : "—"}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">暂无充值记录</td></tr>`}</tbody></table></div>${renderPager("payments")}</div>`;
 }
 
 function renderAccountSettings(title, subtitle) {
@@ -238,7 +246,7 @@ function renderAccountSettings(title, subtitle) {
 }
 
 function renderSettings() {
-  return renderAccountSettings("个人设置", "维护账户资料和登录密码。");
+  return renderAccountSettings("个人设置", "维护账户资料和登录密码。") + `<div class="user-shortcuts"><button class="ghost-btn" data-action="view" data-view="balance">余额与充值</button><button class="ghost-btn" data-action="view" data-view="keys">开发者工具</button></div>`;
 }
 
 function renderAdminAccount() {
@@ -348,7 +356,7 @@ function render() {
   document.body.classList.remove("auth-mode");
   renderNav();
   const views = { apply: renderApply, current: renderCurrent, orders: () => renderOrders() + renderPager("orders"), docs: renderDocs, keys: renderAPIKeys, webhooks: renderWebhooks, usage: renderUsage, balance: renderBalance, settings: renderSettings, "admin-overview": renderAdminOverview, "admin-mailboxes": renderAdminMailboxes, "admin-channels": renderAdminChannels, "admin-services": renderAdminServices, "admin-orders": renderAdminOrders, "admin-users": renderAdminUsers, "admin-payments": renderAdminPayments, "admin-operations": renderAdminOperations, "admin-settings": renderAdminSettings, "admin-account": renderAdminAccount };
-  const content = (views[state.view] || views.apply)();
+  const content = state.loading ? `<div class="portal-loading" role="status" aria-live="polite">${icon("activity")}<strong>正在加载${state.role === "admin" ? "运营数据" : "工作台"}…</strong><span>数据更新后会自动显示</span></div>` : (views[state.view] || views.apply)();
   const error = state.pageError ? `<div class="page-error" role="alert"><div>${icon("activity")}<span><strong>当前页面加载失败</strong>${esc(state.pageError)}</span></div><button class="ghost-btn" data-action="refresh">重新加载</button></div>` : "";
   document.querySelector("#content").innerHTML = error + content;
   document.querySelector("#balance").textContent = `余额 ${money(state.user.balance)}`;
@@ -360,11 +368,17 @@ function render() {
 function rememberPage(key, body) { if (body.pagination) state.pagination[key] = body.pagination; return body.data || []; }
 function requestedPage(key) { return state.pagination[key]?.page || 1; }
 async function loadUser() {
-  const page = state.pagination.orders?.page || 1;
-  const [me, services, orders] = await Promise.all([api("/api/v1/me"), api("/api/v1/services?page=1&page_size=100"), api(`/api/v1/orders?page=${page}&page_size=20`)]);
+  const filteringOrders = state.view === "orders";
+  const page = filteringOrders ? state.pagination.orders?.page || 1 : 1;
+  const params = new URLSearchParams({ page: String(page), page_size: "20" });
+  if (filteringOrders && state.userOrderFilters.status) params.set("status", state.userOrderFilters.status);
+  if (filteringOrders && state.userOrderFilters.service) params.set("service", state.userOrderFilters.service);
+  if (filteringOrders && state.userOrderFilters.query) params.set("query", state.userOrderFilters.query);
+  const [me, services, orders] = await Promise.all([api("/api/v1/me"), api("/api/v1/services?page=1&page_size=100"), api(`/api/v1/orders?${params}`)]);
   state.user = me; state.services = services.data || []; state.orders = rememberPage("orders", orders); if (!state.services.some(service => service.code === state.selectedService) && state.services[0]) state.selectedService = state.services[0].code;
-  if (!state.currentOrder || !state.orders.some(order => order.id === state.currentOrder.id)) state.currentOrder = state.orders.find(order => ["assigned", "waiting_code", "code_received"].includes(order.status)) || null;
+  if (!state.currentOrder || !["assigned", "waiting_code", "code_received"].includes(state.currentOrder.status)) state.currentOrder = state.orders.find(order => ["assigned", "waiting_code", "code_received"].includes(order.status)) || null;
   if (["keys", "usage", "balance", "webhooks"].includes(state.view)) await loadUserModule(state.view);
+  if (state.currentOrder && !state.polling && ["assigned", "waiting_code", "code_received"].includes(state.currentOrder.status)) startPolling(state.currentOrder.id);
 }
 async function loadUserModule(view) {
   if (view === "keys") state.apiKeys = rememberPage("keys", await api(`/api/v1/api-keys?page=${requestedPage("keys")}&page_size=20`));
@@ -400,12 +414,16 @@ async function loadAdmin() {
 
 async function refresh() {
   state.pageError = "";
+  state.loading = true;
+  await render();
   try {
     if (!state.user && !state.token) { redirectToLogin(); return; }
     if (state.role === "admin") await loadAdmin(); else await loadUser();
   } catch (error) {
     state.pageError = error.message;
     toast(error.message);
+  } finally {
+    state.loading = false;
   }
   await render();
 }
@@ -419,12 +437,35 @@ function startPolling(orderID) {
       const index = state.orders.findIndex(order => order.id === orderID);
       if (index >= 0) state.orders[index] = result.data;
       await render();
-      if (["completed", "canceled", "expired_refunded"].includes(result.data.status)) stopPolling();
+      if (["completed", "canceled", "expired_refunded", "allocation_failed", "disputed"].includes(result.data.status)) stopPolling();
     } catch (error) { stopPolling(); }
   }, 1000);
 }
-async function createOrder() { state.busy = true; render(); try { const result = await api("/api/v1/orders", { method: "POST", body: JSON.stringify({ service: selectedService().code, request_id: `web-${Date.now()}` }) }); state.currentOrder = result.data; state.view = "apply"; await refresh(); startPolling(result.data.id); toast(`已分配 ${state.currentOrder.mailbox_address}`); } catch (error) { toast(error.message); } finally { state.busy = false; render(); } }
-async function mutateOrder(action) { if (!state.currentOrder) return; try { const result = await api(`/api/v1/orders/${state.currentOrder.id}/${action}`, { method: "POST" }); state.currentOrder = result.data; await refresh(); if (action === "submitted") startPolling(result.data.id); else if (["complete", "cancel"].includes(action)) stopPolling(); toast(action === "submitted" ? "已进入收码等待" : "订单状态已更新"); } catch (error) { toast(error.message); } }
+async function createOrder() {
+  if (state.busy) return;
+  const service = selectedService();
+  if (Number(state.user?.balance || 0) < Number(service.price || 0)) { state.orderError = "余额不足，请先充值后再申请。"; await render(); return; }
+  state.orderError = ""; state.busy = true; await render();
+  try {
+    const result = await api("/api/v1/orders", { method: "POST", body: JSON.stringify({ service: service.code, request_id: `web-${Date.now()}` }) });
+    state.currentOrder = result.data; state.view = "apply"; await refresh(); toast("邮箱已分配，请完成平台注册");
+  } catch (error) {
+    state.orderError = /insufficient balance|余额|balance/i.test(error.message) ? "余额不足，请先充值。" : error.message;
+    toast(error.message);
+  } finally { state.busy = false; await render(); }
+}
+async function mutateOrder(action) {
+  if (!state.currentOrder || state.busyAction) return;
+  if (action === "cancel" && !window.confirm("确认取消任务并退款吗？")) return;
+  state.busyAction = action; await render();
+  try {
+    const result = await api(`/api/v1/orders/${state.currentOrder.id}/${action}`, { method: "POST" });
+    state.currentOrder = result.data; await refresh();
+    if (action === "submitted") startPolling(result.data.id); else if (["complete", "cancel"].includes(action)) stopPolling();
+    toast(action === "submitted" ? "已进入收码等待" : "订单状态已更新");
+  } catch (error) { toast(error.message); }
+  finally { state.busyAction = ""; await render(); }
+}
 async function selectOrder(id) { const found = state.orders.find(order => order.id === id); if (found) { state.currentOrder = found; state.view = state.role === "admin" ? "admin-orders" : "orders"; await render(); } }
 
 function showSecret(title, secret) {
@@ -606,8 +647,9 @@ document.addEventListener("click", async event => {
   if (action === "select-order") { await selectOrder(target.dataset.order); return; }
   if (action === "close-order-detail") { state.currentOrder = null; await render(); return; }
   if (action === "reset-order-filters") { state.orderFilters = { status: "", service: "", query: "" }; state.pagination["admin-orders"] = { page: 1 }; await refresh(); return; }
+  if (action === "reset-user-order-filters") { state.userOrderFilters = { status: "", service: "", query: "" }; state.pagination.orders = { page: 1 }; await refresh(); return; }
   if (action === "refresh") { await refresh(); return; }
-  if (action === "copy") { await navigator.clipboard?.writeText(target.dataset.copy || ""); toast("已复制"); return; }
+  if (action === "copy") { await copyText(target.dataset.copy || ""); return; }
   if (action === "message") { toast(target.dataset.message || "该功能正在接入中"); }
   if (action === "page") { state.pagination[target.dataset.key] = { ...(state.pagination[target.dataset.key] || {}), page: Number(target.dataset.page) }; await refresh(); return; }
   if (action === "create-key") { await createKey(); return; }
@@ -649,13 +691,26 @@ document.addEventListener("input", event => {
   if (event.target.id === "balance-amount") updateBalancePreview();
 });
 document.addEventListener("submit", async event => {
-  if (event.target.dataset.form !== "order-filters") return;
+  if (!["order-filters", "user-order-filters"].includes(event.target.dataset.form)) return;
   event.preventDefault();
+  if (event.target.dataset.form === "user-order-filters") {
+    state.userOrderFilters = { status: document.querySelector("#user-order-status")?.value || "", service: document.querySelector("#user-order-service")?.value || "", query: document.querySelector("#user-order-query")?.value.trim() || "" };
+    state.pagination.orders = { page: 1 }; state.currentOrder = null; await refresh(); return;
+  }
   state.orderFilters = { status: document.querySelector("#admin-order-status")?.value || "", service: document.querySelector("#admin-order-service")?.value || "", query: document.querySelector("#admin-order-query")?.value.trim() || "" };
   state.pagination["admin-orders"] = { page: 1 };
   state.currentOrder = null;
   await refresh();
 });
+
+async function copyText(value) {
+  try {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(value); toast("已复制"); return; }
+    const input = document.createElement("textarea"); input.value = value; input.style.position = "fixed"; input.style.opacity = "0"; document.body.appendChild(input); input.select();
+    if (!document.execCommand("copy")) throw new Error("copy failed");
+    input.remove(); toast("已复制");
+  } catch (_) { toast("复制失败，请手动选择邮箱"); }
+}
 document.addEventListener("dragover", event => {
   if (event.target.closest(".mailbox-dropzone")) event.preventDefault();
 });

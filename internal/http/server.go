@@ -262,7 +262,11 @@ func (s *Server) createOrder(c *gin.Context) {
 
 func (s *Server) listUserOrders(c *gin.Context) {
 	page, pageSize := pageRequest(c)
+	filter := store.UserOrderFilter{Status: strings.TrimSpace(c.Query("status")), Service: strings.TrimSpace(c.Query("service")), Query: strings.TrimSpace(c.Query("query"))}
 	items, total := s.Store.ListOrdersPage(demoUser(c), page, pageSize)
+	if repository, ok := s.Store.(store.UserOrderFilterRepository); ok {
+		items, total = repository.ListUserOrdersPage(demoUser(c), filter, page, pageSize)
+	}
 	writePage(c, items, page, pageSize, total)
 }
 

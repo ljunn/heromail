@@ -36,6 +36,12 @@ type PostgresStore struct {
 	encryptionKey []byte
 }
 
+const defaultServicesSeedKey = "target-services-v1"
+
+func shouldSeedDefaultServices(serviceCount int64, markerExists bool) bool {
+	return !markerExists && serviceCount == 0
+}
+
 func NewPostgresStore(ctx context.Context, config PostgresConfig) (*PostgresStore, error) {
 	if config.DSN == "" || config.RedisAddress == "" {
 		return nil, errors.New("PostgreSQL 和 Redis 配置不能为空")
@@ -63,7 +69,7 @@ func NewPostgresStore(ctx context.Context, config PostgresConfig) (*PostgresStor
 }
 
 func (s *PostgresStore) migrate() error {
-	if err := s.db.AutoMigrate(&sqlUser{}, &sqlSession{}, &sqlAPIKey{}, &sqlService{}, &sqlMailboxPool{}, &sqlMailbox{}, &sqlMailboxService{}, &sqlOrder{}, &sqlWalletLedger{}, &sqlPaymentProvider{}, &sqlPaymentOrder{}, &sqlMailEvent{}, &sqlWebhookEndpoint{}, &sqlWebhookDelivery{}, &sqlAuditLog{}); err != nil {
+	if err := s.db.AutoMigrate(&sqlUser{}, &sqlSession{}, &sqlAPIKey{}, &sqlService{}, &sqlSeedState{}, &sqlMailboxPool{}, &sqlMailbox{}, &sqlMailboxService{}, &sqlOrder{}, &sqlWalletLedger{}, &sqlPaymentProvider{}, &sqlPaymentOrder{}, &sqlMailEvent{}, &sqlWebhookEndpoint{}, &sqlWebhookDelivery{}, &sqlAuditLog{}); err != nil {
 		return fmt.Errorf("执行数据库迁移失败：%w", err)
 	}
 	return nil
@@ -102,10 +108,8 @@ func (s *PostgresStore) seed(config PostgresConfig) error {
 		{ID: "svc-discord", Code: "discord", Name: "Discord", Description: "社区平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 30, TTLSeconds: 600, SenderDomains: []string{"discord.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
 		{ID: "svc-telegram", Code: "telegram", Name: "Telegram", Description: "通讯平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 25, TTLSeconds: 600, SenderDomains: []string{"telegram.org"}, SubjectKeywords: []string{"login code", "code"}, Regex: `\b(\d{5})\b`},
 	}
-	for _, service := range services {
-		if err := s.db.Where("id = ?", service.ID).FirstOrCreate(&service).Error; err != nil {
-			return err
-		}
+	if err := s.ensureDefaultServices(services); err != nil {
+		return err
 	}
 	if err := s.ensureDefaultMailboxPool(); err != nil {
 		return err
@@ -117,6 +121,32 @@ func (s *PostgresStore) seed(config PostgresConfig) error {
 		return s.seedDemoMailboxes(services)
 	}
 	return nil
+}
+
+func (s *PostgresStore) ensureDefaultServices(services []sqlService) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var marker sqlSeedState
+		err := tx.First(&marker, "key = ?", defaultServicesSeedKey).Error
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		var count int64
+		if err := tx.Model(&sqlService{}).Count(&count).Error; err != nil {
+			return err
+		}
+		// 空库才创建内置平台；已有平台的库只登记初始化完成，绝不恢复管理员已删除的记录。
+		if shouldSeedDefaultServices(count, false) {
+			for index := range services {
+				if err := tx.Create(&services[index]).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return tx.Create(&sqlSeedState{Key: defaultServicesSeedKey, CreatedAt: time.Now().UTC()}).Error
+	})
 }
 
 func (s *PostgresStore) ensureDefaultMailboxPool() error {
@@ -440,6 +470,34 @@ func (s *PostgresStore) ListOrdersPage(userID string, page, pageSize int) ([]dom
 	query.Count(&total)
 	var rows []sqlOrder
 	query.Order("created_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&rows)
+	items := make([]domain.Order, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, mapOrder(row))
+	}
+	return items, total
+}
+
+func (s *PostgresStore) ListUserOrdersPage(userID string, filter UserOrderFilter, page, pageSize int) ([]domain.Order, int64) {
+	page, pageSize = normalizePage(page, pageSize)
+	query := s.db.Model(&sqlOrder{}).Where("user_id = ?", userID)
+	if filter.Status != "" {
+		query = query.Where("status = ?", filter.Status)
+	}
+	if filter.Service != "" {
+		query = query.Where("(service_id = ? OR service_code = ?)", filter.Service, filter.Service)
+	}
+	if keyword := strings.TrimSpace(filter.Query); keyword != "" {
+		pattern := "%" + keyword + "%"
+		query = query.Where("id ILIKE ? OR service_name ILIKE ? OR mailbox_address ILIKE ?", pattern, pattern, pattern)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0
+	}
+	var rows []sqlOrder
+	if err := query.Order("created_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&rows).Error; err != nil {
+		return nil, 0
+	}
 	items := make([]domain.Order, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, mapOrder(row))
