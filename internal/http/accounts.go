@@ -202,13 +202,17 @@ func (s *Server) adminAdjustBalance(c *gin.Context) {
 	}
 	var request struct {
 		Amount      float64 `json:"amount" binding:"required"`
-		Description string  `json:"description" binding:"required"`
+		Description string  `json:"description"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil || request.Amount == 0 {
-		writeError(c, http.StatusBadRequest, "invalid_request", "调整金额和原因不能为空")
+		writeError(c, http.StatusBadRequest, "invalid_request", "调整金额不能为空")
 		return
 	}
-	user, err := repository.AdjustBalance(demoUser(c), c.Param("id"), request.Amount, request.Description, c.ClientIP())
+	description := strings.TrimSpace(request.Description)
+	if description == "" {
+		description = store.DefaultBalanceAdjustmentDescription
+	}
+	user, err := repository.AdjustBalance(demoUser(c), c.Param("id"), request.Amount, description, c.ClientIP())
 	if err != nil {
 		writeError(c, http.StatusBadRequest, "balance_adjust_failed", err.Error())
 		return

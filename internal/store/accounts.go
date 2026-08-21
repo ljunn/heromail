@@ -23,6 +23,8 @@ type AccountRepository interface {
 	WriteAudit(actorID, action, resourceType, resourceID, detail, ip string) error
 }
 
+const DefaultBalanceAdjustmentDescription = "管理员余额调整"
+
 var (
 	ErrInvalidCredentials = errors.New("邮箱或密码错误")
 	ErrEmailExists        = errors.New("邮箱已注册")

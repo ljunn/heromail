@@ -572,11 +572,15 @@ func TestAdminSaveServiceValidatesConfigPrecisely(t *testing.T) {
 type accountRepositoryStub struct {
 	store.Repository
 	store.AccountRepository
-	user            domain.User
-	changedUserID   string
-	currentPassword string
-	newPassword     string
-	auditAction     string
+	user             domain.User
+	changedUserID    string
+	currentPassword  string
+	newPassword      string
+	auditAction      string
+	adjustmentActor  string
+	adjustmentUser   string
+	adjustmentAmount float64
+	adjustmentNote   string
 }
 
 func (s *accountRepositoryStub) ResolveAccessToken(token string) (domain.User, bool) {
@@ -593,6 +597,37 @@ func (s *accountRepositoryStub) ChangePassword(userID, currentPassword, newPassw
 func (s *accountRepositoryStub) WriteAudit(_ string, action, _, _, _, _ string) error {
 	s.auditAction = action
 	return nil
+}
+
+func (s *accountRepositoryStub) AdjustBalance(actorID, userID string, amount float64, description, _ string) (domain.User, error) {
+	s.adjustmentActor = actorID
+	s.adjustmentUser = userID
+	s.adjustmentAmount = amount
+	s.adjustmentNote = description
+	return domain.User{ID: userID, Balance: amount}, nil
+}
+
+func TestAdminBalanceAdjustmentAllowsEmptyDescription(t *testing.T) {
+	repository := &accountRepositoryStub{
+		Repository: store.New(),
+		user:       domain.User{ID: "admin-001", Email: "admin@example.com", Role: "admin", Status: "active"},
+	}
+	server := NewServer(repository)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/users/user-001/balance", bytes.NewBufferString(`{"amount":10}`))
+	request.Header.Set("Authorization", "Bearer 有效会话")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("空说明余额调整返回 %d，响应：%s", response.Code, response.Body.String())
+	}
+	if repository.adjustmentActor != "admin-001" || repository.adjustmentUser != "user-001" || repository.adjustmentAmount != 10 {
+		t.Fatalf("余额调整参数不正确：%+v", repository)
+	}
+	if repository.adjustmentNote != store.DefaultBalanceAdjustmentDescription {
+		t.Fatalf("空说明没有使用默认审计文本：%q", repository.adjustmentNote)
+	}
 }
 
 func TestAdminCanChangePassword(t *testing.T) {

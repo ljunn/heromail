@@ -217,6 +217,10 @@ func (s *PostgresStore) ListWalletLedgersPage(userID string, page, pageSize int)
 }
 
 func (s *PostgresStore) AdjustBalance(actorID, userID string, amount float64, description, ip string) (domain.User, error) {
+	description = strings.TrimSpace(description)
+	if description == "" {
+		description = DefaultBalanceAdjustmentDescription
+	}
 	amountCents := cents(amount)
 	var result domain.User
 	err := s.db.Transaction(func(tx *gorm.DB) error {
