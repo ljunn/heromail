@@ -30,6 +30,7 @@ const state = {
   busyAction: "",
   pageError: "",
   orderError: "",
+  paymentError: "",
   loading: false
 };
 
@@ -238,7 +239,8 @@ function renderUsage() {
 }
 
 function renderBalance() {
-  return pageHead("余额与充值", "充值用于申请邮箱；支付订单和资金流水分别记录，方便核对。", `<button class="ghost-btn" data-action="view" data-view="usage">查看资金流水</button>`) + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>创建充值订单</h2><strong>${money(state.user.balance)}</strong></div><div class="card-body form-grid"><label>充值金额<input id="topup-amount" class="field" type="number" min="1" max="100000" step="0.01" value="50"></label><label>支付方式<select id="topup-method" class="field">${state.paymentMethods.map(method => `<option value="${esc(method)}">${method === "alipay" ? "支付宝" : esc(method)}</option>`).join("")}</select></label><button class="primary-btn" data-action="create-payment" ${state.paymentMethods.length ? "" : "disabled"}>前往支付</button>${state.paymentMethods.length ? "" : `<div class="notice warning">暂时没有可用支付方式，请联系管理员。</div>`}</div></div><div class="card balance-guide"><div class="card-head"><h2>余额怎么使用</h2></div><div class="card-body"><ol><li>选择目标平台并申请邮箱</li><li>系统预扣费用，收码成功后结算</li><li>超时未收到验证码自动退款</li></ol><button class="link-btn" data-action="view" data-view="apply">返回申请邮箱 →</button></div></div></div><div class="card"><div class="card-head"><h2>充值记录</h2></div><div class="table-wrap"><table><thead><tr><th>支付单</th><th>通道</th><th>金额</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${state.paymentOrders.map(order => `<tr><td>${esc(order.id)}</td><td>${esc(order.provider_name)}</td><td>${money(order.amount)}</td><td>${statusChip(order.status)}</td><td>${time(order.created_at)}</td><td>${order.status === "pending" && order.pay_url ? `<a class="link-btn" href="${esc(order.pay_url)}" target="_blank" rel="noopener">继续支付</a>` : "—"}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">暂无充值记录</td></tr>`}</tbody></table></div>${renderPager("payments")}</div>`;
+  const paymentBusy = state.busyAction === "payment";
+  return pageHead("余额与充值", "充值用于申请邮箱；支付订单和资金流水分别记录，方便核对。", `<button class="ghost-btn" data-action="view" data-view="usage">查看资金流水</button>`) + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>创建充值订单</h2><strong>${money(state.user.balance)}</strong></div><div class="card-body form-grid">${state.paymentError ? `<div class="inline-error" role="alert">${icon("activity")}<span>${esc(state.paymentError)}</span></div>` : ""}<label>充值金额<input id="topup-amount" class="field" type="number" min="1" max="100000" step="0.01" value="50" ${paymentBusy ? "disabled" : ""}></label><label>支付方式<select id="topup-method" class="field" ${paymentBusy ? "disabled" : ""}>${state.paymentMethods.map(method => `<option value="${esc(method)}">${method === "alipay" ? "支付宝" : esc(method)}</option>`).join("")}</select></label><button class="primary-btn" data-action="create-payment" ${state.paymentMethods.length && !paymentBusy ? "" : "disabled"}>${paymentBusy ? "正在创建支付单…" : "前往支付"}</button>${state.paymentMethods.length ? "" : `<div class="notice warning">暂时没有可用支付方式，请联系管理员。</div>`}</div></div><div class="card balance-guide"><div class="card-head"><h2>余额怎么使用</h2></div><div class="card-body"><ol><li>选择目标平台并申请邮箱</li><li>系统预扣费用，收码成功后结算</li><li>超时未收到验证码自动退款</li></ol><button class="link-btn" data-action="view" data-view="apply">返回申请邮箱 →</button></div></div></div><div class="card"><div class="card-head"><h2>充值记录</h2></div><div class="table-wrap"><table><thead><tr><th>支付单</th><th>通道</th><th>金额</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${state.paymentOrders.map(order => `<tr><td>${esc(order.id)}</td><td>${esc(order.provider_name)}</td><td>${money(order.amount)}</td><td>${statusChip(order.status)}</td><td>${time(order.created_at)}</td><td>${order.status === "pending" && order.pay_url ? `<a class="link-btn" href="${esc(order.pay_url)}" target="_blank" rel="noopener">继续支付</a>` : "—"}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">暂无充值记录</td></tr>`}</tbody></table></div>${renderPager("payments")}</div>`;
 }
 
 function renderAccountSettings(title, subtitle) {
@@ -512,7 +514,25 @@ async function changePassword() {
   await refresh(); toast("密码已修改，旧会话已全部撤销");
 }
 async function logout() { try { await api("/api/v1/auth/logout", { method: "POST" }); } finally { state.token = ""; state.user = null; localStorage.removeItem("heromail_token"); redirectToLogin(); } }
-async function createPayment() { const amount = Number(document.querySelector("#topup-amount")?.value); const method = document.querySelector("#topup-method")?.value; const result = await api("/api/v1/payment/orders", { method: "POST", body: JSON.stringify({ amount, method, mobile: /Android|iPhone|iPad/i.test(navigator.userAgent) }) }); location.href = result.data.pay_url; }
+async function createPayment() {
+  if (state.busyAction === "payment") return;
+  const amount = Number(document.querySelector("#topup-amount")?.value);
+  const method = document.querySelector("#topup-method")?.value;
+  if (!Number.isFinite(amount) || amount < 1 || amount > 100000) { state.paymentError = "充值金额必须在 1 到 100000 元之间"; await render(); return; }
+  state.paymentError = "";
+  state.busyAction = "payment";
+  await render();
+  try {
+    const result = await api("/api/v1/payment/orders", { method: "POST", body: JSON.stringify({ amount, method, mobile: /Android|iPhone|iPad/i.test(navigator.userAgent) }) });
+    if (!result.data?.pay_url) throw new Error("支付链接生成失败，请联系管理员检查支付通道配置");
+    location.href = result.data.pay_url;
+  } catch (error) {
+    state.paymentError = error.message;
+    state.busyAction = "";
+    toast(error.message);
+    await render();
+  }
+}
 async function createWebhook() { const url = document.querySelector("#webhook-url")?.value.trim(); const result = await api("/api/v1/webhooks", { method: "POST", body: JSON.stringify({ url }) }); showSecret("Webhook 签名密钥", result.data.secret); await refresh(); }
 function showBalanceEditor(userID) {
   const user = state.users.find(item => item.id === userID);

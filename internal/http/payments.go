@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ljunn/heromail/internal/domain"
+	"github.com/ljunn/heromail/internal/payment"
 	"github.com/ljunn/heromail/internal/store"
 )
 
@@ -169,18 +170,12 @@ func (s *Server) adminSavePaymentProvider(c *gin.Context) {
 			}
 		}
 	}
-	if request.Type == "easypay" {
-		if strings.TrimSpace(request.Config["api_base"]) == "" || strings.TrimSpace(request.Config["pid"]) == "" || strings.TrimSpace(request.Config["pkey"]) == "" {
-			writeError(c, http.StatusBadRequest, "invalid_request", "易支付必须填写 API 地址、商户 ID 和商户密钥")
-			return
-		}
-	}
 	if request.Type == "alipay" {
 		request.Config["gateway"] = "https://openapi.alipay.com/gateway.do"
-		if strings.TrimSpace(request.Config["app_id"]) == "" || strings.TrimSpace(request.Config["private_key"]) == "" || strings.TrimSpace(request.Config["public_key"]) == "" {
-			writeError(c, http.StatusBadRequest, "invalid_request", "支付宝官方必须填写 AppID、应用私钥和支付宝公钥")
-			return
-		}
+	}
+	if err := payment.ValidateProviderConfig(request.Type, request.Config); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
 	}
 	provider, err := repository.SavePaymentProvider(demoUser(c), domain.PaymentProvider{ID: request.ID, Name: request.Name, Type: request.Type, Methods: request.Methods, Enabled: request.Enabled, Priority: request.Priority}, request.Config, c.ClientIP())
 	if err != nil {

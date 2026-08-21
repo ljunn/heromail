@@ -3,7 +3,12 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"mime/multipart"
 	"net/http"
@@ -625,6 +630,27 @@ type paymentRepositoryStub struct {
 	deleteErr   error
 }
 
+func validAlipayTestConfig(t *testing.T) map[string]string {
+	t.Helper()
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("生成测试支付宝私钥失败：%v", err)
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		t.Fatalf("序列化测试支付宝私钥失败：%v", err)
+	}
+	publicDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatalf("序列化测试支付宝公钥失败：%v", err)
+	}
+	return map[string]string{
+		"app_id":      "2026000000000000",
+		"private_key": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER})),
+		"public_key":  base64.StdEncoding.EncodeToString(publicDER),
+	}
+}
+
 func (s *paymentRepositoryStub) GetPaymentProviderSecret(string) (store.PaymentProviderSecret, error) {
 	return s.secret, nil
 }
@@ -640,14 +666,12 @@ func (s *paymentRepositoryStub) DeletePaymentProvider(_, _, _ string) error {
 }
 
 func TestOfficialAlipayUsesPresetGatewayAndKeepsSecrets(t *testing.T) {
+	config := validAlipayTestConfig(t)
 	repository := &paymentRepositoryStub{
 		Repository: store.New(),
 		secret: store.PaymentProviderSecret{
 			Provider: domain.PaymentProvider{ID: "provider-001", Type: "alipay"},
-			Config: map[string]string{
-				"private_key": "已有应用私钥",
-				"public_key":  "已有支付宝公钥",
-			},
+			Config:   config,
 		},
 	}
 	server := NewServer(repository)
@@ -664,7 +688,7 @@ func TestOfficialAlipayUsesPresetGatewayAndKeepsSecrets(t *testing.T) {
 	if repository.savedConfig["gateway"] != "https://openapi.alipay.com/gateway.do" {
 		t.Fatalf("支付宝网关没有固定为官方地址：%s", repository.savedConfig["gateway"])
 	}
-	if repository.savedConfig["private_key"] != "已有应用私钥" || repository.savedConfig["public_key"] != "已有支付宝公钥" {
+	if repository.savedConfig["private_key"] != config["private_key"] || repository.savedConfig["public_key"] != config["public_key"] {
 		t.Fatalf("编辑时没有保留已有 RSA 密钥：%+v", repository.savedConfig)
 	}
 }

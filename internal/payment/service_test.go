@@ -99,3 +99,30 @@ func TestParseAlipayPrivateKey(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateAlipayProviderConfigAcceptsBarePublicKey(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("生成测试私钥失败：%v", err)
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		t.Fatalf("序列化测试私钥失败：%v", err)
+	}
+	publicDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatalf("序列化测试公钥失败：%v", err)
+	}
+	config := map[string]string{
+		"app_id":      "2026000000000000",
+		"private_key": base64.StdEncoding.EncodeToString(privateDER),
+		"public_key":  base64.StdEncoding.EncodeToString(publicDER),
+	}
+	if err := ValidateProviderConfig("alipay", config); err != nil {
+		t.Fatalf("裸 Base64 支付宝密钥不应被拒绝：%v", err)
+	}
+	config["private_key"] += "应用公钥"
+	if err := ValidateProviderConfig("alipay", config); err == nil {
+		t.Fatal("混入非 Base64 文本的私钥应被拒绝")
+	}
+}
