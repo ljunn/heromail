@@ -394,3 +394,28 @@ func (s *PostgresStore) MarkMailEvent(mailboxID, messageID, sender, subject stri
 	}
 	return true, nil
 }
+
+func (s *PostgresStore) MarkMailboxServiceConsumed(mailboxID, serviceID string, changedAt time.Time) error {
+	if changedAt.IsZero() {
+		changedAt = time.Now().UTC()
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&sqlMailboxService{}).
+			Where("mailbox_id = ? AND service_id = ? AND state = ?", mailboxID, serviceID, domain.ServiceAvailable).
+			Updates(map[string]any{"state": string(domain.ServiceConsumed), "changed_at": changedAt})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		return tx.Create(&sqlAuditLog{
+			ID:           uuid.NewString(),
+			ActorID:      "mail-worker",
+			Action:       "mailbox.service.consume",
+			ResourceType: "mailbox_service",
+			ResourceID:   mailboxID + ":" + serviceID,
+			Detail:       "历史收件匹配目标平台，标记邮箱已注册",
+		}).Error
+	})
+}

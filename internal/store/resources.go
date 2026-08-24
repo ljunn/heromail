@@ -37,6 +37,12 @@ type ResourceRepository interface {
 	MarkMailEvent(mailboxID, messageID, sender, subject string, receivedAt time.Time) (bool, error)
 }
 
+// MailboxServiceStateRepository 用于收件扫描将历史命中平台写入邮箱×平台状态。
+// 单独定义可选接口，避免影响只实现邮箱资源的测试适配器。
+type MailboxServiceStateRepository interface {
+	MarkMailboxServiceConsumed(mailboxID, serviceID string, changedAt time.Time) error
+}
+
 type MailboxVerificationQueue interface {
 	EnqueueMailboxVerification(ctx context.Context, mailboxID string) error
 	DequeueMailboxVerification(ctx context.Context, timeout time.Duration) (string, error)

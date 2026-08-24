@@ -3,6 +3,7 @@ package store
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/ljunn/heromail/internal/domain"
 )
@@ -119,6 +120,25 @@ func TestDefaultServiceSeedDoesNotRestoreDeletedConfiguration(t *testing.T) {
 	}
 	if shouldSeedDefaultServices(3, false) {
 		t.Fatal("已有平台的数据库不得补种缺失平台")
+	}
+}
+
+func TestMarkMailboxServiceConsumedUpdatesRegisteredPlatforms(t *testing.T) {
+	s := New()
+	mailbox, ok := findMailbox(s.Mailboxes(), "hero_01@outlook.com")
+	if !ok {
+		t.Fatal("未找到测试邮箱")
+	}
+	changedAt := time.Now().UTC().Add(-time.Minute)
+	if err := s.MarkMailboxServiceConsumed(mailbox.ID, "svc-github", changedAt); err != nil {
+		t.Fatalf("标记平台注册状态失败：%v", err)
+	}
+	updated, ok := findMailbox(s.Mailboxes(), mailbox.Address)
+	if !ok || len(updated.RegisteredPlatforms) != 1 || updated.RegisteredPlatforms[0] != "github" {
+		t.Fatalf("已注册平台 = %#v，期望 [github]", updated.RegisteredPlatforms)
+	}
+	if err := s.MarkMailboxServiceConsumed(mailbox.ID, "svc-github", changedAt); err != nil {
+		t.Fatalf("重复标记平台注册状态失败：%v", err)
 	}
 }
 

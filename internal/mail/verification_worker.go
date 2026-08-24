@@ -32,7 +32,9 @@ func (w *VerificationWorker) Run(ctx context.Context) {
 		if err != nil || mailboxID == "" {
 			continue
 		}
-		_, _ = w.verifier.Verify(ctx, "system", mailboxID, "")
+		if _, err := w.verifier.Verify(ctx, "system", mailboxID, ""); err == nil {
+			_, _ = w.verifier.ScanMailboxHistory(ctx, "system", mailboxID, "")
+		}
 	}
 }
 

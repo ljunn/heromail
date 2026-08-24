@@ -23,6 +23,11 @@ type AccountRepository interface {
 	WriteAudit(actorID, action, resourceType, resourceID, detail, ip string) error
 }
 
+// AuditRepository 允许不需要完整账户能力的模块记录管理操作。
+type AuditRepository interface {
+	WriteAudit(actorID, action, resourceType, resourceID, detail, ip string) error
+}
+
 const DefaultBalanceAdjustmentDescription = "管理员余额调整"
 
 var (

@@ -273,6 +273,21 @@ function renderAdminOverview() {
 }
 
 async function verifyMailbox(id) { await api(`/api/v1/admin/mailboxes/${id}/verify`, { method: "POST" }); await refresh(); toast("邮箱连接验证成功"); }
+async function showMailboxMessages(id, address, page = 1) {
+  document.querySelector("#secret-modal")?.remove();
+  document.body.insertAdjacentHTML("beforeend", `<div id="secret-modal" class="modal-backdrop"><div class="modal mailbox-messages-modal"><div class="card-head"><div><h2>收件箱</h2><div class="modal-subtitle">${esc(address || "邮箱")} · 只读查看</div></div><button class="icon-btn" data-action="close-modal" title="关闭">×</button></div><div class="card-body mailbox-messages-body"><div class="portal-loading">正在读取收件箱…</div></div></div></div>`);
+  try {
+    const result = await api(`/api/v1/admin/mailboxes/${encodeURIComponent(id)}/messages?page=${page}&page_size=50`);
+    const messages = result.data || [];
+    const pagination = result.pagination || {};
+    const body = document.querySelector(".mailbox-messages-body");
+    if (!body) return;
+    body.innerHTML = messages.length ? `<div class="mailbox-messages-meta">共 ${pagination.total || messages.length} 封，最多读取最近 1000 封</div><div class="mailbox-message-list">${messages.map(message => `<article class="mailbox-message"><div class="mailbox-message-head"><div><strong>${esc(message.subject || "无主题")}</strong><span>${esc(message.sender || "未知发件人")}</span></div><time>${time(message.received_at)}</time></div><pre>${esc(message.body || message.body_preview || "（无正文）")}</pre></article>`).join("")}</div>${pagination.total_pages > 1 ? `<div class="mailbox-message-pager"><button class="ghost-btn" data-action="mailbox-message-page" data-id="${esc(id)}" data-address="${esc(address || "邮箱")}" data-page="${pagination.page - 1}" ${pagination.page <= 1 ? "disabled" : ""}>上一页</button><span>第 ${pagination.page} / ${pagination.total_pages} 页</span><button class="ghost-btn" data-action="mailbox-message-page" data-id="${esc(id)}" data-address="${esc(address || "邮箱")}" data-page="${pagination.page + 1}" ${pagination.page >= pagination.total_pages ? "disabled" : ""}>下一页</button></div>` : ""}` : `<div class="empty">收件箱暂无邮件</div>`;
+  } catch (error) {
+    const body = document.querySelector(".mailbox-messages-body");
+    if (body) body.innerHTML = `<div class="inline-error" role="alert">${icon("activity")}<span>${esc(error.message)}</span></div>`;
+  }
+}
 function renderAdminServices() {
   return pageHead("目标平台", "在一处配置可用邮箱、邮件匹配、价格和任务有效期。", `<button class="primary-btn" data-action="edit-service">新建目标平台</button>`) + `<div class="card"><div class="table-wrap"><table><thead><tr><th>平台</th><th>邮箱类型</th><th>邮件匹配</th><th>库存</th><th>单价 / 有效期</th><th>状态</th><th>操作</th></tr></thead><tbody>${state.services.map(service => `<tr><td><strong>${esc(service.name)}</strong><div class="muted"><code>${esc(service.code)}</code> · ${esc(service.description)}</div></td><td>${esc(providerList(service.allowed_providers))}</td><td><div>${esc((service.sender_domains || []).join(", "))}</div><div class="muted">${esc((service.subject_keywords || []).join(", ") || "不限制主题")}</div></td><td><strong>${service.available_mailboxes ?? 0}</strong><div class="muted">租用 ${service.leased_mailboxes ?? 0} · 已使用 ${service.consumed_mailboxes ?? 0}</div></td><td>${money(service.price)}<div class="muted">${Math.round(service.ttl_seconds / 60)} 分钟</div></td><td>${service.enabled ? `<span class="chip green">启用</span>` : `<span class="chip red">停用</span>`}</td><td><div class="table-actions"><button class="link-btn" data-action="edit-service" data-id="${esc(service.id)}">编辑</button><button class="link-btn danger-text" data-action="delete-service" data-id="${esc(service.id)}">删除</button></div></td></tr>`).join("") || `<tr><td colspan="7" class="empty">暂无目标平台</td></tr>`}</tbody></table></div>${renderPager("admin-services")}</div>`;
 }
@@ -342,7 +357,7 @@ async function importMailboxes() {
 
 function renderAdminMailboxes() {
   const total = state.pagination.mailboxes?.total || 0;
-  const rows = state.mailboxes.map(mailbox => `<tr><td>${esc(mailbox.address)}</td><td>${esc(providerLabel(mailbox.provider))}</td><td>${esc(connectionLabel(mailbox.connection_method))}</td><td>${statusChip(mailbox.verification_status || mailbox.state)}${mailbox.verification_error ? `<div class="muted">${esc(mailbox.verification_error)}</div>` : ""}</td><td>${esc((mailbox.registered_platforms || []).join(", ") || "—")}</td><td>${mailbox.health_score}/100</td><td>${time(mailbox.last_verified_at)}</td><td><div class="table-actions"><button class="link-btn" data-action="verify-mailbox" data-id="${esc(mailbox.id)}">验证</button><button class="link-btn danger-text" data-action="delete-mailbox" data-id="${esc(mailbox.id)}">删除</button></div></td></tr>`).join("");
+  const rows = state.mailboxes.map(mailbox => `<tr><td>${esc(mailbox.address)}</td><td>${esc(providerLabel(mailbox.provider))}</td><td>${esc(connectionLabel(mailbox.connection_method))}</td><td>${statusChip(mailbox.verification_status || mailbox.state)}${mailbox.verification_error ? `<div class="muted">${esc(mailbox.verification_error)}</div>` : ""}</td><td>${esc((mailbox.registered_platforms || []).join(", ") || "—")}</td><td>${mailbox.health_score}/100</td><td>${time(mailbox.last_verified_at)}</td><td><div class="table-actions"><button class="link-btn" data-action="mailbox-messages" data-id="${esc(mailbox.id)}" data-address="${esc(mailbox.address)}">收件</button><button class="link-btn" data-action="verify-mailbox" data-id="${esc(mailbox.id)}">验证</button><button class="link-btn danger-text" data-action="delete-mailbox" data-id="${esc(mailbox.id)}">删除</button></div></td></tr>`).join("");
   const outlookCount = state.overview?.outlook_mailboxes ?? 0;
   const outlookDECount = state.overview?.outlook_de_mailboxes ?? 0;
   const hotmailCount = state.overview?.hotmail_mailboxes ?? 0;
@@ -790,6 +805,8 @@ document.addEventListener("click", async event => {
   if (action === "delete-webhook") { await api(`/api/v1/webhooks/${target.dataset.id}`, { method: "DELETE" }); await refresh(); return; }
   if (action === "retry-webhook") { await api(`/api/v1/webhook-deliveries/${target.dataset.id}/retry`, { method: "POST" }); await refresh(); return; }
   if (action === "import-mailboxes") { await importMailboxes(); return; }
+  if (action === "mailbox-messages") { await showMailboxMessages(target.dataset.id, target.dataset.address); return; }
+  if (action === "mailbox-message-page") { await showMailboxMessages(target.dataset.id, target.dataset.address, Number(target.dataset.page)); return; }
   if (action === "delete-mailbox") { await deleteMailbox(target.dataset.id); return; }
   if (action === "verify-mailbox") { await verifyMailbox(target.dataset.id); return; }
   if (action === "edit-service") { showServiceEditor(target.dataset.id || ""); return; }

@@ -56,6 +56,38 @@ type earlyMailRepository struct {
 	marked  bool
 }
 
+type historyMatchingRepository struct {
+	services []domain.Service
+	marked   []string
+}
+
+func (*historyMatchingRepository) ListMailboxCredentialsPage(string, int) ([]store.MailboxCredential, error) {
+	return nil, nil
+}
+func (*historyMatchingRepository) UpdateMailboxCredential(string, string, map[string]string, time.Time, string) error {
+	return nil
+}
+func (*historyMatchingRepository) UpdateMailboxVerification(string, string, string, string, string, time.Time, string) error {
+	return nil
+}
+func (s *historyMatchingRepository) WaitingOrdersForMailbox(string) []domain.Order { return nil }
+func (s *historyMatchingRepository) ServiceByID(id string) (domain.Service, bool) {
+	for _, service := range s.services {
+		if service.ID == id {
+			return service, true
+		}
+	}
+	return domain.Service{}, false
+}
+func (s *historyMatchingRepository) ListServices() []domain.Service { return s.services }
+func (s *historyMatchingRepository) MarkMailboxServiceConsumed(_, serviceID string, _ time.Time) error {
+	s.marked = append(s.marked, serviceID)
+	return nil
+}
+func (*historyMatchingRepository) MarkMailEvent(string, string, string, string, time.Time) (bool, error) {
+	return true, nil
+}
+
 func (*earlyMailRepository) ListMailboxCredentialsPage(string, int) ([]store.MailboxCredential, error) {
 	return nil, nil
 }
@@ -143,6 +175,28 @@ func TestWorkerReceivesMailSentBeforeUserConfirmation(t *testing.T) {
 	}
 }
 
+func TestWorkerMatchesHistoryForAllServicesWithoutActiveOrder(t *testing.T) {
+	now := time.Now().UTC()
+	repository := &historyMatchingRepository{services: []domain.Service{
+		{ID: "service-github", Code: "github", SenderDomains: []string{"github.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
+		{ID: "service-openai", Code: "openai", SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
+	}}
+	worker := NewWorker(repository, codeReceiverStub{}, NewMicrosoftClient(MicrosoftConfig{}), time.Minute)
+	worker.imap = &messageConnectorStub{messages: []Message{
+		{ID: "github-history", Sender: "noreply@github.com", Subject: "Verification code", BodyPreview: "Your code is 628419", ReceivedAt: now.Add(-2 * time.Minute)},
+		{ID: "openai-history", Sender: "noreply@openai.com", Subject: "Verification code", BodyPreview: "Your code is 314159", ReceivedAt: now.Add(-time.Minute)},
+	}}
+
+	worker.pollMailbox(context.Background(), store.MailboxCredential{
+		Mailbox: domain.Mailbox{ID: "mailbox-history", Address: "user@outlook.com", ConnectionMethod: domain.MailboxConnectionIMAP},
+		Config:  map[string]string{"password": "test-only"},
+	})
+
+	if len(repository.marked) != 2 || repository.marked[0] != "service-github" || repository.marked[1] != "service-openai" {
+		t.Fatalf("历史邮件未标记所有命中的平台：%v", repository.marked)
+	}
+}
+
 func TestWorkerIgnoresMailBeforeMailboxAssignment(t *testing.T) {
 	now := time.Now().UTC()
 	repository := &earlyMailRepository{
@@ -202,6 +256,7 @@ func TestMatchCodeRequiresAllRules(t *testing.T) {
 		matched bool
 	}{
 		{name: "正常邮件", message: Message{Sender: "noreply@github.com", Subject: "Verification code", BodyPreview: "Your code is 628419"}, code: "628419", matched: true},
+		{name: "正文验证码", message: Message{Sender: "noreply@github.com", Subject: "Verification code", Body: "Your code is 314159"}, code: "314159", matched: true},
 		{name: "子域发件人", message: Message{Sender: "noreply@mail.github.com", Subject: "验证码", BodyPreview: "123456"}, code: "123456", matched: true},
 		{name: "伪造域名", message: Message{Sender: "noreply@github.com.example.org", Subject: "Verification code", BodyPreview: "123456"}, matched: false},
 		{name: "主题不匹配", message: Message{Sender: "noreply@github.com", Subject: "Welcome", BodyPreview: "123456"}, matched: false},

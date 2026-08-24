@@ -34,11 +34,12 @@ type Profile struct {
 }
 
 type Message struct {
-	ID          string
-	Sender      string
-	Subject     string
-	BodyPreview string
-	ReceivedAt  time.Time
+	ID          string    `json:"id"`
+	Sender      string    `json:"sender"`
+	Subject     string    `json:"subject"`
+	BodyPreview string    `json:"body_preview"`
+	Body        string    `json:"body,omitempty"`
+	ReceivedAt  time.Time `json:"received_at"`
 }
 
 type CodeReceiver interface {
@@ -169,24 +170,55 @@ func (c *MicrosoftClient) Profile(ctx context.Context, accessToken string) (Prof
 }
 
 func (c *MicrosoftClient) Messages(ctx context.Context, accessToken string) ([]Message, error) {
-	endpoint := c.config.GraphBaseURL + "/me/mailFolders/inbox/messages?$top=25&$select=id,subject,from,receivedDateTime,bodyPreview&$orderby=receivedDateTime%20desc"
+	return c.messages(ctx, accessToken, c.config.GraphBaseURL+"/me/mailFolders/inbox/messages?$top=25&$select=id,subject,from,receivedDateTime,bodyPreview&$orderby=receivedDateTime%20desc")
+}
+
+// AllMessages 用于管理员主动查看邮箱收件箱，沿 Graph 的 nextLink 读取全部可见邮件。
+// 单个邮箱最多读取 1000 封，避免异常大的收件箱占满服务内存。
+func (c *MicrosoftClient) AllMessages(ctx context.Context, accessToken string) ([]Message, error) {
+	endpoint := c.config.GraphBaseURL + "/me/mailFolders/inbox/messages?$top=100&$select=id,subject,from,receivedDateTime,bodyPreview,body&$orderby=receivedDateTime%20desc"
+	messages := make([]Message, 0)
+	for len(messages) < 1000 && endpoint != "" {
+		page, next, err := c.messagesPage(ctx, accessToken, endpoint)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, page...)
+		endpoint = next
+	}
+	if len(messages) > 1000 {
+		messages = messages[:1000]
+	}
+	return messages, nil
+}
+
+func (c *MicrosoftClient) messages(ctx context.Context, accessToken, endpoint string) ([]Message, error) {
+	messages, _, err := c.messagesPage(ctx, accessToken, endpoint)
+	return messages, err
+}
+
+func (c *MicrosoftClient) messagesPage(ctx context.Context, accessToken, endpoint string) ([]Message, string, error) {
 	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	response, err := c.http.Do(request)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Microsoft Graph 邮件接口返回 %d", response.StatusCode)
+		return nil, "", fmt.Errorf("Microsoft Graph 邮件接口返回 %d", response.StatusCode)
 	}
 	var payload struct {
-		Value []struct {
+		NextLink string `json:"@odata.nextLink"`
+		Value    []struct {
 			ID          string `json:"id"`
 			Subject     string `json:"subject"`
 			BodyPreview string `json:"bodyPreview"`
-			Received    string `json:"receivedDateTime"`
-			From        struct {
+			Body        struct {
+				Content string `json:"content"`
+			} `json:"body"`
+			Received string `json:"receivedDateTime"`
+			From     struct {
 				EmailAddress struct {
 					Address string `json:"address"`
 				} `json:"emailAddress"`
@@ -194,14 +226,14 @@ func (c *MicrosoftClient) Messages(ctx context.Context, accessToken string) ([]M
 		} `json:"value"`
 	}
 	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&payload); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	messages := make([]Message, 0, len(payload.Value))
 	for _, item := range payload.Value {
 		receivedAt, _ := time.Parse(time.RFC3339, item.Received)
-		messages = append(messages, Message{ID: item.ID, Sender: strings.ToLower(item.From.EmailAddress.Address), Subject: item.Subject, BodyPreview: item.BodyPreview, ReceivedAt: receivedAt})
+		messages = append(messages, Message{ID: item.ID, Sender: strings.ToLower(item.From.EmailAddress.Address), Subject: item.Subject, BodyPreview: item.BodyPreview, Body: item.Body.Content, ReceivedAt: receivedAt})
 	}
-	return messages, nil
+	return messages, payload.NextLink, nil
 }
 
 type Worker struct {
@@ -219,6 +251,10 @@ type workerRepository interface {
 	WaitingOrdersForMailbox(mailboxID string) []domain.Order
 	ServiceByID(serviceID string) (domain.Service, bool)
 	MarkMailEvent(mailboxID, messageID, sender, subject string, receivedAt time.Time) (bool, error)
+}
+
+type mailboxServiceCatalog interface {
+	ListServices() []domain.Service
 }
 
 func NewWorker(repository workerRepository, receiver CodeReceiver, client *MicrosoftClient, interval time.Duration) *Worker {
@@ -262,7 +298,11 @@ func (w *Worker) poll(ctx context.Context) {
 
 func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredential) {
 	orders := w.repository.WaitingOrdersForMailbox(mailbox.Mailbox.ID)
-	if len(orders) == 0 {
+	var services []domain.Service
+	if catalog, ok := w.repository.(mailboxServiceCatalog); ok {
+		services = catalog.ListServices()
+	}
+	if len(orders) == 0 && len(services) == 0 {
 		return
 	}
 	credential := mailbox.Config
@@ -309,12 +349,20 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 			}
 			messageOrders = append(messageOrders, order)
 		}
-		if len(messageOrders) == 0 {
+		if len(messageOrders) == 0 && len(services) == 0 {
 			continue
 		}
 		fresh, markErr := w.repository.MarkMailEvent(mailbox.Mailbox.ID, message.ID, message.Sender, message.Subject, message.ReceivedAt)
 		if markErr != nil || !fresh {
 			continue
+		}
+		for _, service := range services {
+			if _, matched := matchCode(service, message); !matched {
+				continue
+			}
+			if writer, ok := w.repository.(store.MailboxServiceStateRepository); ok {
+				_ = writer.MarkMailboxServiceConsumed(mailbox.Mailbox.ID, service.ID, message.ReceivedAt)
+			}
 		}
 		for _, order := range messageOrders {
 			service, ok := w.repository.ServiceByID(order.ServiceID)
@@ -359,7 +407,11 @@ func matchCode(service domain.Service, message Message) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	matches := pattern.FindStringSubmatch(message.Subject + "\n" + message.BodyPreview)
+	body := message.BodyPreview
+	if message.Body != "" && message.Body != message.BodyPreview {
+		body += "\n" + message.Body
+	}
+	matches := pattern.FindStringSubmatch(message.Subject + "\n" + body)
 	if len(matches) > 1 {
 		return matches[1], true
 	}

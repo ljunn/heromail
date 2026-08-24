@@ -152,6 +152,7 @@ func (s *Server) routes() {
 	admin.POST("/mailboxes/import", s.adminImportMailboxes)
 	admin.DELETE("/mailboxes/:id", s.adminDeleteMailbox)
 	admin.POST("/mailboxes/:id/verify", s.adminVerifyMailbox)
+	admin.GET("/mailboxes/:id/messages", s.adminMailboxMessages)
 	admin.GET("/mailbox-pools", s.adminMailboxPools)
 	admin.POST("/mailboxes/oauth/microsoft", s.microsoftOAuthStart)
 	admin.GET("/services", s.adminServices)

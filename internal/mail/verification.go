@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
@@ -27,6 +28,10 @@ type GraphConnector interface {
 	Messages(ctx context.Context, accessToken string) ([]Message, error)
 }
 
+type graphAllMessageConnector interface {
+	AllMessages(ctx context.Context, accessToken string) ([]Message, error)
+}
+
 type IMAPConnector interface {
 	Verify(ctx context.Context, address string, credential map[string]string) error
 }
@@ -34,6 +39,15 @@ type IMAPConnector interface {
 type IMAPMessageConnector interface {
 	IMAPConnector
 	Messages(ctx context.Context, address string, credential map[string]string) ([]Message, error)
+}
+
+type imapAllMessageConnector interface {
+	AllMessages(ctx context.Context, address string, credential map[string]string) ([]Message, error)
+}
+
+type mailboxHistoryRepository interface {
+	ListServices() []domain.Service
+	store.MailboxServiceStateRepository
 }
 
 type MailboxVerificationResult struct {
@@ -127,6 +141,94 @@ func (v *MailboxVerifier) Verify(ctx context.Context, actorID, mailboxID, ip str
 		return MailboxVerificationResult{}, updateErr
 	}
 	return MailboxVerificationResult{Method: domain.MailboxConnectionAuto, Status: domain.MailboxVerificationFailed, VerifiedAt: now}, errors.New(message)
+}
+
+// ReadMessages 读取管理员请求的收件箱内容，始终优先 Graph，失败后回退 IMAP。
+// 凭证只在本次请求的内存中使用，正文也不会写入审计日志。
+func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, ip string) ([]Message, error) {
+	credential, err := v.repository.GetMailboxCredential(mailboxID)
+	if err != nil {
+		return nil, err
+	}
+	config := cloneCredential(credential.Config)
+	graphErr := errors.New("缺少 Graph OAuth 凭证")
+	if v.graph != nil && (config["access_token"] != "" || config["refresh_token"] != "") {
+		accessToken := config["access_token"]
+		validUntil, _ := time.Parse(time.RFC3339, config["expires_at"])
+		if accessToken == "" || (!validUntil.IsZero() && !validUntil.After(time.Now().UTC())) {
+			refreshed, newValidUntil, refreshErr := v.graph.RefreshCredential(ctx, config)
+			if refreshErr != nil {
+				graphErr = refreshErr
+			} else {
+				config = mergeCredential(config, refreshed)
+				accessToken = config["access_token"]
+				graphErr = v.repository.UpdateMailboxCredential(actorID, mailboxID, config, newValidUntil, ip)
+			}
+		}
+		if graphErr == nil || (graphErr.Error() == "缺少 Graph OAuth 凭证" && accessToken != "") {
+			if accessToken != "" {
+				if reader, ok := v.graph.(graphAllMessageConnector); ok {
+					messages, readErr := reader.AllMessages(ctx, accessToken)
+					if readErr == nil {
+						return messages, nil
+					}
+					graphErr = readErr
+				} else {
+					messages, readErr := v.graph.Messages(ctx, accessToken)
+					if readErr == nil {
+						return messages, nil
+					}
+					graphErr = readErr
+				}
+			}
+		}
+	}
+	if v.imap != nil && (config["access_token"] != "" || config["password"] != "") {
+		imapContext, cancel := context.WithTimeout(ctx, 45*time.Second)
+		defer cancel()
+		if reader, ok := v.imap.(imapAllMessageConnector); ok {
+			if messages, readErr := reader.AllMessages(imapContext, credential.Mailbox.Address, config); readErr == nil {
+				return messages, nil
+			} else {
+				return nil, fmt.Errorf("Graph：%v；IMAP：%v", graphErr, readErr)
+			}
+		}
+		if reader, ok := v.imap.(IMAPMessageConnector); ok {
+			if messages, readErr := reader.Messages(imapContext, credential.Mailbox.Address, config); readErr == nil {
+				return messages, nil
+			} else {
+				return nil, fmt.Errorf("Graph：%v；IMAP：%v", graphErr, readErr)
+			}
+		}
+	}
+	return nil, graphErr
+}
+
+// ScanMailboxHistory 在邮箱连接验证成功后检查历史邮件，写入邮箱×平台的已注册状态。
+// 不写入 mail_events，避免历史邮件被标记后阻断后续活跃订单收码。
+func (v *MailboxVerifier) ScanMailboxHistory(ctx context.Context, actorID, mailboxID, ip string) (int, error) {
+	repository, ok := v.repository.(mailboxHistoryRepository)
+	if !ok {
+		return 0, nil
+	}
+	messages, err := v.ReadMessages(ctx, actorID, mailboxID, ip)
+	if err != nil {
+		return 0, err
+	}
+	services := repository.ListServices()
+	matched := 0
+	for _, message := range messages {
+		for _, service := range services {
+			if _, ok := matchCode(service, message); !ok {
+				continue
+			}
+			if err := repository.MarkMailboxServiceConsumed(mailboxID, service.ID, message.ReceivedAt); err != nil {
+				return matched, err
+			}
+			matched++
+		}
+	}
+	return matched, nil
 }
 
 func (v *MailboxVerifier) verifyGraphAccess(ctx context.Context, address, accessToken string) error {
@@ -231,6 +333,15 @@ func (c *MicrosoftIMAPConnector) connect(ctx context.Context, address string, cr
 }
 
 func (c *MicrosoftIMAPConnector) Messages(ctx context.Context, address string, credential map[string]string) ([]Message, error) {
+	return c.messages(ctx, address, credential, 25)
+}
+
+// AllMessages 读取收件箱中的全部邮件，最多保留最近 1000 封。
+func (c *MicrosoftIMAPConnector) AllMessages(ctx context.Context, address string, credential map[string]string) ([]Message, error) {
+	return c.messages(ctx, address, credential, 1000)
+}
+
+func (c *MicrosoftIMAPConnector) messages(ctx context.Context, address string, credential map[string]string, limit int) ([]Message, error) {
 	client, done, err := c.connect(ctx, address, credential)
 	if err != nil {
 		return nil, err
@@ -243,9 +354,12 @@ func (c *MicrosoftIMAPConnector) Messages(ctx context.Context, address string, c
 	if selected.NumMessages == 0 {
 		return []Message{}, nil
 	}
+	if limit < 1 {
+		limit = 25
+	}
 	start := uint32(1)
-	if selected.NumMessages > 25 {
-		start = selected.NumMessages - 24
+	if uint32(limit) < selected.NumMessages {
+		start = selected.NumMessages - uint32(limit) + 1
 	}
 	set := imap.SeqSetNum(start, selected.NumMessages)
 	bodySection := &imap.FetchItemBodySection{Partial: &imap.SectionPartial{Offset: 0, Size: 64 * 1024}, Peek: true}
@@ -273,6 +387,7 @@ func (c *MicrosoftIMAPConnector) Messages(ctx context.Context, address string, c
 		}
 		messages = append(messages, Message{ID: messageID, Sender: sender, Subject: item.Envelope.Subject, BodyPreview: string(body), ReceivedAt: receivedAt})
 	}
+	sort.SliceStable(messages, func(i, j int) bool { return messages[i].ReceivedAt.After(messages[j].ReceivedAt) })
 	return messages, nil
 }
 

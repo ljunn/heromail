@@ -85,6 +85,38 @@ func (s *Server) adminVerifyMailbox(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
+func (s *Server) adminMailboxMessages(c *gin.Context) {
+	if s.MailboxVerifier == nil {
+		writeError(c, http.StatusServiceUnavailable, "mailbox_messages_unavailable", "邮箱收件服务不可用")
+		return
+	}
+	messages, err := s.MailboxVerifier.ReadMessages(c.Request.Context(), demoUser(c), c.Param("id"), c.ClientIP())
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, store.ErrMailboxNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(c, status, "mailbox_messages_failed", err.Error())
+		return
+	}
+	page, pageSize := pageRequest(c)
+	total := int64(len(messages))
+	start := (page - 1) * pageSize
+	if start >= len(messages) {
+		messages = []mail.Message{}
+	} else {
+		end := start + pageSize
+		if end > len(messages) {
+			end = len(messages)
+		}
+		messages = messages[start:end]
+	}
+	if audit, ok := s.Store.(store.AuditRepository); ok {
+		_ = audit.WriteAudit(demoUser(c), "mailbox.messages.read", "mailbox", c.Param("id"), "管理员查看邮箱收件列表", c.ClientIP())
+	}
+	writePage(c, messages, page, pageSize, total)
+}
+
 func (s *Server) adminImportMailboxes(c *gin.Context) {
 	repository, ok := s.Store.(store.ResourceRepository)
 	queue, queueOK := s.Store.(store.MailboxVerificationQueue)

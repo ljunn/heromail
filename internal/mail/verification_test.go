@@ -20,6 +20,18 @@ type verificationRepositoryStub struct {
 	updates    int
 }
 
+type historyVerificationRepository struct {
+	*verificationRepositoryStub
+	services []domain.Service
+	marked   []string
+}
+
+func (s *historyVerificationRepository) ListServices() []domain.Service { return s.services }
+func (s *historyVerificationRepository) MarkMailboxServiceConsumed(_, serviceID string, _ time.Time) error {
+	s.marked = append(s.marked, serviceID)
+	return nil
+}
+
 func (s *verificationRepositoryStub) GetMailboxCredential(string) (store.MailboxCredential, error) {
 	return s.credential, nil
 }
@@ -40,9 +52,12 @@ type graphConnectorStub struct {
 	refreshErr  error
 	profileErr  error
 	messagesErr error
+	allMessages []Message
+	allErr      error
 	profile     Profile
 	calls       int
 	refreshes   int
+	allCalls    int
 }
 
 func (s *graphConnectorStub) RefreshCredential(context.Context, map[string]string) (map[string]string, time.Time, error) {
@@ -82,14 +97,69 @@ func (s *graphConnectorStub) Messages(context.Context, string) ([]Message, error
 	return []Message{}, s.messagesErr
 }
 
+func (s *graphConnectorStub) AllMessages(context.Context, string) ([]Message, error) {
+	s.allCalls++
+	return s.allMessages, s.allErr
+}
+
 type imapConnectorStub struct {
-	err   error
-	calls int
+	err         error
+	calls       int
+	allMessages []Message
+	allErr      error
+	allCalls    int
 }
 
 func (s *imapConnectorStub) Verify(context.Context, string, map[string]string) error {
 	s.calls++
 	return s.err
+}
+
+func (s *imapConnectorStub) AllMessages(context.Context, string, map[string]string) ([]Message, error) {
+	s.allCalls++
+	return s.allMessages, s.allErr
+}
+
+func (s *imapConnectorStub) Messages(context.Context, string, map[string]string) ([]Message, error) {
+	return s.allMessages, s.allErr
+}
+
+func TestMailboxVerifierReadsMessagesWithGraphPriorityAndIMAPFallback(t *testing.T) {
+	repository := &verificationRepositoryStub{credential: store.MailboxCredential{
+		Mailbox: domain.Mailbox{ID: "mailbox-1", Address: "user@outlook.com"},
+		Config:  map[string]string{"access_token": "access", "expires_at": time.Now().Add(time.Hour).Format(time.RFC3339), "password": "secret"},
+	}}
+	graph := &graphConnectorStub{allMessages: []Message{{ID: "graph-message"}}}
+	imap := &imapConnectorStub{allMessages: []Message{{ID: "imap-message"}}}
+	verifier := NewMailboxVerifier(repository, graph, imap)
+
+	messages, err := verifier.ReadMessages(context.Background(), "admin", "mailbox-1", "")
+	if err != nil || len(messages) != 1 || messages[0].ID != "graph-message" || graph.allCalls != 1 || imap.allCalls != 0 {
+		t.Fatalf("Graph 收件读取结果错误：messages=%+v err=%v graph_calls=%d imap_calls=%d", messages, err, graph.allCalls, imap.allCalls)
+	}
+
+	graph.allErr = errors.New("Graph Mail.Read 不可用")
+	messages, err = verifier.ReadMessages(context.Background(), "admin", "mailbox-1", "")
+	if err != nil || len(messages) != 1 || messages[0].ID != "imap-message" || imap.allCalls != 1 {
+		t.Fatalf("Graph 失败后的 IMAP 回退错误：messages=%+v err=%v imap_calls=%d", messages, err, imap.allCalls)
+	}
+}
+
+func TestMailboxVerifierScansHistoryAfterConnectionVerification(t *testing.T) {
+	repository := &historyVerificationRepository{
+		verificationRepositoryStub: &verificationRepositoryStub{credential: store.MailboxCredential{
+			Mailbox: domain.Mailbox{ID: "mailbox-1", Address: "user@outlook.com"},
+			Config:  map[string]string{"access_token": "access", "expires_at": time.Now().Add(time.Hour).Format(time.RFC3339)},
+		}},
+		services: []domain.Service{{ID: "service-github", SenderDomains: []string{"github.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`}},
+	}
+	graph := &graphConnectorStub{allMessages: []Message{{Sender: "noreply@github.com", Subject: "Verification code", BodyPreview: "628419"}}}
+	verifier := NewMailboxVerifier(repository, graph, &imapConnectorStub{})
+
+	matched, err := verifier.ScanMailboxHistory(context.Background(), "system", "mailbox-1", "")
+	if err != nil || matched != 1 || len(repository.marked) != 1 || repository.marked[0] != "service-github" {
+		t.Fatalf("历史收件扫描错误：matched=%d marked=%v err=%v", matched, repository.marked, err)
+	}
 }
 
 func TestMailboxVerifierPrefersGraph(t *testing.T) {

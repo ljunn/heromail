@@ -471,6 +471,26 @@ func (s *Store) MailboxesPage(page, pageSize int) ([]domain.Mailbox, int64) {
 	return paginate(items, page, pageSize), int64(len(items))
 }
 
+func (s *Store) MarkMailboxServiceConsumed(mailboxID, serviceID string, changedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	mailbox, ok := s.mailboxes[mailboxID]
+	if !ok {
+		return errors.New("mailbox not found")
+	}
+	state, ok := mailbox.Services[serviceID]
+	if !ok || state.State != domain.ServiceAvailable {
+		return nil
+	}
+	if changedAt.IsZero() {
+		changedAt = time.Now()
+	}
+	state.State = domain.ServiceConsumed
+	state.ChangedAt = changedAt
+	mailbox.Services[serviceID] = state
+	return nil
+}
+
 func (s *Store) Ping(context.Context) error { return nil }
 func (s *Store) StorageName() string        { return "memory" }
 
