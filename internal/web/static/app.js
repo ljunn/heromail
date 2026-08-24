@@ -273,6 +273,95 @@ function renderAdminOverview() {
 }
 
 async function verifyMailbox(id) { await api(`/api/v1/admin/mailboxes/${id}/verify`, { method: "POST" }); await refresh(); toast("邮箱连接验证成功"); }
+
+function cleanEmailCSS(value) {
+  return String(value || "")
+    .replace(/@import[\s\S]*?;/gi, "")
+    .replace(/url\s*\(\s*(?!['"]?data:image\/)[^)]+\)/gi, "none");
+}
+
+function looksLikeEmailHTML(value, bodyType = "") {
+  return String(bodyType).toLowerCase() === "html" || /<[a-z][^>]*>/i.test(String(value || ""));
+}
+
+function emailPreviewDocument(value, bodyType = "") {
+  const source = String(value || "").trim() || "（无正文）";
+  if (!looksLikeEmailHTML(source, bodyType)) {
+    return `<!doctype html><html><head><meta charset="utf-8"><style>${emailPreviewStyle}</style></head><body><pre>${esc(source)}</pre></body></html>`;
+  }
+  const documentParser = new DOMParser();
+  const documentNode = documentParser.parseFromString(source, "text/html");
+  documentNode.querySelectorAll("script,iframe,object,embed,form,input,button,textarea,select,video,audio,source,canvas,svg,base,meta,link").forEach(node => node.remove());
+  documentNode.querySelectorAll("*").forEach(node => {
+    [...node.attributes].forEach(attribute => {
+      if (/^on/i.test(attribute.name)) node.removeAttribute(attribute.name);
+    });
+    if (node.hasAttribute("style")) node.setAttribute("style", cleanEmailCSS(node.getAttribute("style")));
+    node.removeAttribute("background");
+    if (node.tagName === "STYLE") node.textContent = cleanEmailCSS(node.textContent);
+    if (node.tagName === "A") {
+      const href = node.getAttribute("href") || "";
+      node.removeAttribute("ping");
+      if (href && !/^(?:https?:|mailto:|#)/i.test(href)) node.removeAttribute("href");
+      if (node.hasAttribute("href")) {
+        node.setAttribute("target", "_blank");
+        node.setAttribute("rel", "noopener noreferrer nofollow");
+      }
+    }
+    if (node.tagName === "IMG") {
+      const sourceURL = node.getAttribute("src") || "";
+      node.removeAttribute("srcset");
+      if (!/^data:image\//i.test(sourceURL)) {
+        const width = Number(node.getAttribute("width") || 0);
+        const height = Number(node.getAttribute("height") || 0);
+        if ((width > 0 && width <= 1) || (height > 0 && height <= 1)) {
+          node.remove();
+        } else {
+          const placeholder = documentNode.createElement("span");
+          placeholder.className = "remote-image-placeholder";
+          placeholder.textContent = `${node.getAttribute("alt") || "邮件图片"}（远程图片已屏蔽）`;
+          node.replaceWith(placeholder);
+        }
+      }
+    }
+  });
+  const style = documentNode.createElement("style");
+  style.textContent = emailPreviewStyle;
+  documentNode.head.append(style);
+  return `<!doctype html>${documentNode.documentElement.outerHTML}`;
+}
+
+const emailPreviewStyle = `
+  :root { color-scheme: light; }
+  html { background: #fff; }
+  body { box-sizing: border-box; max-width: 100%; margin: 0; padding: 16px; color: #172033; background: #fff; font: 14px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; overflow-wrap: anywhere; }
+  *, *::before, *::after { box-sizing: border-box; }
+  img { max-width: 100%; height: auto; }
+  table { max-width: 100%; border-collapse: collapse; }
+  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+  a { color: #1769e8; }
+  .remote-image-placeholder { display: inline-flex; align-items: center; min-height: 30px; padding: 5px 9px; border: 1px dashed #cad4e2; border-radius: 5px; color: #68778c; background: #f6f8fb; font-size: 12px; }
+`;
+
+function renderMailboxMessages(messages, pagination, id, address) {
+  const shownAddress = address || "邮箱";
+  const messageList = messages.map((message, index) => {
+    const content = message.body || message.body_preview || "（无正文）";
+    return `<article class="mailbox-message html-mode"><div class="mailbox-message-head"><div><strong>${esc(message.subject || "无主题")}</strong><span>${esc(message.sender || "未知发件人")}</span></div><time>${time(message.received_at)}</time></div><div class="mailbox-message-tools" role="group" aria-label="邮件正文显示方式"><button class="mailbox-mode-btn active" type="button" data-action="mailbox-message-mode" data-mode="html" aria-pressed="true">HTML 阅读</button><button class="mailbox-mode-btn" type="button" data-action="mailbox-message-mode" data-mode="plain" aria-pressed="false">纯文本</button></div><iframe class="mailbox-message-html" data-message-index="${index}" title="邮件 HTML 内容" sandbox></iframe><pre class="mailbox-message-plain">${esc(content)}</pre></article>`;
+  }).join("");
+  const pager = pagination.total_pages > 1 ? `<div class="mailbox-message-pager"><button class="ghost-btn" data-action="mailbox-message-page" data-id="${esc(id)}" data-address="${esc(shownAddress)}" data-page="${pagination.page - 1}" ${pagination.page <= 1 ? "disabled" : ""}>上一页</button><span>第 ${pagination.page} / ${pagination.total_pages} 页</span><button class="ghost-btn" data-action="mailbox-message-page" data-id="${esc(id)}" data-address="${esc(shownAddress)}" data-page="${pagination.page + 1}" ${pagination.page >= pagination.total_pages ? "disabled" : ""}>下一页</button></div>` : "";
+  return `<div class="mailbox-messages-meta"><span>共 ${pagination.total || messages.length} 封，最多读取最近 1000 封</span><span class="mailbox-messages-note">${icon("shieldUser")} HTML 在隔离沙箱中预览，远程图片已屏蔽</span></div><div class="mailbox-message-list">${messageList}</div>${pager}`;
+}
+
+function mountMailboxMessageFrames(messages) {
+  document.querySelectorAll(".mailbox-message-html[data-message-index]").forEach(frame => {
+    const message = messages[Number(frame.dataset.messageIndex)] || {};
+    frame.sandbox = "";
+    frame.referrerPolicy = "no-referrer";
+    frame.srcdoc = emailPreviewDocument(message.body || message.body_preview || "（无正文）", message.body_type);
+  });
+}
+
 async function showMailboxMessages(id, address, page = 1) {
   document.querySelector("#secret-modal")?.remove();
   document.body.insertAdjacentHTML("beforeend", `<div id="secret-modal" class="modal-backdrop"><div class="modal mailbox-messages-modal"><div class="card-head"><div><h2>收件箱</h2><div class="modal-subtitle">${esc(address || "邮箱")} · 只读查看</div></div><button class="icon-btn" data-action="close-modal" title="关闭">×</button></div><div class="card-body mailbox-messages-body"><div class="portal-loading">正在读取收件箱…</div></div></div></div>`);
@@ -282,7 +371,8 @@ async function showMailboxMessages(id, address, page = 1) {
     const pagination = result.pagination || {};
     const body = document.querySelector(".mailbox-messages-body");
     if (!body) return;
-    body.innerHTML = messages.length ? `<div class="mailbox-messages-meta">共 ${pagination.total || messages.length} 封，最多读取最近 1000 封</div><div class="mailbox-message-list">${messages.map(message => `<article class="mailbox-message"><div class="mailbox-message-head"><div><strong>${esc(message.subject || "无主题")}</strong><span>${esc(message.sender || "未知发件人")}</span></div><time>${time(message.received_at)}</time></div><pre>${esc(message.body || message.body_preview || "（无正文）")}</pre></article>`).join("")}</div>${pagination.total_pages > 1 ? `<div class="mailbox-message-pager"><button class="ghost-btn" data-action="mailbox-message-page" data-id="${esc(id)}" data-address="${esc(address || "邮箱")}" data-page="${pagination.page - 1}" ${pagination.page <= 1 ? "disabled" : ""}>上一页</button><span>第 ${pagination.page} / ${pagination.total_pages} 页</span><button class="ghost-btn" data-action="mailbox-message-page" data-id="${esc(id)}" data-address="${esc(address || "邮箱")}" data-page="${pagination.page + 1}" ${pagination.page >= pagination.total_pages ? "disabled" : ""}>下一页</button></div>` : ""}` : `<div class="empty">收件箱暂无邮件</div>`;
+    body.innerHTML = messages.length ? renderMailboxMessages(messages, pagination, id, address) : `<div class="empty">收件箱暂无邮件</div>`;
+    if (messages.length) mountMailboxMessageFrames(messages);
   } catch (error) {
     const body = document.querySelector(".mailbox-messages-body");
     if (body) body.innerHTML = `<div class="inline-error" role="alert">${icon("activity")}<span>${esc(error.message)}</span></div>`;
@@ -807,6 +897,19 @@ document.addEventListener("click", async event => {
   if (action === "import-mailboxes") { await importMailboxes(); return; }
   if (action === "mailbox-messages") { await showMailboxMessages(target.dataset.id, target.dataset.address); return; }
   if (action === "mailbox-message-page") { await showMailboxMessages(target.dataset.id, target.dataset.address, Number(target.dataset.page)); return; }
+  if (action === "mailbox-message-mode") {
+    const article = target.closest(".mailbox-message");
+    if (!article) return;
+    const mode = target.dataset.mode === "plain" ? "plain" : "html";
+    article.classList.toggle("plain-mode", mode === "plain");
+    article.classList.toggle("html-mode", mode === "html");
+    article.querySelectorAll('[data-action="mailbox-message-mode"]').forEach(button => {
+      const active = button.dataset.mode === mode;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+    return;
+  }
   if (action === "delete-mailbox") { await deleteMailbox(target.dataset.id); return; }
   if (action === "verify-mailbox") { await verifyMailbox(target.dataset.id); return; }
   if (action === "edit-service") { showServiceEditor(target.dataset.id || ""); return; }

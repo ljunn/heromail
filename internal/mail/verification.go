@@ -1,10 +1,12 @@
 package mail
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sort"
 	"strings"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
+	gomail "github.com/emersion/go-message/mail"
 	"github.com/ljunn/heromail/internal/domain"
 	"github.com/ljunn/heromail/internal/store"
 )
@@ -380,15 +383,63 @@ func (c *MicrosoftIMAPConnector) messages(ctx context.Context, address string, c
 		if receivedAt.IsZero() {
 			receivedAt = item.Envelope.Date
 		}
-		body := item.FindBodySection(bodySection)
+		body, preview, bodyType := parseMIMEMessage(item.FindBodySection(bodySection))
 		messageID := item.Envelope.MessageID
 		if messageID == "" {
 			messageID = fmt.Sprintf("imap-%d", item.UID)
 		}
-		messages = append(messages, Message{ID: messageID, Sender: sender, Subject: item.Envelope.Subject, BodyPreview: string(body), ReceivedAt: receivedAt})
+		messages = append(messages, Message{ID: messageID, Sender: sender, Subject: item.Envelope.Subject, BodyPreview: preview, Body: body, BodyType: bodyType, ReceivedAt: receivedAt})
 	}
 	sort.SliceStable(messages, func(i, j int) bool { return messages[i].ReceivedAt.After(messages[j].ReceivedAt) })
 	return messages, nil
+}
+
+func parseMIMEMessage(raw []byte) (body, preview, bodyType string) {
+	if len(raw) == 0 {
+		return "", "", ""
+	}
+	reader, _ := gomail.CreateReader(bytes.NewReader(raw))
+	if reader == nil {
+		return string(raw), string(raw), "text"
+	}
+	defer reader.Close()
+
+	var htmlBody, plainBody string
+	for {
+		part, partErr := reader.NextPart()
+		if partErr == io.EOF {
+			break
+		}
+		if part == nil {
+			break
+		}
+		header, ok := part.Header.(*gomail.InlineHeader)
+		if !ok {
+			continue
+		}
+		mediaType, _, _ := header.ContentType()
+		content, readErr := io.ReadAll(io.LimitReader(part.Body, 2<<20))
+		if readErr != nil {
+			continue
+		}
+		switch strings.ToLower(mediaType) {
+		case "text/html":
+			if htmlBody == "" {
+				htmlBody = strings.TrimSpace(string(content))
+			}
+		case "text/plain":
+			if plainBody == "" {
+				plainBody = strings.TrimSpace(string(content))
+			}
+		}
+	}
+	if htmlBody != "" {
+		return htmlBody, plainBody, "html"
+	}
+	if plainBody != "" {
+		return plainBody, plainBody, "text"
+	}
+	return string(raw), string(raw), "text"
 }
 
 type xoauth2Client struct {

@@ -39,6 +39,7 @@ type Message struct {
 	Subject     string    `json:"subject"`
 	BodyPreview string    `json:"body_preview"`
 	Body        string    `json:"body,omitempty"`
+	BodyType    string    `json:"body_type,omitempty"`
 	ReceivedAt  time.Time `json:"received_at"`
 }
 
@@ -215,7 +216,8 @@ func (c *MicrosoftClient) messagesPage(ctx context.Context, accessToken, endpoin
 			Subject     string `json:"subject"`
 			BodyPreview string `json:"bodyPreview"`
 			Body        struct {
-				Content string `json:"content"`
+				Content     string `json:"content"`
+				ContentType string `json:"contentType"`
 			} `json:"body"`
 			Received string `json:"receivedDateTime"`
 			From     struct {
@@ -231,7 +233,7 @@ func (c *MicrosoftClient) messagesPage(ctx context.Context, accessToken, endpoin
 	messages := make([]Message, 0, len(payload.Value))
 	for _, item := range payload.Value {
 		receivedAt, _ := time.Parse(time.RFC3339, item.Received)
-		messages = append(messages, Message{ID: item.ID, Sender: strings.ToLower(item.From.EmailAddress.Address), Subject: item.Subject, BodyPreview: item.BodyPreview, Body: item.Body.Content, ReceivedAt: receivedAt})
+		messages = append(messages, Message{ID: item.ID, Sender: strings.ToLower(item.From.EmailAddress.Address), Subject: item.Subject, BodyPreview: item.BodyPreview, Body: item.Body.Content, BodyType: strings.ToLower(item.Body.ContentType), ReceivedAt: receivedAt})
 	}
 	return messages, payload.NextLink, nil
 }

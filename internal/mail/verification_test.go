@@ -3,12 +3,50 @@ package mail
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/ljunn/heromail/internal/domain"
 	"github.com/ljunn/heromail/internal/store"
 )
+
+func TestParseMIMEMessagePrefersHTMLAndKeepsPlainPreview(t *testing.T) {
+	raw := strings.Join([]string{
+		"MIME-Version: 1.0",
+		"Content-Type: multipart/alternative; boundary=hero-boundary",
+		"",
+		"--hero-boundary",
+		"Content-Type: text/plain; charset=utf-8",
+		"",
+		"验证码是 628419",
+		"--hero-boundary",
+		"Content-Type: text/html; charset=utf-8",
+		"",
+		"<html><body><strong>验证码是 628419</strong></body></html>",
+		"--hero-boundary--",
+	}, "\r\n")
+
+	body, preview, bodyType := parseMIMEMessage([]byte(raw))
+	if bodyType != "html" || !strings.Contains(body, "<strong>") || preview != "验证码是 628419" {
+		t.Fatalf("MIME 正文解析错误：type=%q body=%q preview=%q", bodyType, body, preview)
+	}
+}
+
+func TestParseMIMEMessageDecodesQuotedPrintablePlainText(t *testing.T) {
+	raw := strings.Join([]string{
+		"MIME-Version: 1.0",
+		"Content-Type: text/plain; charset=utf-8",
+		"Content-Transfer-Encoding: quoted-printable",
+		"",
+		"Your code is =36=32=38=34=31=39",
+	}, "\r\n")
+
+	body, preview, bodyType := parseMIMEMessage([]byte(raw))
+	if bodyType != "text" || body != "Your code is 628419" || preview != body {
+		t.Fatalf("纯文本 MIME 解码错误：type=%q body=%q preview=%q", bodyType, body, preview)
+	}
+}
 
 type verificationRepositoryStub struct {
 	credential store.MailboxCredential
