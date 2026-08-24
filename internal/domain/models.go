@@ -5,6 +5,9 @@ import "time"
 type OrderStatus string
 
 const (
+	MinimumOrderTTLSeconds     = 30 * 60
+	MailboxServiceTimeoutLimit = 5
+
 	OrderCreated          OrderStatus = "created"
 	OrderAllocating       OrderStatus = "allocating"
 	OrderAssigned         OrderStatus = "assigned"
@@ -74,9 +77,10 @@ type Service struct {
 }
 
 type MailboxService struct {
-	ServiceID string              `json:"service_id"`
-	State     ServiceMailboxState `json:"state"`
-	ChangedAt time.Time           `json:"changed_at"`
+	ServiceID    string              `json:"service_id"`
+	State        ServiceMailboxState `json:"state"`
+	TimeoutCount int                 `json:"timeout_count"`
+	ChangedAt    time.Time           `json:"changed_at"`
 }
 
 type Mailbox struct {

@@ -146,7 +146,7 @@ func (v *MailboxVerifier) Verify(ctx context.Context, actorID, mailboxID, ip str
 	return MailboxVerificationResult{Method: domain.MailboxConnectionAuto, Status: domain.MailboxVerificationFailed, VerifiedAt: now}, errors.New(message)
 }
 
-// ReadMessages 读取管理员请求的收件箱内容，始终优先 Graph，失败后回退 IMAP。
+// ReadMessages 读取受权请求所需的邮箱内容，始终优先 Graph，失败后回退 IMAP。
 // 凭证只在本次请求的内存中使用，正文也不会写入审计日志。
 func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, ip string) ([]Message, error) {
 	credential, err := v.repository.GetMailboxCredential(mailboxID)

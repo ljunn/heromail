@@ -92,7 +92,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .config-row dt { color: var(--muted); }
 .config-row dd { margin: 0; font-weight: 600; text-align: right; }
 .task-card { min-height: 360px; }
-.steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 24px; }
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 24px; }
 .step { position: relative; color: #a5afbd; text-align: center; font-size: 11px; }
 .step:before { content: ""; display: block; width: 22px; height: 22px; margin: 0 auto 8px; border: 2px solid #cdd5e0; border-radius: 50%; background: white; }
 .step.done { color: var(--green); font-weight: 700; }
@@ -101,6 +101,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .step.current:before { border-color: var(--blue); background: #e8f1ff; box-shadow: inset 0 0 0 5px white; }
 .task-mail { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 14px; border: 1px solid var(--line); border-radius: 8px; font-size: 15px; font-weight: 700; }
 .task-mail code { color: #2d3950; font-family: ui-monospace, monospace; }
+.task-mail-actions { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
 .code-box { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-top: 18px; padding: 15px; border-radius: 8px; background: var(--green-soft); }
 .code-label { color: var(--muted); font-size: 11px; }
 .code { margin-top: 5px; color: var(--green); font-size: 28px; font-weight: 800; letter-spacing: 8px; }
@@ -235,11 +236,19 @@ body:has(.modal-backdrop), body:has(.detail-layer) { overflow: hidden; }
 .mailbox-messages-note { display: inline-flex; align-items: center; gap: 5px; color: #52708f; }
 .mailbox-messages-note .ui-icon { width: 14px; height: 14px; color: var(--blue); }
 .mailbox-message-list { display: grid; gap: 10px; }
-.mailbox-message { padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: #f8fafc; }
-.mailbox-message-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.mailbox-message { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: #f8fafc; }
+.mailbox-message[open] { background: #fff; }
+.mailbox-message-head { display: grid; grid-template-columns: minmax(0, 1fr) auto 18px; align-items: center; gap: 12px; padding: 14px; cursor: pointer; list-style: none; }
+.mailbox-message-head::-webkit-details-marker { display: none; }
+.mailbox-message-head:hover { background: #f2f6fb; }
+.mailbox-message-head:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
 .mailbox-message-head div { display: grid; min-width: 0; gap: 4px; }
 .mailbox-message-head strong { overflow-wrap: anywhere; }
 .mailbox-message-head span, .mailbox-message-head time { color: var(--muted); font-size: 11px; }
+.mailbox-message-chevron { display: grid; place-items: center; transition: transform .18s ease; }
+.mailbox-message-chevron .ui-icon { width: 17px; height: 17px; }
+.mailbox-message[open] .mailbox-message-chevron { transform: rotate(180deg); }
+.mailbox-message-content { padding: 0 14px 14px; border-top: 1px solid var(--line); }
 .mailbox-message-tools { display: inline-flex; gap: 2px; margin-top: 12px; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
 .mailbox-mode-btn { padding: 6px 10px; border: 0; border-radius: 5px; color: var(--muted); background: transparent; font-size: 11px; }
 .mailbox-mode-btn:hover { color: var(--ink); background: #f2f6fb; }
@@ -292,6 +301,7 @@ body:has(.modal-backdrop), body:has(.detail-layer) { overflow: hidden; }
 .detail-panel-head h2 { margin: 5px 0 0; font: 700 16px/1.4 ui-monospace, monospace; overflow-wrap: anywhere; }
 .detail-eyebrow { color: var(--blue); font-size: 10px; font-weight: 750; }
 .detail-panel-body { padding: 20px 24px 36px; }
+.detail-actions { display: flex; justify-content: flex-end; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
 .detail-status { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
 .detail-list { display: grid; margin: 18px 0 0; border-top: 1px solid var(--line); }
 .detail-list > div { display: grid; grid-template-columns: 105px minmax(0, 1fr); gap: 14px; padding: 13px 0; border-bottom: 1px solid #edf0f4; font-size: 12px; }
@@ -458,7 +468,11 @@ body:has(.modal-backdrop), body:has(.detail-layer) { overflow: hidden; }
   .service-modal { max-height: calc(100dvh - 20px); }
   .mailbox-messages-modal { max-height: calc(100dvh - 20px); }
   .mailbox-messages-meta { align-items: flex-start; flex-direction: column; gap: 5px; }
-  .mailbox-message-head { flex-direction: column; gap: 6px; }
+  .mailbox-message-head { grid-template-columns: minmax(0, 1fr) 18px; gap: 8px; }
+  .mailbox-message-head time { grid-column: 1; }
+  .mailbox-message-chevron { grid-column: 2; grid-row: 1 / span 2; }
+  .task-mail { align-items: flex-start; flex-direction: column; }
+  .task-mail-actions { width: 100%; justify-content: space-between; }
   .service-modal-footer { align-items: stretch; flex-direction: column; padding: 12px 15px; }
   .service-modal-footer .primary-btn { width: 100%; min-width: 0; }
   .service-modal .form-columns { grid-template-columns: 1fr; }

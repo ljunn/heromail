@@ -18,8 +18,6 @@ type Repository interface {
 	GetOrder(id string) (domain.Order, bool)
 	ListOrders(userID string) []domain.Order
 	ListOrdersPage(userID string, page, pageSize int) ([]domain.Order, int64)
-	SubmitOrder(id, userID string) (domain.Order, error)
-	ReceiveCode(id string) (domain.Order, error)
 	CompleteOrder(id, userID string) (domain.Order, error)
 	CancelOrder(id, userID string) (domain.Order, error)
 	ReapExpired() int
@@ -71,4 +69,16 @@ func normalizePage(page, pageSize int) (int, int) {
 		pageSize = 100
 	}
 	return page, pageSize
+}
+
+func effectiveOrderTTLSeconds(_ int) int {
+	return domain.MinimumOrderTTLSeconds
+}
+
+func nextTimeoutState(current int) (int, domain.ServiceMailboxState) {
+	next := current + 1
+	if next >= domain.MailboxServiceTimeoutLimit {
+		return next, domain.ServiceConsumed
+	}
+	return next, domain.ServiceAvailable
 }

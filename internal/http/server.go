@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ljunn/heromail/internal/buildinfo"
@@ -127,9 +126,7 @@ func (s *Server) routes() {
 	protected.GET("/orders", s.listUserOrders)
 	protected.POST("/orders", s.createOrder)
 	protected.GET("/orders/:id", s.getUserOrder)
-	protected.POST("/orders/:id/submitted", s.submitOrder)
-	protected.POST("/orders/:id/complete", s.completeOrder)
-	protected.POST("/orders/:id/cancel", s.cancelOrder)
+	protected.GET("/orders/:id/messages", s.userOrderMessages)
 	protected.GET("/api-keys", s.listAPIKeys)
 	protected.POST("/api-keys", s.createAPIKey)
 	protected.DELETE("/api-keys/:id", s.revokeAPIKey)
@@ -159,6 +156,8 @@ func (s *Server) routes() {
 	admin.POST("/services", s.adminSaveService)
 	admin.DELETE("/services/:id", s.adminDeleteService)
 	admin.GET("/orders", s.adminOrders)
+	admin.POST("/orders/:id/complete", s.adminCompleteOrder)
+	admin.POST("/orders/:id/cancel", s.adminCancelOrder)
 	admin.GET("/users", s.adminUsers)
 	admin.POST("/users/:id/balance", s.adminAdjustBalance)
 	admin.GET("/wallet/ledgers", s.adminLedgers)
@@ -280,35 +279,28 @@ func (s *Server) getUserOrder(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": order})
 }
 
-func (s *Server) submitOrder(c *gin.Context) {
-	order, err := s.Store.SubmitOrder(c.Param("id"), demoUser(c))
+func (s *Server) adminCompleteOrder(c *gin.Context) {
+	order, err := s.Store.CompleteOrder(c.Param("id"), "")
 	if err != nil {
 		status, code := mapStoreError(err)
 		writeError(c, status, code, err.Error())
 		return
 	}
-	if _, production := s.Store.(store.ResourceRepository); !production {
-		s.scheduleDemoCode(order.ID)
-	}
-	c.JSON(http.StatusOK, gin.H{"data": order})
-}
-
-func (s *Server) completeOrder(c *gin.Context) {
-	order, err := s.Store.CompleteOrder(c.Param("id"), demoUser(c))
-	if err != nil {
-		status, code := mapStoreError(err)
-		writeError(c, status, code, err.Error())
-		return
+	if audit, ok := s.Store.(store.AuditRepository); ok {
+		_ = audit.WriteAudit(demoUser(c), "order.complete", "registration_order", order.ID, "管理员完成已收码订单", c.ClientIP())
 	}
 	c.JSON(http.StatusOK, gin.H{"data": order})
 }
 
-func (s *Server) cancelOrder(c *gin.Context) {
-	order, err := s.Store.CancelOrder(c.Param("id"), demoUser(c))
+func (s *Server) adminCancelOrder(c *gin.Context) {
+	order, err := s.Store.CancelOrder(c.Param("id"), "")
 	if err != nil {
 		status, code := mapStoreError(err)
 		writeError(c, status, code, err.Error())
 		return
+	}
+	if audit, ok := s.Store.(store.AuditRepository); ok {
+		_ = audit.WriteAudit(demoUser(c), "order.cancel", "registration_order", order.ID, "管理员取消未收码订单并退款", c.ClientIP())
 	}
 	c.JSON(http.StatusOK, gin.H{"data": order})
 }
@@ -415,10 +407,6 @@ func (s *Server) adminReap(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"reaped": s.Store.ReapExpired()})
 }
 
-func (s *Server) scheduleDemoCode(orderID string) {
-	time.AfterFunc(1500*time.Millisecond, func() { _, _ = s.Store.ReceiveCode(orderID) })
-}
-
 func requireAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if demoRole(c) != "admin" {
@@ -486,6 +474,8 @@ func mapStoreError(err error) (int, string) {
 		return http.StatusNotFound, "order_not_found"
 	case errors.Is(err, store.ErrInvalidOrderState):
 		return http.StatusConflict, "invalid_order_state"
+	case errors.Is(err, store.ErrVerificationCodeRequired):
+		return http.StatusBadRequest, "verification_code_required"
 	default:
 		return http.StatusBadRequest, "request_failed"
 	}

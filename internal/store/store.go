@@ -13,13 +13,14 @@ import (
 )
 
 var (
-	ErrServiceNotFound     = errors.New("target service not found")
-	ErrServiceDisabled     = errors.New("target service is disabled")
-	ErrNoMailboxAvailable  = errors.New("no mailbox available for this service")
-	ErrOrderNotFound       = errors.New("order not found")
-	ErrInvalidOrderState   = errors.New("order is not in a mutable state")
-	ErrInsufficientBalance = errors.New("insufficient balance")
-	ErrDuplicateRequest    = errors.New("request_id already exists")
+	ErrServiceNotFound          = errors.New("target service not found")
+	ErrServiceDisabled          = errors.New("target service is disabled")
+	ErrNoMailboxAvailable       = errors.New("no mailbox available for this service")
+	ErrOrderNotFound            = errors.New("order not found")
+	ErrInvalidOrderState        = errors.New("order is not in a mutable state")
+	ErrVerificationCodeRequired = errors.New("verification code is required")
+	ErrInsufficientBalance      = errors.New("insufficient balance")
+	ErrDuplicateRequest         = errors.New("request_id already exists")
 )
 
 type Store struct {
@@ -46,10 +47,10 @@ func (s *Store) seed() {
 	s.users["admin-001"] = &domain.User{ID: "admin-001", Email: "admin@heromail.local", Balance: 0, Role: "admin"}
 
 	services := []*domain.Service{
-		{ID: "svc-github", Code: "github", Name: "GitHub", Description: "开发者平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), Price: 0.35, TTLSeconds: 600, SenderDomains: []string{"github.com"}, SubjectKeywords: []string{"verification", "验证码"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-openai", Code: "openai", Name: "OpenAI", Description: "人工智能平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), Price: 0.60, TTLSeconds: 600, SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification", "code"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-discord", Code: "discord", Name: "Discord", Description: "社区平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), Price: 0.30, TTLSeconds: 600, SenderDomains: []string{"discord.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-telegram", Code: "telegram", Name: "Telegram", Description: "通讯平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), Price: 0.25, TTLSeconds: 600, SenderDomains: []string{"telegram.org"}, SubjectKeywords: []string{"login code", "code"}, Regex: `\b(\d{5})\b`},
+		{ID: "svc-github", Code: "github", Name: "GitHub", Description: "开发者平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), Price: 0.35, TTLSeconds: domain.MinimumOrderTTLSeconds, SenderDomains: []string{"github.com"}, SubjectKeywords: []string{"verification", "验证码"}, Regex: `\b(\d{6})\b`},
+		{ID: "svc-openai", Code: "openai", Name: "OpenAI", Description: "人工智能平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), Price: 0.60, TTLSeconds: domain.MinimumOrderTTLSeconds, SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification", "code"}, Regex: `\b(\d{6})\b`},
+		{ID: "svc-discord", Code: "discord", Name: "Discord", Description: "社区平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), Price: 0.30, TTLSeconds: domain.MinimumOrderTTLSeconds, SenderDomains: []string{"discord.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
+		{ID: "svc-telegram", Code: "telegram", Name: "Telegram", Description: "通讯平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), Price: 0.25, TTLSeconds: domain.MinimumOrderTTLSeconds, SenderDomains: []string{"telegram.org"}, SubjectKeywords: []string{"login code", "code"}, Regex: `\b(\d{5})\b`},
 	}
 	for _, service := range services {
 		s.services[service.ID] = service
@@ -217,7 +218,7 @@ func (s *Store) CreateOrder(userID, serviceID, requestID string) (domain.Order, 
 		return domain.Order{}, ErrNoMailboxAvailable
 	}
 	s.seq++
-	order := &domain.Order{ID: fmt.Sprintf("ORD%06d", s.seq), UserID: userID, ServiceID: service.ID, ServiceCode: service.Code, ServiceName: service.Name, MailboxID: selected.ID, MailboxAddress: selected.Address, Status: domain.OrderAssigned, Price: service.Price, CreatedAt: now, AssignedAt: now, ExpiresAt: now.Add(time.Duration(service.TTLSeconds) * time.Second), RequestID: requestID}
+	order := &domain.Order{ID: fmt.Sprintf("ORD%06d", s.seq), UserID: userID, ServiceID: service.ID, ServiceCode: service.Code, ServiceName: service.Name, MailboxID: selected.ID, MailboxAddress: selected.Address, Status: domain.OrderWaitingCode, Price: service.Price, CreatedAt: now, AssignedAt: now, SubmittedAt: now, ExpiresAt: now.Add(time.Duration(effectiveOrderTTLSeconds(service.TTLSeconds)) * time.Second), RequestID: requestID}
 	user.Balance -= service.Price
 	selected.State, selected.ActiveOrderID = domain.MailboxLeased, order.ID
 	state := selected.Services[service.ID]
@@ -307,32 +308,25 @@ func (s *Store) ListAdminOrdersPage(filter AdminOrderFilter, page, pageSize int)
 	return paginate(filtered, page, pageSize), int64(len(filtered))
 }
 
-func (s *Store) SubmitOrder(id, userID string) (domain.Order, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	order, ok := s.orders[id]
-	if !ok || (userID != "" && order.UserID != userID) {
-		return domain.Order{}, ErrOrderNotFound
-	}
-	if order.Status != domain.OrderAssigned {
-		return domain.Order{}, ErrInvalidOrderState
-	}
-	order.Status, order.SubmittedAt = domain.OrderWaitingCode, time.Now()
-	return cloneOrder(*order), nil
-}
-
-func (s *Store) ReceiveCode(id string) (domain.Order, error) {
+func (s *Store) ReceiveCodeValue(id, code string) (domain.Order, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	order, ok := s.orders[id]
 	if !ok {
 		return domain.Order{}, ErrOrderNotFound
 	}
-	if order.Status != domain.OrderWaitingCode {
+	if order.Status != domain.OrderAssigned && order.Status != domain.OrderWaitingCode {
 		return domain.Order{}, ErrInvalidOrderState
 	}
 	now := time.Now()
-	order.Status, order.Code, order.CodeReceivedAt = domain.OrderCodeReceived, codeFor(order.ServiceCode), now
+	if !order.ExpiresAt.IsZero() && !now.Before(order.ExpiresAt) {
+		return domain.Order{}, ErrInvalidOrderState
+	}
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return domain.Order{}, ErrVerificationCodeRequired
+	}
+	order.Status, order.Code, order.CodeReceivedAt = domain.OrderCodeReceived, code, now
 	if mailbox := s.mailboxes[order.MailboxID]; mailbox != nil {
 		mailbox.TodayCodes++
 		mailbox.LastReceivedAt = now
@@ -370,7 +364,7 @@ func (s *Store) CancelOrder(id, userID string) (domain.Order, error) {
 		return domain.Order{}, ErrInvalidOrderState
 	}
 	order.Status, order.Refunded = domain.OrderCanceled, true
-	s.refundAndReleaseLocked(order)
+	s.refundAndReleaseLocked(order, false)
 	return cloneOrder(*order), nil
 }
 
@@ -382,7 +376,7 @@ func (s *Store) ReapExpired() int {
 	for _, order := range s.orders {
 		if (order.Status == domain.OrderAssigned || order.Status == domain.OrderWaitingCode) && now.After(order.ExpiresAt) {
 			order.Status, order.Refunded = domain.OrderExpiredRefunded, true
-			s.refundAndReleaseLocked(order)
+			s.refundAndReleaseLocked(order, true)
 			count++
 		}
 	}
@@ -494,7 +488,7 @@ func (s *Store) MarkMailboxServiceConsumed(mailboxID, serviceID string, changedA
 func (s *Store) Ping(context.Context) error { return nil }
 func (s *Store) StorageName() string        { return "memory" }
 
-func (s *Store) refundAndReleaseLocked(order *domain.Order) {
+func (s *Store) refundAndReleaseLocked(order *domain.Order, timedOut bool) {
 	if user := s.users[order.UserID]; user != nil && order.Refunded {
 		user.Balance += order.Price
 	}
@@ -504,16 +498,12 @@ func (s *Store) refundAndReleaseLocked(order *domain.Order) {
 		state := mailbox.Services[order.ServiceID]
 		if state.State == domain.ServiceLeased {
 			state.State, state.ChangedAt = domain.ServiceAvailable, time.Now()
+			if timedOut {
+				state.TimeoutCount, state.State = nextTimeoutState(state.TimeoutCount)
+			}
 			mailbox.Services[order.ServiceID] = state
 		}
 	}
-}
-
-func codeFor(service string) string {
-	if service == "svc-telegram" {
-		return "84271"
-	}
-	return "842729"
 }
 
 func cloneOrder(order domain.Order) domain.Order { return order }

@@ -368,7 +368,7 @@ func (s *PostgresStore) ConsumeOAuthState(state string) (OAuthState, error) {
 
 func (s *PostgresStore) WaitingOrdersForMailbox(mailboxID string) []domain.Order {
 	var rows []sqlOrder
-	s.db.Where("mailbox_id = ? AND status = ? AND expires_at > ?", mailboxID, domain.OrderWaitingCode, time.Now()).Order("created_at ASC").Find(&rows)
+	s.db.Where("mailbox_id = ? AND status IN ? AND expires_at > ?", mailboxID, []domain.OrderStatus{domain.OrderAssigned, domain.OrderWaitingCode}, time.Now()).Order("created_at ASC").Find(&rows)
 	items := make([]domain.Order, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, mapOrder(row))

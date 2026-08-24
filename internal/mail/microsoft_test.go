@@ -145,7 +145,7 @@ func TestWorkerReceivesMailSentBeforeUserConfirmation(t *testing.T) {
 		order: domain.Order{
 			ID:          "order-early-mail",
 			ServiceID:   "service-openai",
-			Status:      domain.OrderWaitingCode,
+			Status:      domain.OrderAssigned,
 			AssignedAt:  now.Add(-5 * time.Minute),
 			SubmittedAt: now,
 			ExpiresAt:   now.Add(5 * time.Minute),
@@ -260,14 +260,38 @@ func TestMatchCodeRequiresAllRules(t *testing.T) {
 		{name: "子域发件人", message: Message{Sender: "noreply@mail.github.com", Subject: "验证码", BodyPreview: "123456"}, code: "123456", matched: true},
 		{name: "伪造域名", message: Message{Sender: "noreply@github.com.example.org", Subject: "Verification code", BodyPreview: "123456"}, matched: false},
 		{name: "主题不匹配", message: Message{Sender: "noreply@github.com", Subject: "Welcome", BodyPreview: "123456"}, matched: false},
+		{name: "没有配置关键词", message: Message{Sender: "noreply@github.com", Subject: "Verification code", BodyPreview: "123456"}, matched: false},
 		{name: "验证码格式不匹配", message: Message{Sender: "noreply@github.com", Subject: "Verification code", BodyPreview: "ABCDEF"}, matched: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			code, matched := matchCode(service, test.message)
+			testService := service
+			if test.name == "没有配置关键词" {
+				testService.SubjectKeywords = nil
+			}
+			code, matched := matchCode(testService, test.message)
 			if matched != test.matched || code != test.code {
 				t.Fatalf("匹配结果 = (%q, %v)，期望 (%q, %v)", code, matched, test.code, test.matched)
 			}
 		})
+	}
+}
+
+func TestFilterMessagesForOrderEnforcesServiceAndLeaseWindow(t *testing.T) {
+	assignedAt := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	order := domain.Order{AssignedAt: assignedAt, ExpiresAt: assignedAt.Add(10 * time.Minute)}
+	service := domain.Service{SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification", "验证码"}, Regex: `\b(\d{6})\b`}
+	messages := []Message{
+		{ID: "openai-current", Sender: "noreply@openai.com", Subject: "Your verification code", ReceivedAt: assignedAt.Add(time.Minute)},
+		{ID: "openai-second-keyword", Sender: "noreply@openai.com", Subject: "OpenAI 验证码", ReceivedAt: assignedAt.Add(2 * time.Minute)},
+		{ID: "github", Sender: "noreply@github.com", Subject: "Verification code", ReceivedAt: assignedAt.Add(3 * time.Minute)},
+		{ID: "wrong-subject", Sender: "noreply@openai.com", Subject: "Welcome", ReceivedAt: assignedAt.Add(4 * time.Minute)},
+		{ID: "old-openai", Sender: "noreply@openai.com", Subject: "Verification code", ReceivedAt: assignedAt.Add(-2 * time.Minute)},
+		{ID: "late-openai", Sender: "noreply@openai.com", Subject: "Verification code", ReceivedAt: order.ExpiresAt.Add(time.Second)},
+	}
+
+	filtered := FilterMessagesForOrder(service, order, messages)
+	if len(filtered) != 2 || filtered[0].ID != "openai-current" || filtered[1].ID != "openai-second-keyword" {
+		t.Fatalf("订单邮件隔离结果错误：%+v", filtered)
 	}
 }

@@ -92,10 +92,11 @@ type sqlMailbox struct {
 func (sqlMailbox) TableName() string { return "mailboxes" }
 
 type sqlMailboxService struct {
-	MailboxID string    `gorm:"primaryKey;size:64"`
-	ServiceID string    `gorm:"primaryKey;size:64;index"`
-	State     string    `gorm:"size:32;not null;index"`
-	ChangedAt time.Time `gorm:"not null"`
+	MailboxID    string    `gorm:"primaryKey;size:64"`
+	ServiceID    string    `gorm:"primaryKey;size:64;index"`
+	State        string    `gorm:"size:32;not null;index"`
+	TimeoutCount int       `gorm:"not null;default:0"`
+	ChangedAt    time.Time `gorm:"not null"`
 }
 
 func (sqlMailboxService) TableName() string { return "mailbox_service_states" }

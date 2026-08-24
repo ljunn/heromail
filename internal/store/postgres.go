@@ -103,10 +103,10 @@ func (s *PostgresStore) seed(config PostgresConfig) error {
 		}
 	}
 	services := []sqlService{
-		{ID: "svc-github", Code: "github", Name: "GitHub", Description: "开发者平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 35, TTLSeconds: 600, SenderDomains: []string{"github.com"}, SubjectKeywords: []string{"verification", "验证码"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-openai", Code: "openai", Name: "OpenAI", Description: "人工智能平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 60, TTLSeconds: 600, SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification", "code"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-discord", Code: "discord", Name: "Discord", Description: "社区平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 30, TTLSeconds: 600, SenderDomains: []string{"discord.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-telegram", Code: "telegram", Name: "Telegram", Description: "通讯平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 25, TTLSeconds: 600, SenderDomains: []string{"telegram.org"}, SubjectKeywords: []string{"login code", "code"}, Regex: `\b(\d{5})\b`},
+		{ID: "svc-github", Code: "github", Name: "GitHub", Description: "开发者平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 35, TTLSeconds: domain.MinimumOrderTTLSeconds, SenderDomains: []string{"github.com"}, SubjectKeywords: []string{"verification", "验证码"}, Regex: `\b(\d{6})\b`},
+		{ID: "svc-openai", Code: "openai", Name: "OpenAI", Description: "人工智能平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 60, TTLSeconds: domain.MinimumOrderTTLSeconds, SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification", "code"}, Regex: `\b(\d{6})\b`},
+		{ID: "svc-discord", Code: "discord", Name: "Discord", Description: "社区平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 30, TTLSeconds: domain.MinimumOrderTTLSeconds, SenderDomains: []string{"discord.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
+		{ID: "svc-telegram", Code: "telegram", Name: "Telegram", Description: "通讯平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 25, TTLSeconds: domain.MinimumOrderTTLSeconds, SenderDomains: []string{"telegram.org"}, SubjectKeywords: []string{"login code", "code"}, Regex: `\b(\d{5})\b`},
 	}
 	if err := s.ensureDefaultServices(services); err != nil {
 		return err
@@ -420,7 +420,7 @@ func (s *PostgresStore) CreateOrder(userID, serviceID, requestID string) (domain
 		}
 		now := time.Now().UTC()
 		orderID := "ORD" + strings.ToUpper(strings.ReplaceAll(uuid.NewString(), "-", "")[:16])
-		order := sqlOrder{ID: orderID, UserID: user.ID, ServiceID: service.ID, ServiceCode: service.Code, ServiceName: service.Name, MailboxID: mailbox.ID, MailboxAddress: mailbox.Address, Status: string(domain.OrderAssigned), PriceCents: service.PriceCents, CreatedAt: now, AssignedAt: &now, ExpiresAt: now.Add(time.Duration(service.TTLSeconds) * time.Second), RequestID: requestID}
+		order := sqlOrder{ID: orderID, UserID: user.ID, ServiceID: service.ID, ServiceCode: service.Code, ServiceName: service.Name, MailboxID: mailbox.ID, MailboxAddress: mailbox.Address, Status: string(domain.OrderWaitingCode), PriceCents: service.PriceCents, CreatedAt: now, AssignedAt: &now, SubmittedAt: &now, ExpiresAt: now.Add(time.Duration(effectiveOrderTTLSeconds(service.TTLSeconds)) * time.Second), RequestID: requestID}
 		user.BalanceCents -= service.PriceCents
 		if err := tx.Model(&user).Update("balance_cents", user.BalanceCents).Error; err != nil {
 			return err
@@ -434,11 +434,11 @@ func (s *PostgresStore) CreateOrder(userID, serviceID, requestID string) (domain
 		if err := tx.Model(&sqlMailboxService{}).Where("mailbox_id = ? AND service_id = ?", mailbox.ID, service.ID).Updates(map[string]any{"state": domain.ServiceLeased, "changed_at": now}).Error; err != nil {
 			return err
 		}
-		ledger := sqlWalletLedger{ID: uuid.NewString(), UserID: user.ID, OrderID: order.ID, Type: "order_reserve", AmountCents: -service.PriceCents, BalanceAfterCents: user.BalanceCents, Description: "注册订单预扣"}
+		ledger := sqlWalletLedger{ID: uuid.NewString(), UserID: user.ID, OrderID: order.ID, Type: "order_charge", AmountCents: -service.PriceCents, BalanceAfterCents: user.BalanceCents, Description: "注册订单扣费"}
 		if err := tx.Create(&ledger).Error; err != nil {
 			return err
 		}
-		if err := s.enqueueOrderWebhook(tx, order, "order.assigned"); err != nil {
+		if err := s.enqueueOrderWebhook(tx, order, "order.waiting_code"); err != nil {
 			return err
 		}
 		result = mapOrder(order)
@@ -532,16 +532,6 @@ func (s *PostgresStore) ListAdminOrdersPage(filter AdminOrderFilter, page, pageS
 	return items, total
 }
 
-func (s *PostgresStore) SubmitOrder(id, userID string) (domain.Order, error) {
-	return s.updateOrder(id, userID, []domain.OrderStatus{domain.OrderAssigned}, func(order *sqlOrder, now time.Time) {
-		order.Status, order.SubmittedAt = string(domain.OrderWaitingCode), &now
-	})
-}
-
-func (s *PostgresStore) ReceiveCode(id string) (domain.Order, error) {
-	return s.ReceiveCodeValue(id, "")
-}
-
 func (s *PostgresStore) ReceiveCodeValue(id, code string) (domain.Order, error) {
 	var result domain.Order
 	err := s.db.Transaction(func(tx *gorm.DB) error {
@@ -549,13 +539,18 @@ func (s *PostgresStore) ReceiveCodeValue(id, code string) (domain.Order, error) 
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ?", id).Error; err != nil {
 			return ErrOrderNotFound
 		}
-		if domain.OrderStatus(order.Status) != domain.OrderWaitingCode {
+		status := domain.OrderStatus(order.Status)
+		if status != domain.OrderAssigned && status != domain.OrderWaitingCode {
 			return ErrInvalidOrderState
 		}
-		if code == "" {
-			code = codeFor(order.ServiceCode)
-		}
 		now := time.Now().UTC()
+		if !now.Before(order.ExpiresAt) {
+			return ErrInvalidOrderState
+		}
+		code = strings.TrimSpace(code)
+		if code == "" {
+			return ErrVerificationCodeRequired
+		}
 		order.Status, order.Code, order.CodeReceivedAt = string(domain.OrderCodeReceived), code, &now
 		if err := tx.Save(&order).Error; err != nil {
 			return err
@@ -708,7 +703,7 @@ func (s *PostgresStore) mailboxesPage(pool string, page, pageSize int) ([]domain
 		if stateMap[state.MailboxID] == nil {
 			stateMap[state.MailboxID] = make(map[string]domain.MailboxService)
 		}
-		stateMap[state.MailboxID][state.ServiceID] = domain.MailboxService{ServiceID: state.ServiceID, State: domain.ServiceMailboxState(state.State), ChangedAt: state.ChangedAt}
+		stateMap[state.MailboxID][state.ServiceID] = domain.MailboxService{ServiceID: state.ServiceID, State: domain.ServiceMailboxState(state.State), TimeoutCount: state.TimeoutCount, ChangedAt: state.ChangedAt}
 		if domain.ServiceMailboxState(state.State) == domain.ServiceConsumed {
 			consumedServiceIDs[state.ServiceID] = struct{}{}
 		}
@@ -796,12 +791,40 @@ func (s *PostgresStore) refundOrder(tx *gorm.DB, order *sqlOrder, status domain.
 	if err := tx.Model(&sqlMailbox{}).Where("id = ?", order.MailboxID).Updates(map[string]any{"state": domain.MailboxAvailable, "active_order_id": ""}).Error; err != nil {
 		return err
 	}
-	if err := tx.Model(&sqlMailboxService{}).Where("mailbox_id = ? AND service_id = ? AND state = ?", order.MailboxID, order.ServiceID, domain.ServiceLeased).Updates(map[string]any{"state": domain.ServiceAvailable, "changed_at": now}).Error; err != nil {
+	var mailboxService sqlMailboxService
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("mailbox_id = ? AND service_id = ?", order.MailboxID, order.ServiceID).First(&mailboxService).Error; err != nil {
 		return err
 	}
-	ledger := sqlWalletLedger{ID: uuid.NewString(), UserID: user.ID, OrderID: order.ID, Type: "order_refund", AmountCents: order.PriceCents, BalanceAfterCents: user.BalanceCents, Description: "注册订单退款"}
+	if domain.ServiceMailboxState(mailboxService.State) == domain.ServiceLeased {
+		mailboxService.State = string(domain.ServiceAvailable)
+		mailboxService.ChangedAt = now
+		if status == domain.OrderExpiredRefunded {
+			nextCount, nextState := nextTimeoutState(mailboxService.TimeoutCount)
+			mailboxService.TimeoutCount = nextCount
+			mailboxService.State = string(nextState)
+		}
+		if err := tx.Save(&mailboxService).Error; err != nil {
+			return err
+		}
+		if domain.ServiceMailboxState(mailboxService.State) == domain.ServiceConsumed {
+			detail := fmt.Sprintf("累计 %d 次订单超时未收到验证码，停止向该平台分配", mailboxService.TimeoutCount)
+			if err := tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: "system", Action: "mailbox.service.timeout_consume", ResourceType: "mailbox_service_state", ResourceID: order.MailboxID + ":" + order.ServiceID, Detail: detail}).Error; err != nil {
+				return err
+			}
+		}
+	}
+	description := "管理员取消订单退款"
+	if status == domain.OrderExpiredRefunded {
+		description = "30 分钟未收到验证码自动退款"
+	}
+	ledger := sqlWalletLedger{ID: uuid.NewString(), UserID: user.ID, OrderID: order.ID, Type: "order_refund", AmountCents: order.PriceCents, BalanceAfterCents: user.BalanceCents, Description: description}
 	if err := tx.Create(&ledger).Error; err != nil {
 		return err
+	}
+	if status == domain.OrderExpiredRefunded {
+		if err := tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: "system", Action: "order.timeout_refund", ResourceType: "registration_order", ResourceID: order.ID, Detail: description}).Error; err != nil {
+			return err
+		}
 	}
 	return s.enqueueOrderWebhook(tx, *order, "order."+order.Status)
 }
@@ -816,7 +839,7 @@ func mapUser(row sqlUser) domain.User {
 }
 
 func mapService(row sqlService) domain.Service {
-	return domain.Service{ID: row.ID, Code: row.Code, Name: row.Name, Description: row.Description, Enabled: row.Enabled, AllowedProviders: append([]string(nil), row.AllowedProviders...), Price: float64(row.PriceCents) / 100, TTLSeconds: row.TTLSeconds, SenderDomains: append([]string(nil), row.SenderDomains...), SubjectKeywords: append([]string(nil), row.SubjectKeywords...), Regex: row.Regex}
+	return domain.Service{ID: row.ID, Code: row.Code, Name: row.Name, Description: row.Description, Enabled: row.Enabled, AllowedProviders: append([]string(nil), row.AllowedProviders...), Price: float64(row.PriceCents) / 100, TTLSeconds: effectiveOrderTTLSeconds(row.TTLSeconds), SenderDomains: append([]string(nil), row.SenderDomains...), SubjectKeywords: append([]string(nil), row.SubjectKeywords...), Regex: row.Regex}
 }
 
 func mapMailbox(row sqlMailbox, states map[string]domain.MailboxService) domain.Mailbox {

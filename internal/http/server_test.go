@@ -23,7 +23,7 @@ import (
 	"github.com/ljunn/heromail/internal/store"
 )
 
-func TestCreateOrderAndReceiveCode(t *testing.T) {
+func TestCreateOrderAutomaticallyListensWithoutUserMutationEndpoints(t *testing.T) {
 	server := NewServer(store.New())
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/orders", bytes.NewBufferString(`{"service":"github","request_id":"http-test-001"}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -40,22 +40,67 @@ func TestCreateOrderAndReceiveCode(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &created); err != nil {
 		t.Fatalf("解析创建订单响应失败：%v", err)
 	}
-	if created.Data.Status != domain.OrderAssigned || created.Data.MailboxAddress == "" {
+	if created.Data.Status != domain.OrderWaitingCode || created.Data.SubmittedAt.IsZero() || created.Data.MailboxAddress == "" {
 		t.Fatalf("订单分配结果不正确：%+v", created.Data)
 	}
-
-	submit := httptest.NewRequest(http.MethodPost, "/api/v1/orders/"+created.Data.ID+"/submitted", nil)
-	submit.Header.Set("X-HeroMail-User", "user-001")
-	submitResponse := httptest.NewRecorder()
-	server.Router.ServeHTTP(submitResponse, submit)
-	if submitResponse.Code != http.StatusOK {
-		t.Fatalf("提交订单返回 %d，响应：%s", submitResponse.Code, submitResponse.Body.String())
+	if created.Data.ExpiresAt.Sub(created.Data.CreatedAt) < 30*time.Minute {
+		t.Fatalf("订单有效期 = %s，期望至少 30 分钟", created.Data.ExpiresAt.Sub(created.Data.CreatedAt))
+	}
+	for _, action := range []string{"submitted", "complete", "cancel"} {
+		mutation := httptest.NewRequest(http.MethodPost, "/api/v1/orders/"+created.Data.ID+"/"+action, nil)
+		mutation.Header.Set("X-HeroMail-User", "user-001")
+		mutationResponse := httptest.NewRecorder()
+		server.Router.ServeHTTP(mutationResponse, mutation)
+		if mutationResponse.Code != http.StatusNotFound {
+			t.Fatalf("用户状态接口 %s 返回 %d，期望 %d", action, mutationResponse.Code, http.StatusNotFound)
+		}
 	}
 
 	time.Sleep(1700 * time.Millisecond)
 	order, ok := server.Store.GetOrder(created.Data.ID)
-	if !ok || order.Status != domain.OrderCodeReceived || order.Code == "" {
-		t.Fatalf("演示验证码没有写入订单：%+v", order)
+	if !ok || order.Status != domain.OrderWaitingCode || order.Code != "" {
+		t.Fatalf("没有真实匹配邮件时订单不应生成验证码：%+v", order)
+	}
+}
+
+func TestAdminOwnsOrderCompletionAndCancellation(t *testing.T) {
+	repository := store.New()
+	server := NewServer(repository)
+	waiting, err := repository.CreateOrder("user-001", "svc-github", "admin-cancel")
+	if err != nil {
+		t.Fatalf("创建待收码订单失败：%v", err)
+	}
+	cancel := httptest.NewRequest(http.MethodPost, "/api/v1/admin/orders/"+waiting.ID+"/cancel", nil)
+	cancel.Header.Set("X-HeroMail-User", "admin-001")
+	cancel.Header.Set("X-HeroMail-Role", "admin")
+	cancelResponse := httptest.NewRecorder()
+	server.Router.ServeHTTP(cancelResponse, cancel)
+	if cancelResponse.Code != http.StatusOK {
+		t.Fatalf("管理员取消返回 %d：%s", cancelResponse.Code, cancelResponse.Body.String())
+	}
+
+	received, err := repository.CreateOrder("user-001", "svc-openai", "admin-complete")
+	if err != nil {
+		t.Fatalf("创建收码订单失败：%v", err)
+	}
+	if _, err := repository.ReceiveCodeValue(received.ID, "314159"); err != nil {
+		t.Fatalf("写入验证码失败：%v", err)
+	}
+	cancelReceived := httptest.NewRequest(http.MethodPost, "/api/v1/admin/orders/"+received.ID+"/cancel", nil)
+	cancelReceived.Header.Set("X-HeroMail-User", "admin-001")
+	cancelReceived.Header.Set("X-HeroMail-Role", "admin")
+	cancelReceivedResponse := httptest.NewRecorder()
+	server.Router.ServeHTTP(cancelReceivedResponse, cancelReceived)
+	if cancelReceivedResponse.Code != http.StatusConflict {
+		t.Fatalf("已收码订单取消返回 %d，期望 %d", cancelReceivedResponse.Code, http.StatusConflict)
+	}
+	complete := httptest.NewRequest(http.MethodPost, "/api/v1/admin/orders/"+received.ID+"/complete", nil)
+	complete.Header.Set("X-HeroMail-User", "admin-001")
+	complete.Header.Set("X-HeroMail-Role", "admin")
+	completeResponse := httptest.NewRecorder()
+	server.Router.ServeHTTP(completeResponse, complete)
+	if completeResponse.Code != http.StatusOK {
+		t.Fatalf("管理员完成订单返回 %d：%s", completeResponse.Code, completeResponse.Body.String())
 	}
 }
 
@@ -193,6 +238,27 @@ func TestStaticAssetsUseBuildVersion(t *testing.T) {
 	}
 	if assetResponse.Header().Get("Cache-Control") != "no-cache" {
 		t.Fatalf("静态资源缓存策略不正确：%s", assetResponse.Header().Get("Cache-Control"))
+	}
+}
+
+func TestMailboxMessagesDefaultCollapsed(t *testing.T) {
+	server := NewServer(store.New())
+	request := httptest.NewRequest(http.MethodGet, "/app.js", nil)
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("工作台脚本返回 %d，期望 %d", response.Code, http.StatusOK)
+	}
+
+	script := response.Body.String()
+	if !strings.Contains(script, `<details class="mailbox-message html-mode">`) || !strings.Contains(script, `<summary class="mailbox-message-head">`) {
+		t.Fatal("收件箱邮件没有使用默认折叠的语义化结构")
+	}
+	if !strings.Contains(script, `article.addEventListener("toggle"`) || !strings.Contains(script, `if (!article.open) return;`) {
+		t.Fatal("收件箱邮件没有在首次展开时延迟挂载 HTML 正文")
+	}
+	if !strings.Contains(script, `data-action="order-messages"`) || !strings.Contains(script, `/api/v1/orders/${encodeURIComponent(id)}/messages`) {
+		t.Fatal("用户订单没有平台隔离邮件入口")
 	}
 }
 
@@ -528,19 +594,31 @@ func TestAdminSaveServiceValidatesConfigPrecisely(t *testing.T) {
 	}{
 		{
 			name:        "缺少发件人域名",
-			body:        `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","hotmail"],"price":0.02,"ttl_seconds":600,"sender_domains":[],"subject_keywords":[],"regex":"\\b(\\d{6})\\b"}`,
+			body:        `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","hotmail"],"price":0.02,"ttl_seconds":1800,"sender_domains":[],"subject_keywords":[],"regex":"\\b(\\d{6})\\b"}`,
 			wantStatus:  http.StatusBadRequest,
 			wantMessage: "至少填写一个发件人域名",
 		},
 		{
+			name:        "缺少主题关键词",
+			body:        `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","hotmail"],"price":0.02,"ttl_seconds":1800,"sender_domains":["x.ai"],"subject_keywords":[],"regex":"\\b(\\d{6})\\b"}`,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "至少填写一个主题关键词",
+		},
+		{
 			name:        "不支持的邮箱供应商",
-			body:        `{"code":"grok","name":"Grok 注册","enabled":true,"allowed_providers":["gmail"],"price":0.02,"ttl_seconds":600,"sender_domains":["x.ai"],"regex":"\\b(\\d{6})\\b"}`,
+			body:        `{"code":"grok","name":"Grok 注册","enabled":true,"allowed_providers":["gmail"],"price":0.02,"ttl_seconds":1800,"sender_domains":["x.ai"],"regex":"\\b(\\d{6})\\b"}`,
 			wantStatus:  http.StatusBadRequest,
 			wantMessage: "只允许 outlook、outlook_de 和 hotmail",
 		},
 		{
+			name:        "收码时限不是三十分钟",
+			body:        `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","hotmail"],"price":0.02,"ttl_seconds":600,"sender_domains":["x.ai"],"subject_keywords":["verify"],"regex":"\\b(\\d{6})\\b"}`,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "任务有效期固定为 1800 秒",
+		},
+		{
 			name:       "有效配置",
-			body:       `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","outlook_de","hotmail"],"price":0.02,"ttl_seconds":600,"sender_domains":["x.ai"],"subject_keywords":[],"regex":"\\b(\\d{6})\\b"}`,
+			body:       `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","outlook_de","hotmail"],"price":0.02,"ttl_seconds":1800,"sender_domains":["x.ai"],"subject_keywords":["verify","验证码"],"regex":"\\b(\\d{6})\\b"}`,
 			wantStatus: http.StatusOK,
 		},
 	}

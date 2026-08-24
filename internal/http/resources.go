@@ -117,6 +117,52 @@ func (s *Server) adminMailboxMessages(c *gin.Context) {
 	writePage(c, messages, page, pageSize, total)
 }
 
+func (s *Server) userOrderMessages(c *gin.Context) {
+	userID := demoUser(c)
+	order, ok := s.Store.GetOrder(c.Param("id"))
+	if !ok || order.UserID != userID {
+		writeError(c, http.StatusNotFound, "order_not_found", "order not found")
+		return
+	}
+	if s.MailboxVerifier == nil {
+		writeError(c, http.StatusServiceUnavailable, "order_messages_unavailable", "订单邮件暂时不可用")
+		return
+	}
+	var service domain.Service
+	for _, candidate := range s.Store.ListServices() {
+		if candidate.ID == order.ServiceID || candidate.Code == order.ServiceCode {
+			service = candidate
+			break
+		}
+	}
+	if service.ID == "" {
+		writeError(c, http.StatusNotFound, "service_not_found", "目标平台不存在")
+		return
+	}
+	messages, err := s.MailboxVerifier.ReadMessages(c.Request.Context(), userID, order.MailboxID, c.ClientIP())
+	if err != nil {
+		writeError(c, http.StatusBadGateway, "order_messages_failed", "暂时无法读取该订单邮件")
+		return
+	}
+	messages = mail.FilterMessagesForOrder(service, order, messages)
+	page, pageSize := pageRequest(c)
+	total := int64(len(messages))
+	start := (page - 1) * pageSize
+	if start >= len(messages) {
+		messages = []mail.Message{}
+	} else {
+		end := start + pageSize
+		if end > len(messages) {
+			end = len(messages)
+		}
+		messages = messages[start:end]
+	}
+	if audit, ok := s.Store.(store.AuditRepository); ok {
+		_ = audit.WriteAudit(userID, "order.messages.read", "registration_order", order.ID, "用户查看订单对应平台邮件", c.ClientIP())
+	}
+	writePage(c, messages, page, pageSize, total)
+}
+
 func (s *Server) adminImportMailboxes(c *gin.Context) {
 	repository, ok := s.Store.(store.ResourceRepository)
 	queue, queueOK := s.Store.(store.MailboxVerificationQueue)
@@ -213,8 +259,8 @@ func (s *Server) adminSaveService(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "invalid_service_config", "单价不能小于 0")
 		return
 	}
-	if request.TTLSeconds < 60 || request.TTLSeconds > 86400 {
-		writeError(c, http.StatusBadRequest, "invalid_service_config", "有效期必须在 60 到 86400 秒之间")
+	if request.TTLSeconds != domain.MinimumOrderTTLSeconds {
+		writeError(c, http.StatusBadRequest, "invalid_service_config", "任务有效期固定为 1800 秒")
 		return
 	}
 	if len(request.AllowedProviders) == 0 {
@@ -229,6 +275,10 @@ func (s *Server) adminSaveService(c *gin.Context) {
 	}
 	if len(request.SenderDomains) == 0 {
 		writeError(c, http.StatusBadRequest, "invalid_service_config", "至少填写一个发件人域名")
+		return
+	}
+	if len(request.SubjectKeywords) == 0 {
+		writeError(c, http.StatusBadRequest, "invalid_service_config", "至少填写一个主题关键词")
 		return
 	}
 	service, err := repository.SaveService(demoUser(c), request, c.ClientIP())

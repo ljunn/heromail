@@ -63,7 +63,8 @@ const iconPaths = {
   code: `<path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14"/>`,
   sparkle: `<path d="m12 3 1.2 4.8L18 9l-4.8 1.2L12 15l-1.2-4.8L6 9l4.8-1.2zM18 16l.6 2.4L21 19l-2.4.6L18 22l-.6-2.4L15 19l2.4-.6z"/>`,
   message: `<path d="M4 5h16v11H9l-5 4z"/><path d="M8 10h8M8 13h5"/>`,
-  send: `<path d="m3 11 18-8-8 18-2-8zM11 13l5-5"/>`
+  send: `<path d="m3 11 18-8-8 18-2-8zM11 13l5-5"/>`,
+  chevronDown: `<path d="m7 10 5 5 5-5"/>`
 };
 
 function icon(name, className = "") {
@@ -163,17 +164,17 @@ function serviceCard(service) {
   return `<button type="button" class="service-card ${selected ? "selected" : ""}" data-action="service" data-service="${esc(service.code)}" aria-pressed="${selected}"><span class="service-logo">${icon(serviceIcons[service.code] || "globe")}</span><span class="service-name">${esc(service.name)}</span><span class="service-desc">${esc(service.description)}</span>${selected ? `<span class="selected-mark">✓</span>` : ""}</button>`;
 }
 
-function selectedService() { return state.services.find(service => service.code === state.selectedService) || state.services[0] || { name: "目标平台", price: 0, ttl_seconds: 600, allowed_providers: [] }; }
+function selectedService() { return state.services.find(service => service.code === state.selectedService) || state.services[0] || { name: "目标平台", price: 0, ttl_seconds: 1800, allowed_providers: [] }; }
 
 function renderApplyServiceGrid() {
   return state.services.map(serviceCard).join("") || `<div class="empty portal-empty-service"><strong>暂时没有可用平台</strong><span>请稍后刷新，或联系管理员确认服务状态。</span><button class="ghost-btn" data-action="refresh">刷新平台</button></div>`;
 }
 
 function renderApplySummary(service = selectedService()) {
-  const inventory = Number(service.available_mailboxes || 0); const ttlMinutes = Math.max(1, Math.round(Number(service.ttl_seconds || 600) / 60)); const providers = providerList(service.allowed_providers);
+  const inventory = Number(service.available_mailboxes || 0); const ttlMinutes = Math.max(1, Math.round(Number(service.ttl_seconds || 1800) / 60)); const providers = providerList(service.allowed_providers);
   const balance = Number(state.user?.balance || 0); const price = Number(service.price || 0); const enoughBalance = balance >= price;
   const submit = state.busy ? `<button class="primary-btn portal-submit" disabled>正在分配…</button>` : !inventory ? `<button class="ghost-btn portal-submit" disabled>当前无可用库存</button>` : !enoughBalance ? `<button class="primary-btn portal-submit" data-action="view" data-view="balance">余额不足，去充值</button>` : `<button class="primary-btn portal-submit" data-action="create">申请邮箱</button>`;
-  return `${state.orderError ? `<div class="inline-error" role="alert">${icon("activity")}<span>${esc(state.orderError)}</span></div>` : ""}<dl class="config-list"><div class="config-row"><dt>目标平台</dt><dd>${esc(service.name)}</dd></div><div class="config-row"><dt>邮箱类型</dt><dd>${esc(providers)}</dd></div><div class="config-row"><dt>可用库存</dt><dd>${inventory} 个</dd></div><div class="config-row"><dt>任务有效期</dt><dd>${ttlMinutes} 分钟</dd></div><div class="config-row"><dt>本次费用</dt><dd>${money(price)}</dd></div><div class="config-row"><dt>扣款规则</dt><dd>分配失败不扣，超时自动退</dd></div></dl>${submit}<p class="portal-policy">点击申请后会预扣本次费用。验证码到账后再完成结算。</p>`;
+  return `${state.orderError ? `<div class="inline-error" role="alert">${icon("activity")}<span>${esc(state.orderError)}</span></div>` : ""}<dl class="config-list"><div class="config-row"><dt>目标平台</dt><dd>${esc(service.name)}</dd></div><div class="config-row"><dt>邮箱类型</dt><dd>${esc(providers)}</dd></div><div class="config-row"><dt>可用库存</dt><dd>${inventory} 个</dd></div><div class="config-row"><dt>收码时限</dt><dd>${ttlMinutes} 分钟</dd></div><div class="config-row"><dt>本次费用</dt><dd>${money(price)}</dd></div><div class="config-row"><dt>扣款规则</dt><dd>下单即扣，超时自动退</dd></div></dl>${submit}<p class="portal-policy">申请成功后后台立即开始收码，30 分钟未收到验证码会自动退款。</p>`;
 }
 
 function renderApplyTaskBody() {
@@ -188,14 +189,12 @@ function renderApply() {
 
 function renderTask(order) {
   const status = order.status;
-  const steps = [["assigned", "邮箱已分配"], ["waiting_code", "等待收码"], ["code_received", "验证码已收到"], ["completed", "任务完成"]];
-  const index = { assigned: 0, waiting_code: 1, code_received: 2, completed: 3 }[status] ?? 0;
+  const steps = [["waiting_code", "后台收码"], ["code_received", "验证码已收到"], ["completed", "后台已归档"]];
+  const index = { assigned: 0, waiting_code: 0, code_received: 1, completed: 2 }[status] ?? 0;
   const remain = Math.max(0, Math.floor((new Date(order.expires_at) - Date.now()) / 1000));
-  const actionBusy = state.busyAction && state.busyAction !== "";
   const countdown = `${Math.floor(remain / 60)}:${String(remain % 60).padStart(2, "0")}`;
   const countdownMarkup = `<span data-order-countdown="${esc(order.id)}">${countdown}</span>`;
-  const guidance = status === "assigned" ? `请将此邮箱填写到 ${esc(order.service_name)} 注册页面，提交注册后点击下方按钮。` : status === "waiting_code" ? `已开始接收 ${esc(order.service_name)} 的验证邮件，验证码到达后会自动显示。` : "";
-  return `<div class="steps">${steps.map(([key, label], i) => `<div class="step ${i < index ? "done" : i === index ? "current" : ""}">${label}</div>`).join("")}</div><div class="task-mail"><code>${esc(order.mailbox_address)}</code><button class="link-btn" data-action="copy" data-copy="${esc(order.mailbox_address)}">复制邮箱</button></div>${guidance ? `<div class="notice">${guidance}</div>` : ""}${status === "assigned" ? `<div class="action-row"><button class="primary-btn" data-action="submit" data-order="${order.id}" ${actionBusy ? "disabled" : ""}>${state.busyAction === "submitted" ? "正在提交…" : "我已提交注册"}</button><button class="danger-btn" data-action="cancel" data-order="${order.id}" ${actionBusy ? "disabled" : ""}>取消并退款</button></div>` : ""}${status === "waiting_code" ? `<div class="notice warning">正在等待平台注册邮件，剩余 ${countdownMarkup}。</div>` : ""}${order.code ? `<div class="code-box"><div><div class="code-label">验证码（已收到）</div><div class="code">${esc(order.code)}</div></div><div class="timer">${countdownMarkup}</div></div><div class="notice success">验证码已提取成功，请在目标平台完成验证。</div>${status === "code_received" ? `<div class="action-row"><button class="primary-btn" data-action="complete" data-order="${order.id}" ${actionBusy ? "disabled" : ""}>${state.busyAction === "complete" ? "正在完成…" : "完成注册"}</button></div>` : ""}` : ""}`;
+  return `<div class="steps">${steps.map(([key, label], i) => `<div class="step ${i < index ? "done" : i === index ? "current" : ""}">${label}</div>`).join("")}</div><div class="task-mail"><code>${esc(order.mailbox_address)}</code><div class="task-mail-actions"><button class="link-btn" data-action="copy" data-copy="${esc(order.mailbox_address)}">复制邮箱</button><button class="link-btn" data-action="order-messages" data-order="${esc(order.id)}">相关邮件</button></div></div>${status === "assigned" || status === "waiting_code" ? `<div class="notice warning">后台正在匹配 ${esc(order.service_name)} 验证邮件，剩余 ${countdownMarkup}。</div>` : ""}${order.code ? `<div class="code-box"><div><div class="code-label">验证码（已收到）</div><div class="code">${esc(order.code)}</div></div></div><div class="notice success">验证码已从目标平台邮件中提取。</div>` : ""}`;
 }
 
 function renderRecentOrders() {
@@ -245,9 +244,19 @@ function updateTaskCountdown(order) {
 }
 
 function renderOrders() {
-  const filters = state.userOrderFilters; const total = state.pagination.orders?.total || 0;
+  const filters = state.userOrderFilters;
+  const total = state.pagination.orders?.total || 0;
   const statusOptions = [["", "全部状态"], ["assigned", "等待提交"], ["waiting_code", "收码中"], ["code_received", "已收码"], ["completed", "已完成"], ["canceled", "已取消"], ["expired_refunded", "已退款"]];
-  return pageHead("订单记录", "按平台、状态或订单号查找历史任务。敏感邮箱和验证码只在订单详情中显示。", `<button class="primary-btn" data-action="view" data-view="apply">申请邮箱</button>`) + `<div class="stat-grid">${stat("筛选结果", total, "服务端分页")}${stat("当前任务", state.currentOrder ? 1 : 0, "正在处理")}${stat("当前页", state.orders.length, "本页记录")}</div><form class="filter-bar" data-form="user-order-filters"><select id="user-order-service" class="select" aria-label="目标平台"><option value="">全部平台</option>${state.services.map(service => `<option value="${esc(service.code)}" ${filters.service === service.code ? "selected" : ""}>${esc(service.name)}</option>`).join("")}</select><select id="user-order-status" class="select" aria-label="订单状态">${statusOptions.map(([value, label]) => `<option value="${value}" ${filters.status === value ? "selected" : ""}>${label}</option>`).join("")}</select><input id="user-order-query" class="search" value="${esc(filters.query)}" placeholder="订单号或邮箱"><button class="primary-btn" type="submit">查询</button>${filters.status || filters.service || filters.query ? `<button class="ghost-btn" type="button" data-action="reset-user-order-filters">清空</button>` : ""}</form><div class="card"><div class="table-wrap"><table><thead><tr><th>订单号</th><th>目标平台</th><th>状态</th><th>费用</th><th>有效期</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${state.orders.length ? state.orders.map(order => `<tr class="${state.currentOrder && state.currentOrder.id === order.id ? "selected" : ""}"><td>${esc(order.id)}</td><td>${esc(order.service_name)}</td><td>${statusChip(order.status)}</td><td>${money(order.price)}</td><td>${order.status === "completed" ? "—" : time(order.expires_at)}</td><td>${time(order.created_at)}</td><td><button class="link-btn" data-action="select-order" data-order="${order.id}">查看详情</button></td></tr>`).join("") : `<tr><td colspan="7" class="empty">没有符合条件的订单，可清空筛选或申请新邮箱</td></tr>`}</tbody></table></div>${renderPager("orders")}</div>${state.currentOrder ? `<div class="card order-detail-card"><div class="card-head"><h2>订单详情 · ${esc(state.currentOrder.id)}</h2>${statusChip(state.currentOrder.status)}</div><div class="card-body"><div class="task-mail"><code>${esc(state.currentOrder.mailbox_address)}</code><button class="link-btn" data-action="copy" data-copy="${esc(state.currentOrder.mailbox_address)}">复制邮箱</button></div>${state.currentOrder.code ? `<div class="code-box"><div><div class="code-label">验证码</div><div class="code">${esc(state.currentOrder.code)}</div></div></div>` : ""}<div class="timeline">${[["创建订单", state.currentOrder.created_at], ["分配邮箱", state.currentOrder.assigned_at], ["用户已提交", state.currentOrder.submitted_at], ["收到验证码", state.currentOrder.code_received_at], ["完成结算", state.currentOrder.completed_at]].map(([label, value]) => `<div class="timeline-item ${value ? "done" : ""}"><span class="timeline-dot"></span><div><div class="timeline-title">${label}</div><div class="timeline-time">${time(value)}</div></div></div>`).join("")}</div><div class="notice">邮箱凭证和完整邮件内容不会提供。提交后未收到验证码会按规则自动退款。</div></div></div>` : ""}`;
+  const filterBar = `<form class="filter-bar" data-form="user-order-filters"><select id="user-order-service" class="select" aria-label="目标平台"><option value="">全部平台</option>${state.services.map(service => `<option value="${esc(service.code)}" ${filters.service === service.code ? "selected" : ""}>${esc(service.name)}</option>`).join("")}</select><select id="user-order-status" class="select" aria-label="订单状态">${statusOptions.map(([value, label]) => `<option value="${value}" ${filters.status === value ? "selected" : ""}>${label}</option>`).join("")}</select><input id="user-order-query" class="search" value="${esc(filters.query)}" placeholder="订单号或邮箱"><button class="primary-btn" type="submit">查询</button>${filters.status || filters.service || filters.query ? `<button class="ghost-btn" type="button" data-action="reset-user-order-filters">清空</button>` : ""}</form>`;
+  const rows = state.orders.length ? state.orders.map(order => `<tr class="${state.currentOrder && state.currentOrder.id === order.id ? "selected" : ""}"><td>${esc(order.id)}</td><td>${esc(order.service_name)}</td><td>${statusChip(order.status)}</td><td>${money(order.price)}</td><td>${order.status === "completed" ? "—" : time(order.expires_at)}</td><td>${time(order.created_at)}</td><td><button class="link-btn" data-action="select-order" data-order="${order.id}">查看详情</button></td></tr>`).join("") : `<tr><td colspan="7" class="empty">没有符合条件的订单，可清空筛选或申请新邮箱</td></tr>`;
+  const orderList = `<div class="card"><div class="table-wrap"><table><thead><tr><th>订单号</th><th>目标平台</th><th>状态</th><th>费用</th><th>有效期</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>${renderPager("orders")}</div>`;
+  let detail = "";
+  if (state.currentOrder) {
+    const order = state.currentOrder;
+    const timeline = [["创建并扣费", order.created_at], ["分配邮箱", order.assigned_at], ["后台开始收码", order.submitted_at], ["收到验证码", order.code_received_at], ["后台归档", order.completed_at]].map(([label, value]) => `<div class="timeline-item ${value ? "done" : ""}"><span class="timeline-dot"></span><div><div class="timeline-title">${label}</div><div class="timeline-time">${time(value)}</div></div></div>`).join("");
+    detail = `<div class="card order-detail-card"><div class="card-head"><h2>订单详情 · ${esc(order.id)}</h2>${statusChip(order.status)}</div><div class="card-body"><div class="task-mail"><code>${esc(order.mailbox_address)}</code><div class="task-mail-actions"><button class="link-btn" data-action="copy" data-copy="${esc(order.mailbox_address)}">复制邮箱</button><button class="link-btn" data-action="order-messages" data-order="${esc(order.id)}">相关邮件</button></div></div>${order.code ? `<div class="code-box"><div><div class="code-label">验证码</div><div class="code">${esc(order.code)}</div></div></div>` : ""}<div class="timeline">${timeline}</div><div class="notice">邮件仅按该订单的平台规则和有效期隔离展示，其他平台及其他时间段的邮件不可见。</div></div></div>`;
+  }
+  return pageHead("订单记录", "按平台、状态或订单号查找历史任务。敏感邮箱和验证码只在订单详情中显示。", `<button class="primary-btn" data-action="view" data-view="apply">申请邮箱</button>`) + `<div class="stat-grid">${stat("筛选结果", total, "服务端分页")}${stat("当前任务", state.currentOrder ? 1 : 0, "正在处理")}${stat("当前页", state.orders.length, "本页记录")}</div>${filterBar}${orderList}${detail}`;
 }
 
 function renderCurrentTaskBody() {
@@ -343,43 +352,60 @@ const emailPreviewStyle = `
   .remote-image-placeholder { display: inline-flex; align-items: center; min-height: 30px; padding: 5px 9px; border: 1px dashed #cad4e2; border-radius: 5px; color: #68778c; background: #f6f8fb; font-size: 12px; }
 `;
 
-function renderMailboxMessages(messages, pagination, id, address) {
-  const shownAddress = address || "邮箱";
+function renderMailboxMessages(messages, pagination, options = {}) {
+  const id = options.id || "";
+  const shownAddress = options.address || "邮箱";
+  const pageAction = options.pageAction || "mailbox-message-page";
+  const totalLabel = options.totalLabel || `共 ${pagination.total || messages.length} 封，最多读取最近 1000 封`;
   const messageList = messages.map((message, index) => {
     const content = message.body || message.body_preview || "（无正文）";
-    return `<article class="mailbox-message html-mode"><div class="mailbox-message-head"><div><strong>${esc(message.subject || "无主题")}</strong><span>${esc(message.sender || "未知发件人")}</span></div><time>${time(message.received_at)}</time></div><div class="mailbox-message-tools" role="group" aria-label="邮件正文显示方式"><button class="mailbox-mode-btn active" type="button" data-action="mailbox-message-mode" data-mode="html" aria-pressed="true">HTML 阅读</button><button class="mailbox-mode-btn" type="button" data-action="mailbox-message-mode" data-mode="plain" aria-pressed="false">纯文本</button></div><iframe class="mailbox-message-html" data-message-index="${index}" title="邮件 HTML 内容" sandbox></iframe><pre class="mailbox-message-plain">${esc(content)}</pre></article>`;
+    return `<details class="mailbox-message html-mode"><summary class="mailbox-message-head"><div><strong>${esc(message.subject || "无主题")}</strong><span>${esc(message.sender || "未知发件人")}</span></div><time>${time(message.received_at)}</time><span class="mailbox-message-chevron">${icon("chevronDown")}</span></summary><div class="mailbox-message-content"><div class="mailbox-message-tools" role="group" aria-label="邮件正文显示方式"><button class="mailbox-mode-btn active" type="button" data-action="mailbox-message-mode" data-mode="html" aria-pressed="true">HTML 阅读</button><button class="mailbox-mode-btn" type="button" data-action="mailbox-message-mode" data-mode="plain" aria-pressed="false">纯文本</button></div><iframe class="mailbox-message-html" data-message-index="${index}" title="邮件 HTML 内容" sandbox></iframe><pre class="mailbox-message-plain">${esc(content)}</pre></div></details>`;
   }).join("");
-  const pager = pagination.total_pages > 1 ? `<div class="mailbox-message-pager"><button class="ghost-btn" data-action="mailbox-message-page" data-id="${esc(id)}" data-address="${esc(shownAddress)}" data-page="${pagination.page - 1}" ${pagination.page <= 1 ? "disabled" : ""}>上一页</button><span>第 ${pagination.page} / ${pagination.total_pages} 页</span><button class="ghost-btn" data-action="mailbox-message-page" data-id="${esc(id)}" data-address="${esc(shownAddress)}" data-page="${pagination.page + 1}" ${pagination.page >= pagination.total_pages ? "disabled" : ""}>下一页</button></div>` : "";
-  return `<div class="mailbox-messages-meta"><span>共 ${pagination.total || messages.length} 封，最多读取最近 1000 封</span><span class="mailbox-messages-note">${icon("shieldUser")} HTML 在隔离沙箱中预览，远程图片已屏蔽</span></div><div class="mailbox-message-list">${messageList}</div>${pager}`;
+  const pager = pagination.total_pages > 1 ? `<div class="mailbox-message-pager"><button class="ghost-btn" data-action="${pageAction}" data-id="${esc(id)}" data-address="${esc(shownAddress)}" data-page="${pagination.page - 1}" ${pagination.page <= 1 ? "disabled" : ""}>上一页</button><span>第 ${pagination.page} / ${pagination.total_pages} 页</span><button class="ghost-btn" data-action="${pageAction}" data-id="${esc(id)}" data-address="${esc(shownAddress)}" data-page="${pagination.page + 1}" ${pagination.page >= pagination.total_pages ? "disabled" : ""}>下一页</button></div>` : "";
+  return `<div class="mailbox-messages-meta"><span>${esc(totalLabel)}</span><span class="mailbox-messages-note">${icon("shieldUser")} HTML 在隔离沙箱中预览，远程图片已屏蔽</span></div><div class="mailbox-message-list">${messageList}</div>${pager}`;
 }
 
 function mountMailboxMessageFrames(messages) {
-  document.querySelectorAll(".mailbox-message-html[data-message-index]").forEach(frame => {
-    const message = messages[Number(frame.dataset.messageIndex)] || {};
-    frame.sandbox = "";
-    frame.referrerPolicy = "no-referrer";
-    frame.srcdoc = emailPreviewDocument(message.body || message.body_preview || "（无正文）", message.body_type);
+  document.querySelectorAll(".mailbox-message").forEach(article => {
+    article.addEventListener("toggle", () => {
+      if (!article.open) return;
+      const frame = article.querySelector(".mailbox-message-html[data-message-index]");
+      if (!frame || frame.dataset.mounted === "true") return;
+      const message = messages[Number(frame.dataset.messageIndex)] || {};
+      frame.dataset.mounted = "true";
+      frame.sandbox = "";
+      frame.referrerPolicy = "no-referrer";
+      frame.srcdoc = emailPreviewDocument(message.body || message.body_preview || "（无正文）", message.body_type);
+    });
   });
 }
 
-async function showMailboxMessages(id, address, page = 1) {
+async function showMessageList({ id, address, page = 1, endpoint, title, subtitle, pageAction, totalLabel, emptyText }) {
   document.querySelector("#secret-modal")?.remove();
-  document.body.insertAdjacentHTML("beforeend", `<div id="secret-modal" class="modal-backdrop"><div class="modal mailbox-messages-modal"><div class="card-head"><div><h2>收件箱</h2><div class="modal-subtitle">${esc(address || "邮箱")} · 只读查看</div></div><button class="icon-btn" data-action="close-modal" title="关闭">×</button></div><div class="card-body mailbox-messages-body"><div class="portal-loading">正在读取收件箱…</div></div></div></div>`);
+  document.body.insertAdjacentHTML("beforeend", `<div id="secret-modal" class="modal-backdrop"><div class="modal mailbox-messages-modal"><div class="card-head"><div><h2>${esc(title)}</h2><div class="modal-subtitle">${esc(subtitle)}</div></div><button class="icon-btn" data-action="close-modal" title="关闭">×</button></div><div class="card-body mailbox-messages-body"><div class="portal-loading">正在读取邮件…</div></div></div></div>`);
   try {
-    const result = await api(`/api/v1/admin/mailboxes/${encodeURIComponent(id)}/messages?page=${page}&page_size=50`);
+    const result = await api(`${endpoint}?page=${page}&page_size=50`);
     const messages = result.data || [];
     const pagination = result.pagination || {};
     const body = document.querySelector(".mailbox-messages-body");
     if (!body) return;
-    body.innerHTML = messages.length ? renderMailboxMessages(messages, pagination, id, address) : `<div class="empty">收件箱暂无邮件</div>`;
+    body.innerHTML = messages.length ? renderMailboxMessages(messages, pagination, { id, address, pageAction, totalLabel: totalLabel(result) }) : `<div class="empty">${esc(emptyText)}</div>`;
     if (messages.length) mountMailboxMessageFrames(messages);
   } catch (error) {
     const body = document.querySelector(".mailbox-messages-body");
     if (body) body.innerHTML = `<div class="inline-error" role="alert">${icon("activity")}<span>${esc(error.message)}</span></div>`;
   }
 }
+
+function showMailboxMessages(id, address, page = 1) {
+  return showMessageList({ id, address, page, endpoint: `/api/v1/admin/mailboxes/${encodeURIComponent(id)}/messages`, title: "收件箱", subtitle: `${address || "邮箱"} · 只读查看`, pageAction: "mailbox-message-page", totalLabel: result => `共 ${result.pagination?.total || 0} 封，最多读取最近 1000 封`, emptyText: "收件箱暂无邮件" });
+}
+
+function showOrderMessages(id, page = 1) {
+  return showMessageList({ id, address: "", page, endpoint: `/api/v1/orders/${encodeURIComponent(id)}/messages`, title: "相关邮件", subtitle: "只显示本订单平台与有效期内匹配的邮件", pageAction: "order-message-page", totalLabel: result => `共 ${result.pagination?.total || 0} 封平台相关邮件`, emptyText: "暂未收到与本订单平台匹配的邮件" });
+}
 function renderAdminServices() {
-  return pageHead("目标平台", "在一处配置可用邮箱、邮件匹配、价格和任务有效期。", `<button class="primary-btn" data-action="edit-service">新建目标平台</button>`) + `<div class="card"><div class="table-wrap"><table><thead><tr><th>平台</th><th>邮箱类型</th><th>邮件匹配</th><th>库存</th><th>单价 / 有效期</th><th>状态</th><th>操作</th></tr></thead><tbody>${state.services.map(service => `<tr><td><strong>${esc(service.name)}</strong><div class="muted"><code>${esc(service.code)}</code> · ${esc(service.description)}</div></td><td>${esc(providerList(service.allowed_providers))}</td><td><div>${esc((service.sender_domains || []).join(", "))}</div><div class="muted">${esc((service.subject_keywords || []).join(", ") || "不限制主题")}</div></td><td><strong>${service.available_mailboxes ?? 0}</strong><div class="muted">租用 ${service.leased_mailboxes ?? 0} · 已使用 ${service.consumed_mailboxes ?? 0}</div></td><td>${money(service.price)}<div class="muted">${Math.round(service.ttl_seconds / 60)} 分钟</div></td><td>${service.enabled ? `<span class="chip green">启用</span>` : `<span class="chip red">停用</span>`}</td><td><div class="table-actions"><button class="link-btn" data-action="edit-service" data-id="${esc(service.id)}">编辑</button><button class="link-btn danger-text" data-action="delete-service" data-id="${esc(service.id)}">删除</button></div></td></tr>`).join("") || `<tr><td colspan="7" class="empty">暂无目标平台</td></tr>`}</tbody></table></div>${renderPager("admin-services")}</div>`;
+  return pageHead("目标平台", "在一处配置可用邮箱、邮件匹配、价格和任务有效期。", `<button class="primary-btn" data-action="edit-service">新建目标平台</button>`) + `<div class="card"><div class="table-wrap"><table><thead><tr><th>平台</th><th>邮箱类型</th><th>邮件匹配</th><th>库存</th><th>单价 / 有效期</th><th>状态</th><th>操作</th></tr></thead><tbody>${state.services.map(service => `<tr><td><strong>${esc(service.name)}</strong><div class="muted"><code>${esc(service.code)}</code> · ${esc(service.description)}</div></td><td>${esc(providerList(service.allowed_providers))}</td><td><div>${esc((service.sender_domains || []).join(", "))}</div><div class="muted">${esc((service.subject_keywords || []).join(", ") || "未配置主题关键词")}</div></td><td><strong>${service.available_mailboxes ?? 0}</strong><div class="muted">租用 ${service.leased_mailboxes ?? 0} · 已使用 ${service.consumed_mailboxes ?? 0}</div></td><td>${money(service.price)}<div class="muted">${Math.round(service.ttl_seconds / 60)} 分钟</div></td><td>${service.enabled ? `<span class="chip green">启用</span>` : `<span class="chip red">停用</span>`}</td><td><div class="table-actions"><button class="link-btn" data-action="edit-service" data-id="${esc(service.id)}">编辑</button><button class="link-btn danger-text" data-action="delete-service" data-id="${esc(service.id)}">删除</button></div></td></tr>`).join("") || `<tr><td colspan="7" class="empty">暂无目标平台</td></tr>`}</tbody></table></div>${renderPager("admin-services")}</div>`;
 }
 
 function renderAdminOrders() {
@@ -393,8 +419,9 @@ function renderAdminOrders() {
 function renderAdminOrderDrawer() {
   const order = state.currentOrder;
   if (!order || state.view !== "admin-orders") return "";
-  const timeline = [["创建订单", order.created_at], ["分配邮箱", order.assigned_at], ["用户已提交", order.submitted_at], ["收到验证码", order.code_received_at], ["完成结算", order.completed_at]];
-  return `<div class="detail-layer"><button class="detail-scrim" data-action="close-order-detail" aria-label="关闭订单详情"></button><aside class="detail-panel" aria-label="订单详情"><div class="detail-panel-head"><div><span class="detail-eyebrow">订单详情</span><h2>${esc(order.id)}</h2></div><button class="icon-btn" data-action="close-order-detail" title="关闭">×</button></div><div class="detail-panel-body"><div class="detail-status">${statusChip(order.status)}<span>${order.refunded ? "费用已退回" : "按订单状态结算"}</span></div><dl class="detail-list"><div><dt>用户</dt><dd>${esc(order.user_email || order.user_id)}<small>${esc(order.user_id)}</small></dd></div><div><dt>目标平台</dt><dd>${esc(order.service_name)}</dd></div><div><dt>分配邮箱</dt><dd>${esc(order.mailbox_address)}</dd></div><div><dt>验证码</dt><dd>${esc(order.code || "尚未收到")}</dd></div><div><dt>费用</dt><dd>${money(order.price)}</dd></div><div><dt>请求 ID</dt><dd>${esc(order.request_id || "—")}</dd></div><div><dt>失败原因</dt><dd class="${order.failure_reason ? "danger-text" : ""}">${esc(order.failure_reason || "无")}</dd></div></dl><section class="detail-section"><h3>状态时间线</h3><div class="timeline">${timeline.map(([label, value]) => `<div class="timeline-item ${value ? "done" : ""}"><span class="timeline-dot"></span><div><div class="timeline-title">${label}</div><div class="timeline-time">${time(value)}</div></div></div>`).join("")}</div></section></div></aside></div>`;
+  const timeline = [["创建并扣费", order.created_at], ["分配邮箱", order.assigned_at], ["后台开始收码", order.submitted_at], ["收到验证码", order.code_received_at], ["后台归档", order.completed_at]];
+  const actions = ["assigned", "waiting_code"].includes(order.status) ? `<button class="danger-btn" data-action="admin-order-transition" data-order="${esc(order.id)}" data-transition="cancel">取消并退款</button>` : order.status === "code_received" ? `<button class="primary-btn" data-action="admin-order-transition" data-order="${esc(order.id)}" data-transition="complete">完成归档</button>` : "";
+  return `<div class="detail-layer"><button class="detail-scrim" data-action="close-order-detail" aria-label="关闭订单详情"></button><aside class="detail-panel" aria-label="订单详情"><div class="detail-panel-head"><div><span class="detail-eyebrow">订单详情</span><h2>${esc(order.id)}</h2></div><button class="icon-btn" data-action="close-order-detail" title="关闭">×</button></div><div class="detail-panel-body"><div class="detail-status">${statusChip(order.status)}<span>${order.refunded ? "费用已退回" : "下单已扣费"}</span></div><dl class="detail-list"><div><dt>用户</dt><dd>${esc(order.user_email || order.user_id)}<small>${esc(order.user_id)}</small></dd></div><div><dt>目标平台</dt><dd>${esc(order.service_name)}</dd></div><div><dt>分配邮箱</dt><dd>${esc(order.mailbox_address)}</dd></div><div><dt>验证码</dt><dd>${esc(order.code || "尚未收到")}</dd></div><div><dt>费用</dt><dd>${money(order.price)}</dd></div><div><dt>请求 ID</dt><dd>${esc(order.request_id || "—")}</dd></div><div><dt>失败原因</dt><dd class="${order.failure_reason ? "danger-text" : ""}">${esc(order.failure_reason || "无")}</dd></div></dl><section class="detail-section"><h3>状态时间线</h3><div class="timeline">${timeline.map(([label, value]) => `<div class="timeline-item ${value ? "done" : ""}"><span class="timeline-dot"></span><div><div class="timeline-title">${label}</div><div class="timeline-time">${time(value)}</div></div></div>`).join("")}</div></section>${actions ? `<div class="detail-actions">${actions}</div>` : ""}</div></aside></div>`;
 }
 
 function renderPager(key) {
@@ -412,7 +439,7 @@ function renderUsage() {
 
 function renderBalance() {
   const paymentBusy = state.busyAction === "payment";
-  return pageHead("余额与充值", "充值用于申请邮箱；支付订单和资金流水分别记录，方便核对。", `<button class="ghost-btn" data-action="view" data-view="usage">查看资金流水</button>`) + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>创建充值订单</h2><strong>${money(state.user.balance)}</strong></div><div class="card-body form-grid">${state.paymentError ? `<div class="inline-error" role="alert">${icon("activity")}<span>${esc(state.paymentError)}</span></div>` : ""}<label>充值金额<input id="topup-amount" class="field" type="number" min="1" max="100000" step="0.01" value="50" ${paymentBusy ? "disabled" : ""}></label><label>支付方式<select id="topup-method" class="field" ${paymentBusy ? "disabled" : ""}>${state.paymentMethods.map(method => `<option value="${esc(method)}">${method === "alipay" ? "支付宝" : esc(method)}</option>`).join("")}</select></label><button class="primary-btn" data-action="create-payment" ${state.paymentMethods.length && !paymentBusy ? "" : "disabled"}>${paymentBusy ? "正在创建支付单…" : "前往支付"}</button>${state.paymentMethods.length ? "" : `<div class="notice warning">暂时没有可用支付方式，请联系管理员。</div>`}</div></div><div class="card balance-guide"><div class="card-head"><h2>余额怎么使用</h2></div><div class="card-body"><ol><li>选择目标平台并申请邮箱</li><li>系统预扣费用，收码成功后结算</li><li>超时未收到验证码自动退款</li></ol><button class="link-btn" data-action="view" data-view="apply">返回申请邮箱 →</button></div></div></div><div class="card"><div class="card-head"><h2>充值记录</h2></div><div class="table-wrap"><table><thead><tr><th>支付单</th><th>通道</th><th>金额</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${state.paymentOrders.map(order => `<tr><td>${esc(order.id)}</td><td>${esc(order.provider_name)}</td><td>${money(order.amount)}</td><td>${statusChip(order.status)}</td><td>${time(order.created_at)}</td><td>${order.status === "pending" && order.pay_url ? `<a class="link-btn" href="${esc(order.pay_url)}" target="_blank" rel="noopener">继续支付</a>` : "—"}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">暂无充值记录</td></tr>`}</tbody></table></div>${renderPager("payments")}</div>`;
+  return pageHead("余额与充值", "充值用于申请邮箱；支付订单和资金流水分别记录，方便核对。", `<button class="ghost-btn" data-action="view" data-view="usage">查看资金流水</button>`) + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>创建充值订单</h2><strong>${money(state.user.balance)}</strong></div><div class="card-body form-grid">${state.paymentError ? `<div class="inline-error" role="alert">${icon("activity")}<span>${esc(state.paymentError)}</span></div>` : ""}<label>充值金额<input id="topup-amount" class="field" type="number" min="1" max="100000" step="0.01" value="50" ${paymentBusy ? "disabled" : ""}></label><label>支付方式<select id="topup-method" class="field" ${paymentBusy ? "disabled" : ""}>${state.paymentMethods.map(method => `<option value="${esc(method)}">${method === "alipay" ? "支付宝" : esc(method)}</option>`).join("")}</select></label><button class="primary-btn" data-action="create-payment" ${state.paymentMethods.length && !paymentBusy ? "" : "disabled"}>${paymentBusy ? "正在创建支付单…" : "前往支付"}</button>${state.paymentMethods.length ? "" : `<div class="notice warning">暂时没有可用支付方式，请联系管理员。</div>`}</div></div><div class="card balance-guide"><div class="card-head"><h2>余额怎么使用</h2></div><div class="card-body"><ol><li>选择目标平台并申请邮箱</li><li>下单立即扣费，后台自动开始收码</li><li>30 分钟未收码自动退款</li></ol><button class="link-btn" data-action="view" data-view="apply">返回申请邮箱 →</button></div></div></div><div class="card"><div class="card-head"><h2>充值记录</h2></div><div class="table-wrap"><table><thead><tr><th>支付单</th><th>通道</th><th>金额</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${state.paymentOrders.map(order => `<tr><td>${esc(order.id)}</td><td>${esc(order.provider_name)}</td><td>${money(order.amount)}</td><td>${statusChip(order.status)}</td><td>${time(order.created_at)}</td><td>${order.status === "pending" && order.pay_url ? `<a class="link-btn" href="${esc(order.pay_url)}" target="_blank" rel="noopener">继续支付</a>` : "—"}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">暂无充值记录</td></tr>`}</tbody></table></div>${renderPager("payments")}</div>`;
 }
 
 function renderAccountSettings(title, subtitle) {
@@ -428,7 +455,7 @@ function renderAdminAccount() {
 }
 
 function renderDocs() {
-  const rows = [["GET", "/api/v1/services", "分页获取可申请平台、价格和余量"], ["GET", "/api/v1/services/{code}/availability", "查询单个平台实时余量"], ["POST", "/api/v1/orders", "创建注册订单并分配邮箱"], ["GET", "/api/v1/orders/{id}", "查询状态与验证码"], ["POST", "/api/v1/orders/{id}/submitted", "确认已提交平台注册"], ["POST", "/api/v1/orders/{id}/complete", "确认完成并结算"], ["POST", "/api/v1/orders/{id}/cancel", "取消任务并退款"], ["GET", "/api/v1/webhook-deliveries", "分页查询 Webhook 投递"]];
+  const rows = [["GET", "/api/v1/services", "分页获取可申请平台、价格和余量"], ["GET", "/api/v1/services/{code}/availability", "查询单个平台实时余量"], ["POST", "/api/v1/orders", "创建订单、扣费并立即开始收码"], ["GET", "/api/v1/orders/{id}", "查询状态与验证码"], ["GET", "/api/v1/orders/{id}/messages", "分页查看本订单平台相关邮件"], ["GET", "/api/v1/webhook-deliveries", "分页查询 Webhook 投递"]];
   return pageHead("API 文档", "用 Bearer API Key 管理注册收码任务。", "接口只返回完成任务所需的信息；邮箱密码、OAuth Token 和完整邮件始终留在服务端。") + `<div class="card"><div class="table-wrap"><table><thead><tr><th>方法</th><th>路径</th><th>用途</th></tr></thead><tbody>${rows.map(row => `<tr><td><code>${row[0]}</code></td><td><code>${row[1]}</code></td><td>${row[2]}</td></tr>`).join("")}</tbody></table></div><div class="card-body"><h3>鉴权</h3><pre class="code-sample">Authorization: Bearer hm_your_api_key</pre><h3>创建订单</h3><pre class="code-sample">POST /api/v1/orders\nContent-Type: application/json\n\n{\n  "service": "github",\n  "request_id": "client-request-001"\n}</pre><h3>查询验证码</h3><pre class="code-sample">GET /api/v1/orders/{id}</pre><p class="muted">当响应中的 <code>status</code> 为 <code>code_received</code> 时读取 <code>code</code>。列表响应包含 <code>data</code> 与 <code>pagination</code>；错误响应包含 <code>error</code> 与 <code>message</code>。</p></div></div>`;
 }
 
@@ -635,7 +662,7 @@ function startPolling(orderID) {
       } else if (state.view === "current") {
         if (taskChanged) await updateCurrentTaskView(); else updateTaskCountdown(result.data);
       }
-      if (["completed", "canceled", "expired_refunded", "allocation_failed", "disputed"].includes(result.data.status)) stopPolling();
+      if (["code_received", "completed", "canceled", "expired_refunded", "allocation_failed", "disputed"].includes(result.data.status)) stopPolling();
     } catch (error) { stopPolling(); }
   }, 1000);
 }
@@ -648,7 +675,7 @@ async function createOrder() {
     const result = await api("/api/v1/orders", { method: "POST", body: JSON.stringify({ service: service.code, request_id: `web-${Date.now()}` }) });
     state.currentOrder = result.data;
     await loadUser();
-    toast("邮箱已分配，请完成平台注册");
+    toast("邮箱已分配，后台已开始收码");
   } catch (error) {
     state.orderError = /insufficient balance|余额|balance/i.test(error.message) ? "余额不足，请先充值。" : error.message;
     toast(error.message);
@@ -658,23 +685,12 @@ async function createOrder() {
     await updateApplyView({ all: true });
   }
 }
-async function mutateOrder(action) {
-  if (!state.currentOrder || state.busyAction) return;
-  if (action === "cancel" && !window.confirm("确认取消任务并退款吗？")) return;
-  state.busyAction = action;
-  if (state.view === "apply") await updateApplyView({ task: true }); else await updateCurrentTaskView();
-  try {
-    const result = await api(`/api/v1/orders/${state.currentOrder.id}/${action}`, { method: "POST" });
-    state.currentOrder = result.data;
-    await loadUser();
-    if (action === "submitted") startPolling(result.data.id); else if (["complete", "cancel"].includes(action)) stopPolling();
-    toast(action === "submitted" ? "已进入收码等待" : "订单状态已更新");
-  } catch (error) { toast(error.message); }
-  finally {
-    state.busyAction = "";
-    updateAccountChrome();
-    if (state.view === "apply") await updateApplyView({ all: true }); else await updateCurrentTaskView();
-  }
+async function transitionAdminOrder(id, transition) {
+  const message = transition === "cancel" ? "确认由后台取消该订单并退款吗？" : "确认将该已收码订单归档为完成吗？";
+  if (!window.confirm(message)) return;
+  await api(`/api/v1/admin/orders/${encodeURIComponent(id)}/${transition}`, { method: "POST" });
+  await refresh();
+  toast(transition === "cancel" ? "订单已取消并退款" : "订单已完成归档");
 }
 async function selectOrder(id) { const found = state.orders.find(order => order.id === id); if (found) { state.currentOrder = found; state.view = state.role === "admin" ? "admin-orders" : "orders"; await render(); } }
 
@@ -684,9 +700,11 @@ function showSecret(title, secret) {
 }
 
 function showServiceEditor(serviceID = "") {
-  const service = state.services.find(item => item.id === serviceID) || { id: "", code: "", name: "", description: "", enabled: true, allowed_providers: ["outlook", "outlook_de", "hotmail"], price: 0.35, ttl_seconds: 600, sender_domains: [], subject_keywords: [], regex: "\\b(\\d{6})\\b" };
+  const service = state.services.find(item => item.id === serviceID) || { id: "", code: "", name: "", description: "", enabled: true, allowed_providers: ["outlook", "outlook_de", "hotmail"], price: 0.35, ttl_seconds: 1800, sender_domains: [], subject_keywords: [], regex: "\\b(\\d{6})\\b" };
   document.querySelector("#secret-modal")?.remove();
   document.body.insertAdjacentHTML("beforeend", `<div id="secret-modal" class="modal-backdrop"><div class="modal service-modal"><div class="card-head"><div><h2>${service.id ? "编辑" : "新建"}目标平台</h2><div class="modal-subtitle">邮箱分配和验证码匹配都在这里配置</div></div><button class="icon-btn" data-action="close-modal" title="关闭">×</button></div><div class="card-body form-grid service-modal-body"><input id="service-id" type="hidden" value="${esc(service.id)}"><section class="service-config-section"><h3>基本信息</h3><div class="form-columns"><label>平台代码<input id="service-code" class="field" value="${esc(service.code)}" placeholder="github"></label><label>平台名称<input id="service-name" class="field" value="${esc(service.name)}" placeholder="GitHub"></label></div><label>说明<input id="service-description" class="field" value="${esc(service.description)}" placeholder="注册验证码"></label><div class="form-columns"><label>单价<input id="service-price" class="field" type="number" min="0" step="0.01" value="${Number(service.price)}"></label><label>任务有效期（秒）<input id="service-ttl" class="field" type="number" min="60" max="86400" value="${Number(service.ttl_seconds)}"></label></div></section><section class="service-config-section"><h3>可用邮箱</h3><fieldset class="provider-options"><legend>订单只会从选中的邮箱类型中分配</legend><label><input type="checkbox" name="service-provider" value="outlook" ${(service.allowed_providers || []).includes("outlook") ? "checked" : ""}> Outlook</label><label><input type="checkbox" name="service-provider" value="outlook_de" ${(service.allowed_providers || []).includes("outlook_de") ? "checked" : ""}> Outlook.de</label><label><input type="checkbox" name="service-provider" value="hotmail" ${(service.allowed_providers || []).includes("hotmail") ? "checked" : ""}> Hotmail</label></fieldset></section><section class="service-config-section"><h3>邮件匹配</h3><label>发件人域名<input id="service-senders" class="field" value="${esc((service.sender_domains || []).join(", "))}" placeholder="github.com"></label><label>主题关键词<input id="service-subjects" class="field" value="${esc((service.subject_keywords || []).join(", "))}" placeholder="verification, 验证码"></label><label>验证码正则<input id="service-regex" class="field utility-field" value="${esc(service.regex)}"></label></section></div><div class="service-modal-footer"><label class="check-label"><input id="service-enabled" type="checkbox" ${service.enabled ? "checked" : ""}> 启用该目标平台</label><button class="primary-btn" data-action="save-service">保存目标平台</button></div></div></div>`);
+  const ttlInput = document.querySelector("#service-ttl");
+  if (ttlInput) { ttlInput.value = "1800"; ttlInput.min = "1800"; ttlInput.max = "1800"; ttlInput.disabled = true; }
 }
 
 const splitList = value => String(value || "").split(",").map(item => item.trim().toLowerCase()).filter(Boolean);
@@ -696,8 +714,9 @@ async function saveService() {
   if (!payload.code || !payload.name || !payload.regex || !payload.allowed_providers.length) return toast("请完整填写平台配置");
   if (payload.allowed_providers.some(provider => !["outlook", "outlook_de", "hotmail"].includes(provider))) return toast("邮箱类型配置无效");
   if (!payload.sender_domains.length) return toast("至少填写一个发件人域名");
+  if (!payload.subject_keywords.length) return toast("至少填写一个主题关键词");
   if (!Number.isFinite(payload.price) || payload.price < 0) return toast("单价不能小于 0");
-  if (!Number.isInteger(payload.ttl_seconds) || payload.ttl_seconds < 60 || payload.ttl_seconds > 86400) return toast("有效期必须在 60 到 86400 秒之间");
+  if (payload.ttl_seconds !== 1800) return toast("任务有效期固定为 1800 秒");
   await api("/api/v1/admin/services", { method: "POST", body: JSON.stringify(payload) });
   document.querySelector("#secret-modal")?.remove(); await refresh(); toast("目标平台已保存");
 }
@@ -874,9 +893,7 @@ document.addEventListener("click", async event => {
     return;
   }
   if (action === "create") { await createOrder(); return; }
-  if (action === "submit") { state.currentOrder = state.orders.find(order => order.id === target.dataset.order) || state.currentOrder; await mutateOrder("submitted"); return; }
-  if (action === "complete") { await mutateOrder("complete"); return; }
-  if (action === "cancel") { await mutateOrder("cancel"); return; }
+  if (action === "admin-order-transition") { await transitionAdminOrder(target.dataset.order, target.dataset.transition); return; }
   if (action === "select-order") { await selectOrder(target.dataset.order); return; }
   if (action === "close-order-detail") { state.currentOrder = null; await render(); return; }
   if (action === "reset-order-filters") { state.orderFilters = { status: "", service: "", query: "" }; state.pagination["admin-orders"] = { page: 1 }; await refresh(); return; }
@@ -897,6 +914,8 @@ document.addEventListener("click", async event => {
   if (action === "import-mailboxes") { await importMailboxes(); return; }
   if (action === "mailbox-messages") { await showMailboxMessages(target.dataset.id, target.dataset.address); return; }
   if (action === "mailbox-message-page") { await showMailboxMessages(target.dataset.id, target.dataset.address, Number(target.dataset.page)); return; }
+  if (action === "order-messages") { await showOrderMessages(target.dataset.order); return; }
+  if (action === "order-message-page") { await showOrderMessages(target.dataset.id, Number(target.dataset.page)); return; }
   if (action === "mailbox-message-mode") {
     const article = target.closest(".mailbox-message");
     if (!article) return;

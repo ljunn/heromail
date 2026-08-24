@@ -381,29 +381,8 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 }
 
 func matchCode(service domain.Service, message Message) (string, bool) {
-	senderAllowed := false
-	for _, domainName := range service.SenderDomains {
-		domainName = strings.ToLower(strings.TrimSpace(domainName))
-		if strings.HasSuffix(message.Sender, "@"+domainName) || strings.HasSuffix(message.Sender, "."+domainName) {
-			senderAllowed = true
-			break
-		}
-	}
-	if !senderAllowed {
+	if !MessageMatchesService(service, message) {
 		return "", false
-	}
-	if len(service.SubjectKeywords) > 0 {
-		subject := strings.ToLower(message.Subject)
-		matched := false
-		for _, keyword := range service.SubjectKeywords {
-			if strings.Contains(subject, strings.ToLower(keyword)) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			return "", false
-		}
 	}
 	pattern, err := regexp.Compile(service.Regex)
 	if err != nil {
@@ -421,4 +400,55 @@ func matchCode(service domain.Service, message Message) (string, bool) {
 		return matches[0], true
 	}
 	return "", false
+}
+
+// MessageMatchesService 只根据平台身份规则判断邮件归属，不尝试猜测验证码。
+func MessageMatchesService(service domain.Service, message Message) bool {
+	sender := strings.ToLower(strings.TrimSpace(message.Sender))
+	senderAllowed := false
+	for _, domainName := range service.SenderDomains {
+		domainName = strings.ToLower(strings.TrimSpace(domainName))
+		if domainName != "" && (strings.HasSuffix(sender, "@"+domainName) || strings.HasSuffix(sender, "."+domainName)) {
+			senderAllowed = true
+			break
+		}
+	}
+	if !senderAllowed {
+		return false
+	}
+	subject := strings.ToLower(message.Subject)
+	for _, keyword := range service.SubjectKeywords {
+		keyword = strings.ToLower(strings.TrimSpace(keyword))
+		if keyword != "" && strings.Contains(subject, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+// FilterMessagesForOrder 将用户可见邮件限制在订单租约窗口和目标平台规则内。
+func FilterMessagesForOrder(service domain.Service, order domain.Order, messages []Message) []Message {
+	windowStart := order.AssignedAt
+	if windowStart.IsZero() {
+		windowStart = order.CreatedAt
+	}
+	if !windowStart.IsZero() {
+		windowStart = windowStart.Add(-time.Minute)
+	}
+	filtered := make([]Message, 0, len(messages))
+	for _, message := range messages {
+		if message.ReceivedAt.IsZero() {
+			continue
+		}
+		if !windowStart.IsZero() && message.ReceivedAt.Before(windowStart) {
+			continue
+		}
+		if !order.ExpiresAt.IsZero() && message.ReceivedAt.After(order.ExpiresAt) {
+			continue
+		}
+		if MessageMatchesService(service, message) {
+			filtered = append(filtered, message)
+		}
+	}
+	return filtered
 }

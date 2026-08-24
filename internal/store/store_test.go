@@ -1,6 +1,8 @@
 package store
 
 import (
+	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -14,10 +16,7 @@ func TestRegistrationConsumesMailboxForOneServiceOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create first order: %v", err)
 	}
-	if _, err := s.SubmitOrder(first.ID, "user-001"); err != nil {
-		t.Fatalf("submit first order: %v", err)
-	}
-	if _, err := s.ReceiveCode(first.ID); err != nil {
+	if _, err := s.ReceiveCodeValue(first.ID, "628419"); err != nil {
 		t.Fatalf("receive first code: %v", err)
 	}
 
@@ -44,6 +43,36 @@ func TestRegistrationConsumesMailboxForOneServiceOnly(t *testing.T) {
 	}
 }
 
+func TestReceiveCodeRejectsEmptyValueAndAcceptsAssignedOrder(t *testing.T) {
+	s := New()
+	order, err := s.CreateOrder("user-001", "svc-openai", "real-code-only")
+	if err != nil {
+		t.Fatalf("创建订单失败：%v", err)
+	}
+	if _, err := s.ReceiveCodeValue(order.ID, ""); !errors.Is(err, ErrVerificationCodeRequired) {
+		t.Fatalf("空验证码返回 %v，期望 %v", err, ErrVerificationCodeRequired)
+	}
+	received, err := s.ReceiveCodeValue(order.ID, "314159")
+	if err != nil {
+		t.Fatalf("assigned 订单写入真实验证码失败：%v", err)
+	}
+	if received.Status != domain.OrderCodeReceived || received.Code != "314159" {
+		t.Fatalf("真实验证码写入结果错误：%+v", received)
+	}
+}
+
+func TestReceiveCodeRejectsExpiredOrder(t *testing.T) {
+	s := New()
+	order, err := s.CreateOrder("user-001", "svc-openai", "expired-code")
+	if err != nil {
+		t.Fatalf("创建订单失败：%v", err)
+	}
+	s.orders[order.ID].ExpiresAt = time.Now().Add(-time.Second)
+	if _, err := s.ReceiveCodeValue(order.ID, "314159"); !errors.Is(err, ErrInvalidOrderState) {
+		t.Fatalf("过期订单写入验证码返回 %v，期望 %v", err, ErrInvalidOrderState)
+	}
+}
+
 func TestCancelRefundsAndReleasesLease(t *testing.T) {
 	s := New()
 	before, _ := s.User("user-001")
@@ -65,6 +94,102 @@ func TestCancelRefundsAndReleasesLease(t *testing.T) {
 	mailbox, _ := findMailbox(s.Mailboxes(), order.MailboxAddress)
 	if mailbox.State != domain.MailboxAvailable || mailbox.Services[order.ServiceID].State != domain.ServiceAvailable {
 		t.Fatalf("lease was not released: mailbox=%s service=%s", mailbox.State, mailbox.Services[order.ServiceID].State)
+	}
+}
+
+func TestCreateOrderStartsListeningForAtLeastThirtyMinutes(t *testing.T) {
+	s := New()
+	before, _ := s.User("user-001")
+	order, err := s.CreateOrder("user-001", "svc-openai", "automatic-listening")
+	if err != nil {
+		t.Fatalf("创建订单失败：%v", err)
+	}
+	if order.Status != domain.OrderWaitingCode || order.SubmittedAt.IsZero() {
+		t.Fatalf("订单没有自动进入收码状态：%+v", order)
+	}
+	if order.ExpiresAt.Sub(order.CreatedAt) < 30*time.Minute {
+		t.Fatalf("订单有效期 = %s，期望至少 30 分钟", order.ExpiresAt.Sub(order.CreatedAt))
+	}
+	after, _ := s.User("user-001")
+	if math.Abs((before.Balance-after.Balance)-order.Price) > 0.000001 {
+		t.Fatalf("下单扣费 = %.2f，期望 %.2f", before.Balance-after.Balance, order.Price)
+	}
+}
+
+func TestFiveNoCodeTimeoutsConsumeMailboxService(t *testing.T) {
+	s := New()
+	const mailboxAddress = "hero_01@outlook.com"
+	for _, mailbox := range s.mailboxes {
+		if mailbox.Address != mailboxAddress {
+			mailbox.State = domain.MailboxBlocked
+		}
+	}
+	initialBalance, _ := s.User("user-001")
+	for attempt := 1; attempt <= 5; attempt++ {
+		order, err := s.CreateOrder("user-001", "svc-github", fmt.Sprintf("timeout-%d", attempt))
+		if err != nil {
+			t.Fatalf("第 %d 次创建订单失败：%v", attempt, err)
+		}
+		if order.MailboxAddress != mailboxAddress {
+			t.Fatalf("第 %d 次分配邮箱 = %s，期望 %s", attempt, order.MailboxAddress, mailboxAddress)
+		}
+		s.orders[order.ID].ExpiresAt = time.Now().Add(-time.Second)
+		if reaped := s.ReapExpired(); reaped != 1 {
+			t.Fatalf("第 %d 次回收数 = %d，期望 1", attempt, reaped)
+		}
+		mailbox, _ := findMailbox(s.Mailboxes(), mailboxAddress)
+		state := mailbox.Services["svc-github"]
+		if state.TimeoutCount != attempt {
+			t.Fatalf("第 %d 次超时计数 = %d", attempt, state.TimeoutCount)
+		}
+		wantState := domain.ServiceAvailable
+		if attempt == 5 {
+			wantState = domain.ServiceConsumed
+		}
+		if state.State != wantState {
+			t.Fatalf("第 %d 次超时状态 = %s，期望 %s", attempt, state.State, wantState)
+		}
+		balance, _ := s.User("user-001")
+		if math.Abs(balance.Balance-initialBalance.Balance) > 0.000001 {
+			t.Fatalf("第 %d 次超时退款后余额 = %.2f，期望 %.2f", attempt, balance.Balance, initialBalance.Balance)
+		}
+	}
+	if _, err := s.CreateOrder("user-001", "svc-github", "timeout-six"); !errors.Is(err, ErrNoMailboxAvailable) {
+		t.Fatalf("第 5 次超时后仍可分配，返回 %v", err)
+	}
+}
+
+func TestManualCancelDoesNotCountAsNoCodeTimeout(t *testing.T) {
+	s := New()
+	order, err := s.CreateOrder("user-001", "svc-openai", "manual-cancel")
+	if err != nil {
+		t.Fatalf("创建订单失败：%v", err)
+	}
+	if _, err := s.CancelOrder(order.ID, ""); err != nil {
+		t.Fatalf("后台取消订单失败：%v", err)
+	}
+	mailbox, _ := findMailbox(s.Mailboxes(), order.MailboxAddress)
+	if got := mailbox.Services[order.ServiceID].TimeoutCount; got != 0 {
+		t.Fatalf("主动取消累计了未收码次数：%d", got)
+	}
+}
+
+func TestReceivedCodeCannotBeCanceledOrRefunded(t *testing.T) {
+	s := New()
+	before, _ := s.User("user-001")
+	order, err := s.CreateOrder("user-001", "svc-openai", "received-no-cancel")
+	if err != nil {
+		t.Fatalf("创建订单失败：%v", err)
+	}
+	if _, err := s.ReceiveCodeValue(order.ID, "314159"); err != nil {
+		t.Fatalf("写入验证码失败：%v", err)
+	}
+	if _, err := s.CancelOrder(order.ID, ""); !errors.Is(err, ErrInvalidOrderState) {
+		t.Fatalf("已收码订单取消返回 %v，期望 %v", err, ErrInvalidOrderState)
+	}
+	after, _ := s.User("user-001")
+	if math.Abs((before.Balance-after.Balance)-order.Price) > 0.000001 {
+		t.Fatalf("已收码订单被错误退款：下单前 %.2f，下单后 %.2f", before.Balance, after.Balance)
 	}
 }
 
