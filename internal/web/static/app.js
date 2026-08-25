@@ -686,13 +686,20 @@ async function loadUser(forceUser = false) {
 }
 async function loadServiceInventory() {
   if (state.role === "admin" || state.view !== "apply" || state.serviceInventoryLoading) return;
+  const serviceCode = selectedService().code;
+  if (!serviceCode) return;
   const requestID = ++state.serviceInventoryRequest;
   state.serviceInventoryLoading = true;
   await render();
   try {
-    const response = await api("/api/v1/services?page=1&page_size=100&availability=true");
+    const response = await api(`/api/v1/services/${encodeURIComponent(serviceCode)}/availability`);
     if (requestID !== state.serviceInventoryRequest) return;
-    state.services = response.data || [];
+    const inventory = response.data || {};
+    state.services = state.services.map(service => service.code === serviceCode ? {
+      ...service,
+      available_mailboxes: Number(inventory.available_mailboxes || 0),
+      available_by_provider: inventory.available_by_provider || {}
+    } : service);
     state.serviceInventoryLoaded = true;
     state.serviceInventoryError = "";
     const service = selectedService();
@@ -1031,7 +1038,10 @@ document.addEventListener("click", async event => {
     state.selectedService = target.dataset.service;
     state.selectedProviders = [];
     state.orderError = "";
+    state.serviceInventoryLoaded = false;
+    state.serviceInventoryError = "";
     await updateApplyView({ selection: true, summary: true });
+    void loadServiceInventory();
     return;
   }
   if (action === "refresh-inventory") { state.serviceInventoryError = ""; state.serviceInventoryLoaded = false; await loadServiceInventory(); return; }
