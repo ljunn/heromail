@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -45,6 +46,12 @@ func (*pagingWorkerRepository) MarkMailEvent(string, string, string, string, tim
 }
 
 type codeReceiverStub struct{}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
 
 func (codeReceiverStub) ReceiveCodeValue(string, string) (domain.Order, error) {
 	return domain.Order{}, nil
@@ -254,6 +261,27 @@ func TestRefreshTokenRequestKeepsOriginallyGrantedScopes(t *testing.T) {
 	}
 	if values.Get("client_secret") != "client-secret" || values.Get("grant_type") != "refresh_token" {
 		t.Fatalf("refresh_token 请求参数不完整：%v", values)
+	}
+}
+
+func TestWorkerDoesNotRefreshGraphAfterMailboxUsesIMAP(t *testing.T) {
+	client := NewMicrosoftClient(MicrosoftConfig{ClientID: "client-id", Tenant: "common"})
+	var refreshCalls int
+	client.http = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		refreshCalls++
+		return nil, fmt.Errorf("不应在 IMAP 通道刷新 Graph")
+	})}
+	repository := &historyMatchingRepository{services: []domain.Service{{
+		ID: "service-openai", SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`,
+	}}}
+	worker := NewWorker(repository, codeReceiverStub{}, client, time.Minute)
+	worker.imap = &messageConnectorStub{}
+	worker.pollMailbox(context.Background(), store.MailboxCredential{
+		Mailbox: domain.Mailbox{ID: "mailbox-imap", Address: "user@outlook.com", Provider: domain.MailboxProviderOutlook, ConnectionMethod: domain.MailboxConnectionIMAP},
+		Config:  map[string]string{"refresh_token": "expired-token", "password": "test-only"},
+	})
+	if refreshCalls != 0 {
+		t.Fatalf("IMAP 通道仍刷新 Graph %d 次", refreshCalls)
 	}
 }
 

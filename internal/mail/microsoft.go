@@ -317,7 +317,8 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 	useIMAP := !microsoftMailbox || mailbox.Mailbox.ConnectionMethod == domain.MailboxConnectionIMAP
 	var graphErr error
 	validUntil, _ := time.Parse(time.RFC3339, credential["expires_at"])
-	needsRefresh := microsoftMailbox && credential["refresh_token"] != "" && (credential["access_token"] == "" || time.Until(validUntil) < 5*time.Minute)
+	// 已经切换到 IMAP 的邮箱不再尝试刷新失效的 Graph token，避免每轮轮询重复产生 invalid_grant。
+	needsRefresh := microsoftMailbox && !useIMAP && credential["refresh_token"] != "" && (credential["access_token"] == "" || time.Until(validUntil) < 5*time.Minute)
 	if needsRefresh {
 		if w.client == nil {
 			graphErr = errors.New("缺少 Microsoft Graph 客户端")
