@@ -941,7 +941,7 @@ func mapService(row sqlService) domain.Service {
 }
 
 func mapMailbox(row sqlMailbox, states map[string]domain.MailboxService) domain.Mailbox {
-	mailbox := domain.Mailbox{ID: row.ID, Address: row.Address, Provider: row.Provider, Pool: row.Pool, State: domain.MailboxState(row.State), HealthScore: row.HealthScore, OAuthValidUntil: row.OAuthValidUntil, ActiveOrderID: row.ActiveOrderID, TodayCodes: row.TodayCodes, ConnectionMethod: row.ConnectionMethod, VerificationStatus: row.VerificationStatus, VerificationError: row.VerificationError, Services: states}
+	mailbox := domain.Mailbox{ID: row.ID, Address: row.Address, Provider: row.Provider, Pool: row.Pool, State: domain.MailboxState(row.State), HealthScore: row.HealthScore, OAuthValidUntil: row.OAuthValidUntil, ActiveOrderID: row.ActiveOrderID, TodayCodes: row.TodayCodes, ConnectionMethod: row.ConnectionMethod, VerificationStatus: row.VerificationStatus, VerificationError: compactStoredMailboxVerificationError(row.VerificationError), Services: states}
 	if row.LastReceivedAt != nil {
 		mailbox.LastReceivedAt = *row.LastReceivedAt
 	}
@@ -949,6 +949,20 @@ func mapMailbox(row sqlMailbox, states map[string]domain.MailboxService) domain.
 		mailbox.LastVerifiedAt = *row.LastVerifiedAt
 	}
 	return mailbox
+}
+
+// compactStoredMailboxVerificationError 兼容压缩旧版本已经写入数据库的 Graph 原始错误。
+func compactStoredMailboxVerificationError(message string) string {
+	if strings.Contains(message, "AADSTS70000") || strings.Contains(strings.ToLower(message), "invalid_grant") {
+		return "Graph：Microsoft OAuth 授权已失效（invalid_grant），请重新授权 Graph 或切换 IMAP"
+	}
+	if strings.Contains(message, "AADSTS65001") {
+		return "Graph：Microsoft OAuth 尚未授予所需权限，请重新授权 Graph"
+	}
+	if len(message) > 240 {
+		return message[:240]
+	}
+	return message
 }
 
 func mapOrder(row sqlOrder) domain.Order {

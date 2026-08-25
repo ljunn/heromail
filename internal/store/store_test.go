@@ -423,3 +423,14 @@ func TestListMailboxesPageFiltersByAddress(t *testing.T) {
 		t.Fatalf("无结果搜索错误：total=%d items=%+v", total, items)
 	}
 }
+
+func TestCompactStoredMailboxVerificationError(t *testing.T) {
+	message := `Graph：Microsoft Token 接口返回 400：{"error":"invalid_grant","error_description":"AADSTS70000"}`
+	got := compactStoredMailboxVerificationError(message)
+	if got != "Graph：Microsoft OAuth 授权已失效（invalid_grant），请重新授权 Graph 或切换 IMAP" {
+		t.Fatalf("历史 Graph 错误未压缩：%q", got)
+	}
+	if compactStoredMailboxVerificationError("IMAP：连接超时") != "IMAP：连接超时" {
+		t.Fatal("正常 IMAP 错误不应被改写")
+	}
+}
