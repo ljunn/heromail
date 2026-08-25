@@ -26,11 +26,18 @@ function pageShell(kicker, title, description, body) {
 }
 
 async function renderPricing() {
-  publicContent.innerHTML = pageShell("公开价格", "每种邮箱类型独立定价", "先选择目标平台，再选择一个或多个可接受的邮箱类型；实际按最终分配类型扣费。", `<div class="public-empty">正在加载价格…</div>`);
+  const pricingHead = ["公开价格", "先选平台，再选邮箱类型", "不同邮箱渠道独立定价。下单时可以多选可接受类型，系统只按最终分配成功的邮箱类型结算。"];
+  const flow = `<div class="pricing-flow" aria-label="下单与计费流程"><div class="pricing-flow-item"><span>01</span><div><strong>选择目标平台</strong><small>例如 OpenAI、Grok</small></div></div><i aria-hidden="true">→</i><div class="pricing-flow-item"><span>02</span><div><strong>勾选邮箱类型</strong><small>可多选，增加分配成功率</small></div></div><i aria-hidden="true">→</i><div class="pricing-flow-item"><span>03</span><div><strong>按实际类型结算</strong><small>超时未收码自动退款</small></div></div></div>`;
+  publicContent.innerHTML = pageShell(pricingHead[0], pricingHead[1], pricingHead[2], `${flow}<div class="public-empty">正在加载价格…</div>`);
   try {
     const result = await publicAPI("/api/v1/public/services?page=1&page_size=100");
-    const cards = result.data.map(service => { const prices = (service.allowed_providers || []).map(provider => `<div><span>${escPublic(publicProviderLabels[provider] || provider)}</span><strong>${publicMoney(service.provider_prices?.[provider])}</strong></div>`).join(""); return `<article class="price-item"><span class="price-code">${escPublic(service.code)}</span><h2>${escPublic(service.name)}</h2><p>${escPublic(service.description)} · ${Math.max(1, Math.round(service.ttl_seconds / 60))} 分钟有效</p><div class="public-provider-prices">${prices}</div><small>下单扣费，30 分钟未收码自动退款</small></article>`; }).join("");
-    publicContent.innerHTML = pageShell("公开价格", "每种邮箱类型独立定价", "先选择目标平台，再选择一个或多个可接受的邮箱类型；实际按最终分配类型扣费。", `<div class="pricing-grid">${cards || `<div class="public-empty">暂未启用可申请平台</div>`}</div>`);
+    const cards = (result.data || []).map(service => {
+      const providers = service.allowed_providers || [];
+      const prices = providers.map(provider => `<div class="public-price-row"><span>${escPublic(publicProviderLabels[provider] || provider)}</span><strong>${publicMoney(service.provider_prices?.[provider])}<small>/ 次</small></strong></div>`).join("");
+      const ttl = Math.max(1, Math.round(service.ttl_seconds / 60));
+      return `<article class="price-item"><div class="price-item-top"><span class="price-code">${escPublic(service.code)}</span><span class="price-item-badge">${providers.length} 种可选</span></div><h2>${escPublic(service.name)}</h2><p>${escPublic(service.description || "注册验证码收取服务")}</p><div class="price-item-rule"><span>订单有效期</span><strong>${ttl} 分钟</strong></div><div class="public-provider-prices"><div class="provider-price-heading"><span>邮箱类型</span><span>单次价格</span></div>${prices || `<div class="public-empty compact">暂未配置邮箱类型</div>`}</div><div class="price-item-foot"><span>创建订单即预扣</span><span>未收码自动退款</span></div></article>`;
+    }).join("");
+    publicContent.innerHTML = pageShell(pricingHead[0], pricingHead[1], pricingHead[2], `${flow}<div class="pricing-grid">${cards || `<div class="public-empty">暂未启用可申请平台</div>`}</div>`);
   } catch (error) {
     publicToast(error.message);
   }
@@ -61,7 +68,7 @@ function renderDocs() {
 }
 
 function renderOpenSource() {
-  publicContent.innerHTML = pageShell("开源与自托管", "数据、邮箱资产和升级流程由你掌控", "HeroMail 使用 MIT 许可证发布，正式镜像、安装脚本和版本日志均来自 GitHub Release。", `<div class="docs-content"><section><h2>一行命令安装</h2><pre class="public-code">curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh | sudo bash</pre></section><section><h2>默认技术栈</h2><p>Go + Gin 提供 API 和内嵌前端，PostgreSQL 保存业务事实，Redis 负责跨进程锁与协调，Graph / IMAP Worker 拉取并匹配验证码邮件。</p></section><section><h2>正式升级</h2><p>首次安装绑定 GitHub 正式 Release。后续版本在管理后台检查更新，系统会先创建并校验 PostgreSQL 备份，再通过官方 <code>ghcr.io/ljunn/heromail:latest</code> 镜像完成升级。</p><a class="solid-action" href="https://github.com/ljunn/heromail" target="_blank" rel="noopener">查看 GitHub 仓库</a></section></div>`);
+  publicContent.innerHTML = pageShell("页面已下线", "部署说明暂未公开", "当前公开页面提供产品介绍、价格和 API 文档。账户注册与任务申请请从工作台开始。", `<div class="docs-content"><section><h2>继续使用 HeroMail</h2><p>你可以查看公开价格、阅读 API 文档，或直接登录工作台管理注册收码任务。</p><div class="hero-actions"><a class="solid-action" href="/register">创建账户 <span aria-hidden="true">↗</span></a><a class="outline-action" href="/pricing">查看公开价格</a></div></section></div>`);
 }
 
 function renderAuth(register) {

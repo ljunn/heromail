@@ -26,6 +26,7 @@ const state = {
   health: null,
   adminTabs: { users: "accounts", payments: "orders", operations: "alerts" },
   orderFilters: { status: "", service: "", query: "" },
+  mailboxFilters: { query: "" },
   userOrderFilters: { status: "", service: "", query: "" },
   ledgerUserID: "",
   busy: false,
@@ -221,12 +222,12 @@ function renderTask(order) {
   const remain = Math.max(0, Math.floor((new Date(order.expires_at) - Date.now()) / 1000));
   const countdown = `${Math.floor(remain / 60)}:${String(remain % 60).padStart(2, "0")}`;
   const countdownMarkup = `<span data-order-countdown="${esc(order.id)}">${countdown}</span>`;
-  return `<div class="steps">${steps.map(([key, label], i) => `<div class="step ${i < index ? "done" : i === index ? "current" : ""}">${label}</div>`).join("")}</div><div class="task-mail"><code>${esc(order.mailbox_address)}</code><div class="task-mail-actions"><button class="link-btn" data-action="copy" data-copy="${esc(order.mailbox_address)}">复制邮箱</button><button class="link-btn" data-action="order-messages" data-order="${esc(order.id)}">相关邮件</button></div></div>${status === "assigned" || status === "waiting_code" ? `<div class="notice warning">后台正在匹配 ${esc(order.service_name)} 验证邮件，剩余 ${countdownMarkup}。</div>` : ""}${order.code ? `<div class="code-box"><div><div class="code-label">验证码（已收到）</div><div class="code">${esc(order.code)}</div></div></div><div class="notice success">验证码已从目标平台邮件中提取。</div>` : ""}`;
+  return `<div class="steps">${steps.map(([key, label], i) => `<div class="step ${i < index ? "done" : i === index ? "current" : ""}">${label}</div>`).join("")}</div><div class="task-mail"><code>${esc(order.mailbox_address)}</code><div class="task-mail-actions"><button class="link-btn" data-action="copy" data-copy="${esc(order.mailbox_address)}">复制邮箱</button><button class="primary-btn compact-btn inbox-button" data-action="order-messages" data-order="${esc(order.id)}">查看本单邮件</button></div></div><div class="notice inbox-scope-notice">本单收件箱只展示 ${esc(order.service_name)} 的匹配邮件，其他平台邮件不可见。</div>${status === "assigned" || status === "waiting_code" ? `<div class="notice warning">后台正在匹配 ${esc(order.service_name)} 验证邮件，剩余 ${countdownMarkup}。</div>` : ""}${order.code ? `<div class="code-box"><div><div class="code-label">验证码（已收到）</div><div class="code">${esc(order.code)}</div></div></div><div class="notice success">验证码已从目标平台邮件中提取。</div>` : ""}`;
 }
 
 function renderRecentOrders() {
   const orders = state.orders.slice(0, 5);
-  return `<div class="card recent-card"><div class="card-head"><h2>最近订单</h2><button class="link-btn" data-action="view" data-view="orders">查看全部订单 →</button></div><div class="table-wrap">${orders.length ? `<table><thead><tr><th>订单号</th><th>目标平台</th><th>状态</th><th>费用</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${orders.map(order => `<tr><td>${esc(order.id)}</td><td>${esc(order.service_name)}</td><td>${statusChip(order.status)}</td><td>${money(order.price)}</td><td>${time(order.created_at)}</td><td><button class="link-btn" data-action="select-order" data-order="${order.id}">查看详情</button></td></tr>`).join("")}</tbody></table>` : `<div class="empty">暂无订单，申请一个邮箱开始任务</div>`}</div></div>`;
+  return `<div class="card recent-card"><div class="card-head"><h2>最近订单</h2><button class="link-btn" data-action="view" data-view="orders">查看全部订单 →</button></div><div class="table-wrap">${orders.length ? `<table><thead><tr><th>订单号</th><th>目标平台</th><th>状态</th><th>费用</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${orders.map(order => `<tr><td>${esc(order.id)}</td><td>${esc(order.service_name)}</td><td>${statusChip(order.status)}</td><td>${money(order.price)}</td><td>${time(order.created_at)}</td><td><div class="table-actions user-order-actions"><button class="link-btn" data-action="select-order" data-order="${order.id}">查看详情</button><button class="link-btn inbox-link" data-action="order-messages" data-order="${order.id}">查看本单邮件</button></div></td></tr>`).join("")}</tbody></table>` : `<div class="empty">暂无订单，申请一个邮箱开始任务</div>`}</div></div>`;
 }
 
 function updateApplyView(regions = {}) {
@@ -275,13 +276,13 @@ function renderOrders() {
   const total = state.pagination.orders?.total || 0;
   const statusOptions = [["", "全部状态"], ["assigned", "等待提交"], ["waiting_code", "收码中"], ["code_received", "已收码"], ["completed", "已完成"], ["canceled", "已取消"], ["expired_refunded", "已退款"]];
   const filterBar = `<form class="filter-bar" data-form="user-order-filters"><select id="user-order-service" class="select" aria-label="目标平台"><option value="">全部平台</option>${state.services.map(service => `<option value="${esc(service.code)}" ${filters.service === service.code ? "selected" : ""}>${esc(service.name)}</option>`).join("")}</select><select id="user-order-status" class="select" aria-label="订单状态">${statusOptions.map(([value, label]) => `<option value="${value}" ${filters.status === value ? "selected" : ""}>${label}</option>`).join("")}</select><input id="user-order-query" class="search" value="${esc(filters.query)}" placeholder="订单号或邮箱"><button class="primary-btn" type="submit">查询</button>${filters.status || filters.service || filters.query ? `<button class="ghost-btn" type="button" data-action="reset-user-order-filters">清空</button>` : ""}</form>`;
-  const rows = state.orders.length ? state.orders.map(order => `<tr class="${state.currentOrder && state.currentOrder.id === order.id ? "selected" : ""}"><td>${esc(order.id)}</td><td>${esc(order.service_name)}</td><td>${esc(providerLabel(order.mailbox_provider))}</td><td>${statusChip(order.status)}</td><td>${money(order.price)}</td><td>${order.status === "completed" ? "—" : time(order.expires_at)}</td><td>${time(order.created_at)}</td><td><button class="link-btn" data-action="select-order" data-order="${order.id}">查看详情</button></td></tr>`).join("") : `<tr><td colspan="8" class="empty">没有符合条件的订单，可清空筛选或申请新邮箱</td></tr>`;
+  const rows = state.orders.length ? state.orders.map(order => `<tr class="${state.currentOrder && state.currentOrder.id === order.id ? "selected" : ""}"><td>${esc(order.id)}</td><td>${esc(order.service_name)}</td><td>${esc(providerLabel(order.mailbox_provider))}</td><td>${statusChip(order.status)}</td><td>${money(order.price)}</td><td>${order.status === "completed" ? "—" : time(order.expires_at)}</td><td>${time(order.created_at)}</td><td><div class="table-actions user-order-actions"><button class="link-btn" data-action="select-order" data-order="${order.id}">查看详情</button><button class="link-btn inbox-link" data-action="order-messages" data-order="${order.id}">查看本单邮件</button></div></td></tr>`).join("") : `<tr><td colspan="8" class="empty">没有符合条件的订单，可清空筛选或申请新邮箱</td></tr>`;
   const orderList = `<div class="card"><div class="table-wrap"><table><thead><tr><th>订单号</th><th>目标平台</th><th>邮箱类型</th><th>状态</th><th>费用</th><th>有效期</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>${renderPager("orders")}</div>`;
   let detail = "";
   if (state.currentOrder) {
     const order = state.currentOrder;
     const timeline = [["创建并扣费", order.created_at], ["分配邮箱", order.assigned_at], ["后台开始收码", order.submitted_at], ["收到验证码", order.code_received_at], ["后台归档", order.completed_at]].map(([label, value]) => `<div class="timeline-item ${value ? "done" : ""}"><span class="timeline-dot"></span><div><div class="timeline-title">${label}</div><div class="timeline-time">${time(value)}</div></div></div>`).join("");
-    detail = `<div class="card order-detail-card"><div class="card-head"><h2>订单详情 · ${esc(order.id)}</h2>${statusChip(order.status)}</div><div class="card-body"><div class="task-mail"><code>${esc(order.mailbox_address)}</code><div class="task-mail-actions"><button class="link-btn" data-action="copy" data-copy="${esc(order.mailbox_address)}">复制邮箱</button><button class="link-btn" data-action="order-messages" data-order="${esc(order.id)}">相关邮件</button></div></div><div class="notice">实际分配 ${esc(providerLabel(order.mailbox_provider))}，按该类型收取 ${money(order.price)}。</div>${order.code ? `<div class="code-box"><div><div class="code-label">验证码</div><div class="code">${esc(order.code)}</div></div></div>` : ""}<div class="timeline">${timeline}</div><div class="notice">邮件仅按该订单的平台规则和有效期隔离展示，其他平台及其他时间段的邮件不可见。</div></div></div>`;
+    detail = `<div class="card order-detail-card"><div class="card-head"><h2>订单详情 · ${esc(order.id)}</h2>${statusChip(order.status)}</div><div class="card-body"><div class="task-mail"><code>${esc(order.mailbox_address)}</code><div class="task-mail-actions"><button class="link-btn" data-action="copy" data-copy="${esc(order.mailbox_address)}">复制邮箱</button><button class="primary-btn compact-btn inbox-button" data-action="order-messages" data-order="${esc(order.id)}">查看本单邮件</button></div></div><div class="notice">实际分配 ${esc(providerLabel(order.mailbox_provider))}，按该类型收取 ${money(order.price)}。</div>${order.code ? `<div class="code-box"><div><div class="code-label">验证码</div><div class="code">${esc(order.code)}</div></div></div>` : ""}<div class="timeline">${timeline}</div><div class="notice">本单邮件已归属当前用户，只展示 ${esc(order.service_name)} 在订单有效期内的匹配邮件，其他平台邮件不可见。</div></div></div>`;
   }
   return pageHead("订单记录", "按平台、状态或订单号查找历史任务。敏感邮箱和验证码只在订单详情中显示。", `<button class="primary-btn" data-action="view" data-view="apply">申请邮箱</button>`) + `<div class="stat-grid">${stat("筛选结果", total, "服务端分页")}${stat("当前任务", state.currentOrder ? 1 : 0, "正在处理")}${stat("当前页", state.orders.length, "本页记录")}</div>${filterBar}${orderList}${detail}`;
 }
@@ -429,7 +430,7 @@ function showMailboxMessages(id, address, page = 1) {
 }
 
 function showOrderMessages(id, page = 1) {
-  return showMessageList({ id, address: "", page, endpoint: `/api/v1/orders/${encodeURIComponent(id)}/messages`, title: "相关邮件", subtitle: "只显示本订单平台与有效期内匹配的邮件", pageAction: "order-message-page", totalLabel: result => `共 ${result.pagination?.total || 0} 封平台相关邮件`, emptyText: "暂未收到与本订单平台匹配的邮件" });
+  return showMessageList({ id, address: "", page, endpoint: `/api/v1/orders/${encodeURIComponent(id)}/messages`, title: "本单收件", subtitle: "只显示本订单平台与有效期内匹配的邮件", pageAction: "order-message-page", totalLabel: result => `共 ${result.pagination?.total || 0} 封平台相关邮件`, emptyText: "暂未收到与本订单平台匹配的邮件" });
 }
 
 function showMailboxRegistrationEditor(mailboxID) {
@@ -534,11 +535,12 @@ async function importMailboxes() {
 
 function renderAdminMailboxes() {
   const total = state.pagination.mailboxes?.total || 0;
+  const mailboxQuery = state.mailboxFilters.query;
   const rows = state.mailboxes.map(mailbox => `<tr><td>${esc(mailbox.address)}</td><td>${esc(providerLabel(mailbox.provider))}</td><td>${esc(connectionLabel(mailbox.connection_method))}</td><td>${statusChip(mailbox.verification_status || mailbox.state)}${mailbox.verification_error ? `<div class="muted">${esc(mailbox.verification_error)}</div>` : ""}</td><td>${esc((mailbox.registered_platforms || []).join(", ") || "—")}</td><td>${mailbox.health_score}/100</td><td>${time(mailbox.last_verified_at)}</td><td><div class="table-actions"><button class="link-btn" data-action="mailbox-messages" data-id="${esc(mailbox.id)}" data-address="${esc(mailbox.address)}">收件</button><button class="link-btn" data-action="mailbox-registration" data-id="${esc(mailbox.id)}">平台注册</button><button class="link-btn" data-action="verify-mailbox" data-id="${esc(mailbox.id)}">验证</button><button class="link-btn danger-text" data-action="delete-mailbox" data-id="${esc(mailbox.id)}">删除</button></div></td></tr>`).join("");
   const pendingCount = state.overview?.pending_mailboxes ?? 0;
   const verifiedCount = state.overview?.verified_mailboxes ?? 0;
   const providerMetrics = mailboxProviders.map(([code, label]) => `<div><span>${label}</span><strong>${state.overview?.[`${code}_mailboxes`] ?? 0}</strong><small>邮箱类型</small></div>`).join("");
-  return pageHead("邮箱池", "一个统一资源池，按邮箱渠道分类、验证连接并识别平台注册状态。", `<button class="ghost-btn" data-action="refresh">刷新状态</button>`) + `<section class="mailbox-import-hero"><div class="mailbox-import-copy"><span class="eyebrow">MAILBOX POOL</span><h2>导入邮箱账号</h2><p>系统按行读取大文件并自动识别渠道。Microsoft 邮箱优先 Graph，Gmail、iCloud 和 Mail.com 使用 IMAP；连接成功后扫描全部平台历史邮件。</p><div class="import-capabilities">${mailboxProviders.map(([, label], index) => `<span><i class="cap-dot ${["blue", "green", "purple"][index % 3]}"></i>${label}</span>`).join("")}<span><i class="cap-dot green"></i>自动识别平台注册</span></div></div><div class="mailbox-dropzone" data-action="pick-mailbox-file"><input id="mailbox-file" type="file" accept=".txt,.csv,.jsonl,text/plain,text/csv,application/json"><div class="drop-icon">↥</div><strong>拖放 TXT / CSV / JSON Lines</strong><span>或点击选择文件 · 支持大文件逐行导入</span><em id="mailbox-file-name">尚未选择文件</em></div></section><div class="mailbox-import-actions"><button class="primary-btn" data-action="import-mailboxes">导入并开始验证</button><span>系统唯一邮箱池 · 密码或应用专用密码会加密保存</span></div><div class="mailbox-metrics"><div><span>全部邮箱</span><strong>${total}</strong><small>统一资源池</small></div>${providerMetrics}<div><span>待验证</span><strong>${pendingCount}</strong><small>后台队列</small></div><div><span>已验证</span><strong>${verifiedCount}</strong><small>可参与分配</small></div></div><div class="card mailbox-table-card"><div class="card-head"><div><h2>邮箱明细</h2><span class="muted">服务端分页 · 导入验证自动扫描，也可手工补充平台注册状态</span></div><span class="pool-singleton">唯一邮箱池</span></div><div class="table-wrap"><table><thead><tr><th>邮箱</th><th>类型</th><th>连接方式</th><th>验证状态</th><th>已注册平台</th><th>健康分</th><th>最近验证</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="8" class="empty">还没有邮箱，导入文件后会显示在这里</td></tr>`}</tbody></table></div>${renderPager("mailboxes")}</div>`;
+  return pageHead("邮箱池", "一个统一资源池，按邮箱渠道分类、验证连接并识别平台注册状态。", `<button class="ghost-btn" data-action="refresh">刷新状态</button>`) + `<section class="mailbox-import-hero"><div class="mailbox-import-copy"><span class="eyebrow">MAILBOX POOL</span><h2>导入邮箱账号</h2><p>系统按行读取大文件并自动识别渠道。Microsoft 邮箱优先 Graph，Gmail、iCloud 和 Mail.com 使用 IMAP；连接成功后扫描全部平台历史邮件。</p><div class="import-capabilities">${mailboxProviders.map(([, label], index) => `<span><i class="cap-dot ${["blue", "green", "purple"][index % 3]}"></i>${label}</span>`).join("")}<span><i class="cap-dot green"></i>自动识别平台注册</span></div></div><div class="mailbox-dropzone" data-action="pick-mailbox-file"><input id="mailbox-file" type="file" accept=".txt,.csv,.jsonl,text/plain,text/csv,application/json"><div class="drop-icon">↥</div><strong>拖放 TXT / CSV / JSON Lines</strong><span>或点击选择文件 · 支持大文件逐行导入</span><em id="mailbox-file-name">尚未选择文件</em></div></section><div class="mailbox-import-actions"><button class="primary-btn" data-action="import-mailboxes">导入并开始验证</button><span>系统唯一邮箱池 · 密码或应用专用密码会加密保存</span></div><div class="mailbox-metrics"><div><span>全部邮箱</span><strong>${total}</strong><small>${mailboxQuery ? `搜索“${esc(mailboxQuery)}”` : "统一资源池"}</small></div>${providerMetrics}<div><span>待验证</span><strong>${pendingCount}</strong><small>后台队列</small></div><div><span>已验证</span><strong>${verifiedCount}</strong><small>可参与分配</small></div></div><div class="card mailbox-table-card"><div class="card-head"><div><h2>邮箱明细</h2><span class="muted">服务端分页 · 导入验证自动扫描，也可手工补充平台注册状态</span></div><span class="pool-singleton">唯一邮箱池</span></div><form class="filter-bar mailbox-filter-bar" data-form="mailbox-filters"><input id="admin-mailbox-query" class="search" aria-label="搜索邮箱" value="${esc(mailboxQuery)}" placeholder="搜索邮箱地址"><button class="primary-btn" type="submit">搜索</button>${mailboxQuery ? `<button class="ghost-btn" type="button" data-action="reset-mailbox-filters">清空</button>` : ""}</form><div class="table-wrap"><table><thead><tr><th>邮箱</th><th>类型</th><th>连接方式</th><th>验证状态</th><th>已注册平台</th><th>健康分</th><th>最近验证</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="8" class="empty">${mailboxQuery ? "没有找到匹配的邮箱" : "还没有邮箱，导入文件后会显示在这里"}</td></tr>`}</tbody></table></div>${renderPager("mailboxes")}</div>`;
 }
 
 function renderAdminUsers() {
@@ -664,8 +666,10 @@ async function loadAdmin() {
   if (["admin-overview", "admin-mailboxes"].includes(state.view) || (state.view === "admin-operations" && state.adminTabs.operations === "alerts")) state.overview = (await api("/api/v1/admin/overview")).data;
   if (["admin-overview", "admin-services", "admin-orders"].includes(state.view)) state.services = rememberPage("admin-services", await api(`/api/v1/admin/services?page=${requestedPage("admin-services")}&page_size=20`));
   if (state.view === "admin-mailboxes") {
+    const mailboxParams = new URLSearchParams({ page: String(requestedPage("mailboxes")), page_size: "20" });
+    if (state.mailboxFilters.query) mailboxParams.set("query", state.mailboxFilters.query);
     const [mailboxes, services] = await Promise.all([
-      api(`/api/v1/admin/mailboxes?page=${requestedPage("mailboxes")}&page_size=20`),
+      api(`/api/v1/admin/mailboxes?${mailboxParams}`),
       api("/api/v1/admin/services?page=1&page_size=100")
     ]);
     state.mailboxes = rememberPage("mailboxes", mailboxes);
@@ -970,6 +974,7 @@ document.addEventListener("click", async event => {
   if (action === "select-order") { await selectOrder(target.dataset.order); return; }
   if (action === "close-order-detail") { state.currentOrder = null; await render(); return; }
   if (action === "reset-order-filters") { state.orderFilters = { status: "", service: "", query: "" }; state.pagination["admin-orders"] = { page: 1 }; await refresh(); return; }
+  if (action === "reset-mailbox-filters") { state.mailboxFilters = { query: "" }; state.pagination.mailboxes = { page: 1 }; await refresh(); return; }
   if (action === "reset-user-order-filters") { state.userOrderFilters = { status: "", service: "", query: "" }; state.pagination.orders = { page: 1 }; await refresh(); return; }
   if (action === "refresh") { await refresh(); return; }
   if (action === "copy") { await copyText(target.dataset.copy || ""); return; }
@@ -1043,8 +1048,12 @@ document.addEventListener("input", event => {
   if (event.target.id === "balance-amount") updateBalancePreview();
 });
 document.addEventListener("submit", async event => {
-  if (!["order-filters", "user-order-filters"].includes(event.target.dataset.form)) return;
+  if (!["order-filters", "user-order-filters", "mailbox-filters"].includes(event.target.dataset.form)) return;
   event.preventDefault();
+  if (event.target.dataset.form === "mailbox-filters") {
+    state.mailboxFilters = { query: document.querySelector("#admin-mailbox-query")?.value.trim() || "" };
+    state.pagination.mailboxes = { page: 1 }; await refresh(); return;
+  }
   if (event.target.dataset.form === "user-order-filters") {
     state.userOrderFilters = { status: document.querySelector("#user-order-status")?.value || "", service: document.querySelector("#user-order-service")?.value || "", query: document.querySelector("#user-order-query")?.value.trim() || "" };
     state.pagination.orders = { page: 1 }; state.currentOrder = null; await refresh(); return;

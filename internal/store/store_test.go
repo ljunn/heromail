@@ -412,3 +412,14 @@ func findMailbox(mailboxes []domain.Mailbox, address string) (domain.Mailbox, bo
 	}
 	return domain.Mailbox{}, false
 }
+
+func TestListMailboxesPageFiltersByAddress(t *testing.T) {
+	items, total := New().ListMailboxesPage(MailboxFilter{Query: "HERO_01@OUTLOOK"}, 1, 20)
+	if total != 1 || len(items) != 1 || items[0].Address != "hero_01@outlook.com" {
+		t.Fatalf("邮箱搜索结果错误：total=%d items=%+v", total, items)
+	}
+	items, total = New().ListMailboxesPage(MailboxFilter{Query: "不存在"}, 1, 20)
+	if total != 0 || len(items) != 0 {
+		t.Fatalf("无结果搜索错误：total=%d items=%+v", total, items)
+	}
+}

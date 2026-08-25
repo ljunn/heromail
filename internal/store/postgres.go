@@ -753,15 +753,22 @@ func (s *PostgresStore) Mailboxes() []domain.Mailbox {
 }
 
 func (s *PostgresStore) MailboxesPage(page, pageSize int) ([]domain.Mailbox, int64) {
-	return s.mailboxesPage("", page, pageSize)
+	return s.ListMailboxesPage(MailboxFilter{}, page, pageSize)
 }
 
-func (s *PostgresStore) mailboxesPage(pool string, page, pageSize int) ([]domain.Mailbox, int64) {
+func (s *PostgresStore) ListMailboxesPage(filter MailboxFilter, page, pageSize int) ([]domain.Mailbox, int64) {
+	return s.mailboxesPage("", filter, page, pageSize)
+}
+
+func (s *PostgresStore) mailboxesPage(pool string, filter MailboxFilter, page, pageSize int) ([]domain.Mailbox, int64) {
 	page, pageSize = normalizePage(page, pageSize)
 	var total int64
 	query := s.db.Model(&sqlMailbox{})
 	if pool != "" {
 		query = query.Where("pool = ?", pool)
+	}
+	if search := strings.TrimSpace(filter.Query); search != "" {
+		query = query.Where("LOWER(address) LIKE ?", "%"+strings.ToLower(search)+"%")
 	}
 	query.Count(&total)
 	var rows []sqlMailbox

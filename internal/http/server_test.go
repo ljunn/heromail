@@ -290,6 +290,9 @@ func TestMailboxMessagesDefaultCollapsed(t *testing.T) {
 	if !strings.Contains(script, `data-action="order-messages"`) || !strings.Contains(script, `/api/v1/orders/${encodeURIComponent(id)}/messages`) {
 		t.Fatal("用户订单没有平台隔离邮件入口")
 	}
+	if !strings.Contains(script, "查看本单邮件") || !strings.Contains(script, "本单邮件已归属当前用户") {
+		t.Fatal("用户订单没有明确展示本单收件入口或归属范围")
+	}
 }
 
 func TestMailboxAdminSupportsNewProvidersAndManualRegistration(t *testing.T) {
@@ -645,6 +648,20 @@ func TestAdminMarksMailboxRegisteredForSelectedService(t *testing.T) {
 	updated, _ := findMailboxByAddress(repository.Mailboxes(), mailbox.Address)
 	if len(updated.RegisteredPlatforms) != 1 || updated.RegisteredPlatforms[0] != "openai" {
 		t.Fatalf("已注册平台 = %#v，期望 [openai]", updated.RegisteredPlatforms)
+	}
+}
+
+func TestAdminMailboxSearchFiltersServerSide(t *testing.T) {
+	server := NewServer(store.New())
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/mailboxes?page=1&page_size=20&query=hero_01%40outlook", nil)
+	request.Header.Set("X-HeroMail-Role", "admin")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("邮箱搜索返回 %d：%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"total":1`) || !strings.Contains(response.Body.String(), "hero_01@outlook.com") {
+		t.Fatalf("邮箱搜索未按服务端过滤：%s", response.Body.String())
 	}
 }
 

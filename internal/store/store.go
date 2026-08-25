@@ -509,7 +509,21 @@ func (s *Store) Mailboxes() []domain.Mailbox {
 }
 
 func (s *Store) MailboxesPage(page, pageSize int) ([]domain.Mailbox, int64) {
+	return s.ListMailboxesPage(MailboxFilter{}, page, pageSize)
+}
+
+func (s *Store) ListMailboxesPage(filter MailboxFilter, page, pageSize int) ([]domain.Mailbox, int64) {
 	items := s.Mailboxes()
+	query := strings.ToLower(strings.TrimSpace(filter.Query))
+	if query != "" {
+		filtered := make([]domain.Mailbox, 0, len(items))
+		for _, item := range items {
+			if strings.Contains(strings.ToLower(item.Address), query) {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
 	return paginate(items, page, pageSize), int64(len(items))
 }
 

@@ -27,6 +27,16 @@ type Repository interface {
 	MailboxesPage(page, pageSize int) ([]domain.Mailbox, int64)
 }
 
+// MailboxFilter 是管理员邮箱资源列表的服务端筛选条件。
+type MailboxFilter struct {
+	Query string
+}
+
+// MailboxSearchRepository 为邮箱列表提供服务端搜索，避免前端只在当前页筛选。
+type MailboxSearchRepository interface {
+	ListMailboxesPage(filter MailboxFilter, page, pageSize int) ([]domain.Mailbox, int64)
+}
+
 type ServiceUsage struct {
 	Available int
 	Leased    int

@@ -338,6 +338,12 @@ func (s *Server) adminOverview(c *gin.Context) {
 
 func (s *Server) adminMailboxes(c *gin.Context) {
 	page, pageSize := pageRequest(c)
+	filter := store.MailboxFilter{Query: strings.TrimSpace(c.Query("query"))}
+	if repository, ok := s.Store.(store.MailboxSearchRepository); ok {
+		items, total := repository.ListMailboxesPage(filter, page, pageSize)
+		writePage(c, items, page, pageSize, total)
+		return
+	}
 	items, total := s.Store.MailboxesPage(page, pageSize)
 	writePage(c, items, page, pageSize, total)
 }
