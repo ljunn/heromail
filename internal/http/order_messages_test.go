@@ -73,8 +73,8 @@ func TestUserOrderMessagesAreOwnerScopedAndPlatformIsolated(t *testing.T) {
 	}
 	graph := &orderMessagesGraph{messages: []mail.Message{
 		{ID: "openai-1", Sender: "noreply@openai.com", Subject: "Your verification code", Body: "OpenAI message one", ReceivedAt: order.AssignedAt.Add(time.Minute)},
-		{ID: "openai-2", Sender: "noreply@openai.com", Subject: "OpenAI code", Body: "OpenAI message two", ReceivedAt: order.AssignedAt.Add(2 * time.Minute)},
-		{ID: "github", Sender: "noreply@github.com", Subject: "Verification code", Body: "github secret", ReceivedAt: order.AssignedAt.Add(3 * time.Minute)},
+		{ID: "openai-2", Sender: "noreply@openai.com", Subject: "Your code", Body: "OpenAI message two", ReceivedAt: order.AssignedAt.Add(2 * time.Minute)},
+		{ID: "adobe", Sender: "noreply@adobe.com", Subject: "Verification code", Body: "adobe secret", ReceivedAt: order.AssignedAt.Add(3 * time.Minute)},
 		{ID: "welcome", Sender: "noreply@openai.com", Subject: "Welcome", Body: "unrelated openai mail", ReceivedAt: order.AssignedAt.Add(4 * time.Minute)},
 		{ID: "old", Sender: "noreply@openai.com", Subject: "Verification code", Body: "old openai mail", ReceivedAt: order.AssignedAt.Add(-2 * time.Minute)},
 	}}
@@ -101,7 +101,7 @@ func TestUserOrderMessagesAreOwnerScopedAndPlatformIsolated(t *testing.T) {
 		t.Fatalf("订单邮件分页结果错误：data=%d total=%d", len(body.Data), body.Pagination.Total)
 	}
 	responseText := response.Body.String()
-	for _, secret := range []string{"github secret", "unrelated openai mail", "old openai mail"} {
+	for _, secret := range []string{"adobe secret", "unrelated openai mail", "old openai mail"} {
 		if strings.Contains(responseText, secret) {
 			t.Fatalf("订单邮件响应泄露了隔离范围外的正文 %q", secret)
 		}

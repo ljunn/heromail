@@ -208,8 +208,8 @@ textarea.field { resize: vertical; }
 .mailbox-dropzone em { max-width: 100%; overflow: hidden; color: var(--blue); font-size: 11px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
 .mailbox-import-actions { display: flex; align-items: center; gap: 14px; margin: 0 0 20px; }
 .mailbox-import-actions span { color: var(--muted); font-size: 11px; }
-.mailbox-metrics { display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: 12px; margin-bottom: 20px; }
-.mailbox-metrics > div { padding: 15px 16px; border: 1px solid var(--line); border-radius: 10px; background: white; }
+.mailbox-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.mailbox-metrics > div { padding: 15px 16px; border: 1px solid var(--line); border-radius: 8px; background: white; }
 .mailbox-metrics span, .mailbox-metrics small { display: block; color: var(--muted); font-size: 11px; }
 .mailbox-metrics strong { display: block; margin: 8px 0 4px; color: #20304a; font-size: 23px; }
 .mailbox-table-card .card-head { align-items: flex-start; }
@@ -230,6 +230,15 @@ textarea.field { resize: vertical; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 20px; background: rgba(8,20,37,.56); }
 body:has(.modal-backdrop), body:has(.detail-layer) { overflow: hidden; }
 .modal { width: min(620px, 100%); border: 1px solid var(--line); border-radius: 8px; background: white; box-shadow: 0 24px 60px rgba(8,20,37,.3); }
+.platform-state-modal { width: min(560px, 100%); max-height: min(760px, calc(100dvh - 32px)); overflow: auto; }
+.mailbox-platform-list { display: grid; margin-top: 14px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.mailbox-platform-row { display: flex; min-height: 58px; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 12px; background: #fff; }
+.mailbox-platform-row + .mailbox-platform-row { border-top: 1px solid var(--line); }
+.mailbox-platform-row > div { display: grid; min-width: 0; gap: 3px; }
+.mailbox-platform-row strong { overflow-wrap: anywhere; font-size: 13px; }
+.mailbox-platform-row span { color: var(--muted); font-size: 11px; }
+.mailbox-platform-row .chip { color: var(--green); }
+.compact-btn { min-height: 32px; padding: 6px 10px; font-size: 11px; }
 .mailbox-messages-modal { width: min(900px, 100%); max-height: min(820px, calc(100dvh - 32px)); display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
 .mailbox-messages-body { overflow-y: auto; overscroll-behavior: contain; }
 .mailbox-messages-meta { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 12px; color: var(--muted); font-size: 12px; }
@@ -477,6 +486,8 @@ body:has(.modal-backdrop), body:has(.detail-layer) { overflow: hidden; }
   .service-modal-footer .primary-btn { width: 100%; min-width: 0; }
   .service-modal .form-columns { grid-template-columns: 1fr; }
   .provider-options { grid-template-columns: 1fr; }
+  .mailbox-platform-row { align-items: flex-start; flex-direction: column; }
+  .mailbox-platform-row .compact-btn { width: 100%; }
   .card-body { padding: 15px; }
   .filter-bar { padding: 12px; }
   .select, .search { width: 100%; }

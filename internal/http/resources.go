@@ -46,7 +46,7 @@ func (s *Server) adminSaveMailbox(c *gin.Context) {
 	}
 	provider, supported := domain.DetectMailboxProvider(request.Address)
 	if !supported {
-		writeError(c, http.StatusBadRequest, "unsupported_mailbox_provider", "首版只支持 Outlook/Hotmail 邮箱")
+		writeError(c, http.StatusBadRequest, "unsupported_mailbox_provider", "不支持该邮箱类型")
 		return
 	}
 	request.Provider = provider
@@ -57,6 +57,27 @@ func (s *Server) adminSaveMailbox(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": mailbox})
+}
+
+func (s *Server) adminMarkMailboxServiceRegistered(c *gin.Context) {
+	repository, ok := s.Store.(store.MailboxServiceAdminRepository)
+	if !ok {
+		writeError(c, http.StatusServiceUnavailable, "mailbox_service_state_unavailable", "邮箱平台注册状态服务不可用")
+		return
+	}
+	err := repository.MarkMailboxServiceRegistered(demoUser(c), c.Param("id"), c.Param("service_id"), c.ClientIP())
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, store.ErrMailboxNotFound) || errors.Is(err, store.ErrServiceNotFound) || errors.Is(err, store.ErrMailboxServiceNotFound) {
+			status = http.StatusNotFound
+		}
+		if errors.Is(err, store.ErrMailboxServiceLeased) {
+			status = http.StatusConflict
+		}
+		writeError(c, status, "mailbox_service_register_failed", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"state": domain.ServiceConsumed}})
 }
 
 func (s *Server) adminDeleteMailbox(c *gin.Context) {
@@ -269,7 +290,7 @@ func (s *Server) adminSaveService(c *gin.Context) {
 	}
 	for _, provider := range request.AllowedProviders {
 		if !domain.IsSupportedMailboxProvider(provider) {
-			writeError(c, http.StatusBadRequest, "invalid_service_config", "邮箱类型只允许 outlook、outlook_de 和 hotmail")
+			writeError(c, http.StatusBadRequest, "invalid_service_config", "邮箱类型不受支持")
 			return
 		}
 	}
@@ -369,8 +390,8 @@ func (s *Server) microsoftOAuthCallback(c *gin.Context) {
 		return
 	}
 	provider, supported := domain.DetectMailboxProvider(profile.Address)
-	if !supported {
-		writeError(c, http.StatusBadRequest, "unsupported_mailbox_provider", "首版只支持 Outlook/Hotmail 邮箱")
+	if !supported || !domain.IsMicrosoftMailboxProvider(provider) {
+		writeError(c, http.StatusBadRequest, "unsupported_mailbox_provider", "Microsoft OAuth 只支持 Outlook、Outlook.de 和 Hotmail")
 		return
 	}
 	mailbox, err := repository.SaveMailbox(state.ActorID, domain.Mailbox{

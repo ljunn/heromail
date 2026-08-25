@@ -76,8 +76,9 @@ func (v *MailboxVerifier) Verify(ctx context.Context, actorID, mailboxID, ip str
 	}
 	now := time.Now().UTC()
 	config := cloneCredential(credential.Config)
+	microsoftMailbox := supportsMicrosoftGraph(credential.Mailbox)
 	graphErr := errors.New("缺少 Graph OAuth 凭证")
-	if v.graph != nil && (config["access_token"] != "" || config["refresh_token"] != "") {
+	if microsoftMailbox && v.graph != nil && (config["access_token"] != "" || config["refresh_token"] != "") {
 		accessToken := config["access_token"]
 		validUntil, _ := time.Parse(time.RFC3339, config["expires_at"])
 		didRefresh := false
@@ -140,13 +141,16 @@ func (v *MailboxVerifier) Verify(ctx context.Context, actorID, mailboxID, ip str
 	}
 
 	message := compactVerificationError(graphErr, imapErr)
+	if !microsoftMailbox {
+		message = compactIMAPError(imapErr)
+	}
 	if updateErr := v.repository.UpdateMailboxVerification(actorID, mailboxID, domain.MailboxConnectionAuto, domain.MailboxVerificationFailed, message, now, ip); updateErr != nil {
 		return MailboxVerificationResult{}, updateErr
 	}
 	return MailboxVerificationResult{Method: domain.MailboxConnectionAuto, Status: domain.MailboxVerificationFailed, VerifiedAt: now}, errors.New(message)
 }
 
-// ReadMessages 读取受权请求所需的邮箱内容，始终优先 Graph，失败后回退 IMAP。
+// ReadMessages 读取授权请求所需的邮箱内容；Microsoft 优先 Graph，其余渠道直接使用 IMAP。
 // 凭证只在本次请求的内存中使用，正文也不会写入审计日志。
 func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, ip string) ([]Message, error) {
 	credential, err := v.repository.GetMailboxCredential(mailboxID)
@@ -154,8 +158,9 @@ func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, 
 		return nil, err
 	}
 	config := cloneCredential(credential.Config)
+	microsoftMailbox := supportsMicrosoftGraph(credential.Mailbox)
 	graphErr := errors.New("缺少 Graph OAuth 凭证")
-	if v.graph != nil && (config["access_token"] != "" || config["refresh_token"] != "") {
+	if microsoftMailbox && v.graph != nil && (config["access_token"] != "" || config["refresh_token"] != "") {
 		accessToken := config["access_token"]
 		validUntil, _ := time.Parse(time.RFC3339, config["expires_at"])
 		if accessToken == "" || (!validUntil.IsZero() && !validUntil.After(time.Now().UTC())) {
@@ -193,6 +198,9 @@ func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, 
 			if messages, readErr := reader.AllMessages(imapContext, credential.Mailbox.Address, config); readErr == nil {
 				return messages, nil
 			} else {
+				if !microsoftMailbox {
+					return nil, fmt.Errorf("IMAP：%w", readErr)
+				}
 				return nil, fmt.Errorf("Graph：%v；IMAP：%v", graphErr, readErr)
 			}
 		}
@@ -200,9 +208,15 @@ func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, 
 			if messages, readErr := reader.Messages(imapContext, credential.Mailbox.Address, config); readErr == nil {
 				return messages, nil
 			} else {
+				if !microsoftMailbox {
+					return nil, fmt.Errorf("IMAP：%w", readErr)
+				}
 				return nil, fmt.Errorf("Graph：%v；IMAP：%v", graphErr, readErr)
 			}
 		}
+	}
+	if !microsoftMailbox {
+		return nil, errors.New("缺少 IMAP 凭证")
 	}
 	return nil, graphErr
 }
@@ -279,12 +293,55 @@ func compactVerificationError(graphErr, imapErr error) string {
 	return message
 }
 
+func compactIMAPError(imapErr error) string {
+	message := fmt.Sprintf("IMAP：%v", imapErr)
+	if len(message) > 480 {
+		message = message[:480]
+	}
+	return message
+}
+
+func supportsMicrosoftGraph(mailbox domain.Mailbox) bool {
+	provider := mailbox.Provider
+	if provider == "" {
+		provider, _ = domain.DetectMailboxProvider(mailbox.Address)
+	}
+	return domain.IsMicrosoftMailboxProvider(provider)
+}
+
 type MicrosoftIMAPConnector struct {
-	address string
 }
 
 func NewMicrosoftIMAPConnector() *MicrosoftIMAPConnector {
-	return &MicrosoftIMAPConnector{address: "outlook.office365.com:993"}
+	return &MicrosoftIMAPConnector{}
+}
+
+type imapEndpoint struct {
+	Address         string
+	ServerName      string
+	LoginCandidates []string
+}
+
+func imapServerConfig(address string) (imapEndpoint, error) {
+	provider, ok := domain.DetectMailboxProvider(address)
+	if !ok {
+		return imapEndpoint{}, errors.New("不支持该邮箱类型")
+	}
+	endpoint := imapEndpoint{LoginCandidates: []string{address}}
+	switch provider {
+	case domain.MailboxProviderOutlook, domain.MailboxProviderOutlookDE, domain.MailboxProviderHotmail:
+		endpoint.Address, endpoint.ServerName = "outlook.office365.com:993", "outlook.office365.com"
+	case domain.MailboxProviderGmail:
+		endpoint.Address, endpoint.ServerName = "imap.gmail.com:993", "imap.gmail.com"
+	case domain.MailboxProviderICloud:
+		endpoint.Address, endpoint.ServerName = "imap.mail.me.com:993", "imap.mail.me.com"
+		if local, _, found := strings.Cut(address, "@"); found && local != "" {
+			endpoint.LoginCandidates = []string{local, address}
+		}
+	case domain.MailboxProviderMailCom:
+		endpoint.Address, endpoint.ServerName = "imap.mail.com:993", "imap.mail.com"
+	}
+	return endpoint, nil
 }
 
 func (c *MicrosoftIMAPConnector) Verify(ctx context.Context, address string, credential map[string]string) error {
@@ -300,10 +357,14 @@ func (c *MicrosoftIMAPConnector) Verify(ctx context.Context, address string, cre
 }
 
 func (c *MicrosoftIMAPConnector) connect(ctx context.Context, address string, credential map[string]string) (*imapclient.Client, func(), error) {
+	endpoint, err := imapServerConfig(address)
+	if err != nil {
+		return nil, func() {}, err
+	}
 	dialer := &net.Dialer{Timeout: 15 * time.Second}
-	client, err := imapclient.DialTLS(c.address, &imapclient.Options{
+	client, err := imapclient.DialTLS(endpoint.Address, &imapclient.Options{
 		Dialer:    dialer,
-		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: "outlook.office365.com"},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: endpoint.ServerName},
 	})
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("连接失败：%w", err)
@@ -323,7 +384,12 @@ func (c *MicrosoftIMAPConnector) connect(ctx context.Context, address string, cr
 	if accessToken := credential["access_token"]; accessToken != "" {
 		err = client.Authenticate(newXOAuth2Client(address, accessToken))
 	} else if password := credential["password"]; password != "" {
-		err = client.Login(address, password).Wait()
+		for _, username := range endpoint.LoginCandidates {
+			err = client.Login(username, password).Wait()
+			if err == nil {
+				break
+			}
+		}
 	} else {
 		closeClient()
 		return nil, func() {}, errors.New("缺少 OAuth Token 或密码")

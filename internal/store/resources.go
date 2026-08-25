@@ -43,6 +43,10 @@ type MailboxServiceStateRepository interface {
 	MarkMailboxServiceConsumed(mailboxID, serviceID string, changedAt time.Time) error
 }
 
+type MailboxServiceAdminRepository interface {
+	MarkMailboxServiceRegistered(actorID, mailboxID, serviceID, ip string) error
+}
+
 type MailboxVerificationQueue interface {
 	EnqueueMailboxVerification(ctx context.Context, mailboxID string) error
 	DequeueMailboxVerification(ctx context.Context, timeout time.Duration) (string, error)

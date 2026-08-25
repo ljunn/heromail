@@ -178,12 +178,12 @@ func TestWorkerReceivesMailSentBeforeUserConfirmation(t *testing.T) {
 func TestWorkerMatchesHistoryForAllServicesWithoutActiveOrder(t *testing.T) {
 	now := time.Now().UTC()
 	repository := &historyMatchingRepository{services: []domain.Service{
-		{ID: "service-github", Code: "github", SenderDomains: []string{"github.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
+		{ID: "service-adobe", Code: "adobe", SenderDomains: []string{"adobe.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
 		{ID: "service-openai", Code: "openai", SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
 	}}
 	worker := NewWorker(repository, codeReceiverStub{}, NewMicrosoftClient(MicrosoftConfig{}), time.Minute)
 	worker.imap = &messageConnectorStub{messages: []Message{
-		{ID: "github-history", Sender: "noreply@github.com", Subject: "Verification code", BodyPreview: "Your code is 628419", ReceivedAt: now.Add(-2 * time.Minute)},
+		{ID: "adobe-history", Sender: "noreply@adobe.com", Subject: "Verification code", BodyPreview: "Your code is 628419", ReceivedAt: now.Add(-2 * time.Minute)},
 		{ID: "openai-history", Sender: "noreply@openai.com", Subject: "Verification code", BodyPreview: "Your code is 314159", ReceivedAt: now.Add(-time.Minute)},
 	}}
 
@@ -192,7 +192,7 @@ func TestWorkerMatchesHistoryForAllServicesWithoutActiveOrder(t *testing.T) {
 		Config:  map[string]string{"password": "test-only"},
 	})
 
-	if len(repository.marked) != 2 || repository.marked[0] != "service-github" || repository.marked[1] != "service-openai" {
+	if len(repository.marked) != 2 || repository.marked[0] != "service-adobe" || repository.marked[1] != "service-openai" {
 		t.Fatalf("历史邮件未标记所有命中的平台：%v", repository.marked)
 	}
 }
@@ -248,20 +248,20 @@ func TestMicrosoftAuthorizationURL(t *testing.T) {
 }
 
 func TestMatchCodeRequiresAllRules(t *testing.T) {
-	service := domain.Service{SenderDomains: []string{"github.com"}, SubjectKeywords: []string{"verification", "验证码"}, Regex: `\b(\d{6})\b`}
+	service := domain.Service{SenderDomains: []string{"adobe.com"}, SubjectKeywords: []string{"verification", "验证码"}, Regex: `\b(\d{6})\b`}
 	tests := []struct {
 		name    string
 		message Message
 		code    string
 		matched bool
 	}{
-		{name: "正常邮件", message: Message{Sender: "noreply@github.com", Subject: "Verification code", BodyPreview: "Your code is 628419"}, code: "628419", matched: true},
-		{name: "正文验证码", message: Message{Sender: "noreply@github.com", Subject: "Verification code", Body: "Your code is 314159"}, code: "314159", matched: true},
-		{name: "子域发件人", message: Message{Sender: "noreply@mail.github.com", Subject: "验证码", BodyPreview: "123456"}, code: "123456", matched: true},
-		{name: "伪造域名", message: Message{Sender: "noreply@github.com.example.org", Subject: "Verification code", BodyPreview: "123456"}, matched: false},
-		{name: "主题不匹配", message: Message{Sender: "noreply@github.com", Subject: "Welcome", BodyPreview: "123456"}, matched: false},
-		{name: "没有配置关键词", message: Message{Sender: "noreply@github.com", Subject: "Verification code", BodyPreview: "123456"}, matched: false},
-		{name: "验证码格式不匹配", message: Message{Sender: "noreply@github.com", Subject: "Verification code", BodyPreview: "ABCDEF"}, matched: false},
+		{name: "正常邮件", message: Message{Sender: "noreply@adobe.com", Subject: "Verification code", BodyPreview: "Your code is 628419"}, code: "628419", matched: true},
+		{name: "正文验证码", message: Message{Sender: "noreply@adobe.com", Subject: "Verification code", Body: "Your code is 314159"}, code: "314159", matched: true},
+		{name: "子域发件人", message: Message{Sender: "noreply@mail.adobe.com", Subject: "验证码", BodyPreview: "123456"}, code: "123456", matched: true},
+		{name: "伪造域名", message: Message{Sender: "noreply@adobe.com.example.org", Subject: "Verification code", BodyPreview: "123456"}, matched: false},
+		{name: "主题不匹配", message: Message{Sender: "noreply@adobe.com", Subject: "Welcome", BodyPreview: "123456"}, matched: false},
+		{name: "没有配置关键词", message: Message{Sender: "noreply@adobe.com", Subject: "Verification code", BodyPreview: "123456"}, matched: false},
+		{name: "验证码格式不匹配", message: Message{Sender: "noreply@adobe.com", Subject: "Verification code", BodyPreview: "ABCDEF"}, matched: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -277,6 +277,24 @@ func TestMatchCodeRequiresAllRules(t *testing.T) {
 	}
 }
 
+func TestMatchCodeUsesObservedGrokAndOpenAIRules(t *testing.T) {
+	grok := domain.Service{SenderDomains: []string{"x.ai"}, SubjectKeywords: []string{"validate your email"}, Regex: `(?i)\b([A-Z0-9]{3}-[A-Z0-9]{3}|[A-Z0-9]{6})\b`}
+	code, matched := matchCode(grok, Message{Sender: "noreply@x.ai", Subject: "Validate your email", BodyPreview: "Use C1O-6KS to continue"})
+	if !matched || code != "C1O-6KS" {
+		t.Fatalf("Grok 验证码匹配 = (%q, %v)，期望 (C1O-6KS, true)", code, matched)
+	}
+
+	openai := domain.Service{SenderDomains: []string{"openai.com", "tm.openai.com"}, SubjectKeywords: []string{"verification code", "verify your email", "your code"}, Regex: `\b(\d{6})\b`}
+	for _, subject := range []string{"Verification code", "Verify your email", "Your code"} {
+		if code, ok := matchCode(openai, Message{Sender: "noreply@tm.openai.com", Subject: subject, BodyPreview: "628419"}); !ok || code != "628419" {
+			t.Fatalf("OpenAI 标题 %q 未按实际规则匹配：(%q, %v)", subject, code, ok)
+		}
+	}
+	if _, ok := matchCode(openai, Message{Sender: "noreply@openai.com", Subject: "Welcome to OpenAI", BodyPreview: "628419"}); ok {
+		t.Fatal("OpenAI 非验证码标题被错误匹配")
+	}
+}
+
 func TestFilterMessagesForOrderEnforcesServiceAndLeaseWindow(t *testing.T) {
 	assignedAt := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	order := domain.Order{AssignedAt: assignedAt, ExpiresAt: assignedAt.Add(10 * time.Minute)}
@@ -284,7 +302,7 @@ func TestFilterMessagesForOrderEnforcesServiceAndLeaseWindow(t *testing.T) {
 	messages := []Message{
 		{ID: "openai-current", Sender: "noreply@openai.com", Subject: "Your verification code", ReceivedAt: assignedAt.Add(time.Minute)},
 		{ID: "openai-second-keyword", Sender: "noreply@openai.com", Subject: "OpenAI 验证码", ReceivedAt: assignedAt.Add(2 * time.Minute)},
-		{ID: "github", Sender: "noreply@github.com", Subject: "Verification code", ReceivedAt: assignedAt.Add(3 * time.Minute)},
+		{ID: "adobe", Sender: "noreply@adobe.com", Subject: "Verification code", ReceivedAt: assignedAt.Add(3 * time.Minute)},
 		{ID: "wrong-subject", Sender: "noreply@openai.com", Subject: "Welcome", ReceivedAt: assignedAt.Add(4 * time.Minute)},
 		{ID: "old-openai", Sender: "noreply@openai.com", Subject: "Verification code", ReceivedAt: assignedAt.Add(-2 * time.Minute)},
 		{ID: "late-openai", Sender: "noreply@openai.com", Subject: "Verification code", ReceivedAt: order.ExpiresAt.Add(time.Second)},

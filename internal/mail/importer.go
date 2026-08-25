@@ -51,11 +51,11 @@ type MailboxLineParser interface {
 	Parse(line string) (MailboxImportRecord, error)
 }
 
-type microsoftMailboxLineParser struct{}
+type mailboxLineParser struct{}
 
-func NewMailboxLineParser() MailboxLineParser { return microsoftMailboxLineParser{} }
+func NewMailboxLineParser() MailboxLineParser { return mailboxLineParser{} }
 
-func (microsoftMailboxLineParser) Parse(line string) (MailboxImportRecord, error) {
+func (mailboxLineParser) Parse(line string) (MailboxImportRecord, error) {
 	line = strings.TrimSpace(strings.TrimPrefix(line, "\ufeff"))
 	if line == "" || strings.HasPrefix(line, "#") {
 		return MailboxImportRecord{}, ErrMailboxImportHeader
@@ -168,7 +168,7 @@ func normalizeMailboxImportRecord(record MailboxImportRecord) (MailboxImportReco
 	}
 	provider, supported := domain.DetectMailboxProvider(record.Address)
 	if !supported {
-		return MailboxImportRecord{}, errors.New("首版只支持 Outlook/Hotmail 邮箱")
+		return MailboxImportRecord{}, errors.New("不支持该邮箱类型")
 	}
 	record.Provider = provider
 	if len(record.Credential()) == 0 {

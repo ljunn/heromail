@@ -130,6 +130,9 @@ type Overview struct {
 	OutlookMailboxes   int     `json:"outlook_mailboxes"`
 	OutlookDEMailboxes int     `json:"outlook_de_mailboxes"`
 	HotmailMailboxes   int     `json:"hotmail_mailboxes"`
+	GmailMailboxes     int     `json:"gmail_mailboxes"`
+	ICloudMailboxes    int     `json:"icloud_mailboxes"`
+	MailComMailboxes   int     `json:"mailcom_mailboxes"`
 	PendingMailboxes   int     `json:"pending_mailboxes"`
 	VerifiedMailboxes  int     `json:"verified_mailboxes"`
 	ActiveLeases       int     `json:"active_leases"`

@@ -25,7 +25,7 @@ import (
 
 func TestCreateOrderAutomaticallyListensWithoutUserMutationEndpoints(t *testing.T) {
 	server := NewServer(store.New())
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/orders", bytes.NewBufferString(`{"service":"github","request_id":"http-test-001"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/orders", bytes.NewBufferString(`{"service":"adobe","request_id":"http-test-001"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-HeroMail-User", "user-001")
 	response := httptest.NewRecorder()
@@ -66,7 +66,7 @@ func TestCreateOrderAutomaticallyListensWithoutUserMutationEndpoints(t *testing.
 func TestAdminOwnsOrderCompletionAndCancellation(t *testing.T) {
 	repository := store.New()
 	server := NewServer(repository)
-	waiting, err := repository.CreateOrder("user-001", "svc-github", "admin-cancel")
+	waiting, err := repository.CreateOrder("user-001", "svc-adobe", "admin-cancel")
 	if err != nil {
 		t.Fatalf("创建待收码订单失败：%v", err)
 	}
@@ -125,19 +125,19 @@ func TestAdminEndpointRequiresRole(t *testing.T) {
 
 func TestAdminOrdersFiltersOnServerAndIncludesUserEmail(t *testing.T) {
 	repository := store.New()
-	github, err := repository.CreateOrder("user-001", "svc-github", "admin-filter-github")
+	adobe, err := repository.CreateOrder("user-001", "svc-adobe", "admin-filter-adobe")
 	if err != nil {
-		t.Fatalf("创建 GitHub 订单失败：%v", err)
+		t.Fatalf("创建 Adobe 订单失败：%v", err)
 	}
-	if _, err := repository.CancelOrder(github.ID, "user-001"); err != nil {
-		t.Fatalf("取消 GitHub 订单失败：%v", err)
+	if _, err := repository.CancelOrder(adobe.ID, "user-001"); err != nil {
+		t.Fatalf("取消 Adobe 订单失败：%v", err)
 	}
 	if _, err := repository.CreateOrder("user-001", "svc-openai", "admin-filter-openai"); err != nil {
 		t.Fatalf("创建 OpenAI 订单失败：%v", err)
 	}
 
 	server := NewServer(repository)
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/orders?page=1&page_size=20&status=canceled&service=github&query=ORD", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/orders?page=1&page_size=20&status=canceled&service=adobe&query=ORD", nil)
 	request.Header.Set("X-HeroMail-Role", "admin")
 	request.Header.Set("X-HeroMail-User", "admin-001")
 	response := httptest.NewRecorder()
@@ -160,22 +160,22 @@ func TestAdminOrdersFiltersOnServerAndIncludesUserEmail(t *testing.T) {
 	if len(body.Data) != 1 || body.Pagination.Total != 1 {
 		t.Fatalf("管理员订单筛选结果不正确：data=%d total=%d", len(body.Data), body.Pagination.Total)
 	}
-	if body.Data[0].ID != github.ID || body.Data[0].UserEmail != "demo@example.com" {
+	if body.Data[0].ID != adobe.ID || body.Data[0].UserEmail != "demo@example.com" {
 		t.Fatalf("管理员订单视图不正确：%+v", body.Data[0])
 	}
 }
 
 func TestUserOrdersFiltersOnServer(t *testing.T) {
 	repository := store.New()
-	github, err := repository.CreateOrder("user-001", "svc-github", "user-filter-github")
+	adobe, err := repository.CreateOrder("user-001", "svc-adobe", "user-filter-adobe")
 	if err != nil {
 		t.Fatalf("创建订单失败：%v", err)
 	}
-	if _, err := repository.CancelOrder(github.ID, "user-001"); err != nil {
+	if _, err := repository.CancelOrder(adobe.ID, "user-001"); err != nil {
 		t.Fatalf("取消订单失败：%v", err)
 	}
 	server := NewServer(repository)
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/orders?page=1&page_size=20&status=canceled&service=github&query=ORD", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/orders?page=1&page_size=20&status=canceled&service=adobe&query=ORD", nil)
 	request.Header.Set("X-HeroMail-User", "user-001")
 	response := httptest.NewRecorder()
 	server.Router.ServeHTTP(response, request)
@@ -191,7 +191,7 @@ func TestUserOrdersFiltersOnServer(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("解析用户订单响应失败：%v", err)
 	}
-	if len(body.Data) != 1 || body.Pagination.Total != 1 || body.Data[0].ID != github.ID {
+	if len(body.Data) != 1 || body.Pagination.Total != 1 || body.Data[0].ID != adobe.ID {
 		t.Fatalf("用户订单筛选结果不正确：data=%d total=%d", len(body.Data), body.Pagination.Total)
 	}
 }
@@ -259,6 +259,22 @@ func TestMailboxMessagesDefaultCollapsed(t *testing.T) {
 	}
 	if !strings.Contains(script, `data-action="order-messages"`) || !strings.Contains(script, `/api/v1/orders/${encodeURIComponent(id)}/messages`) {
 		t.Fatal("用户订单没有平台隔离邮件入口")
+	}
+}
+
+func TestMailboxAdminSupportsNewProvidersAndManualRegistration(t *testing.T) {
+	server := NewServer(store.New())
+	request := httptest.NewRequest(http.MethodGet, "/app.js", nil)
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("工作台脚本返回 %d，期望 %d", response.Code, http.StatusOK)
+	}
+	script := response.Body.String()
+	for _, marker := range []string{`gmail: "Gmail"`, `icloud: "iCloud"`, `mailcom: "Mail.com"`, `data-action="mailbox-registration"`, `data-action="mark-mailbox-service-registered"`, `/services/${encodeURIComponent(serviceID)}/registered`} {
+		if !strings.Contains(script, marker) {
+			t.Fatalf("邮箱管理页面缺少 %q", marker)
+		}
 	}
 }
 
@@ -349,7 +365,7 @@ func TestUserServicesIncludePriceAndAvailabilityWithoutInternalRules(t *testing.
 
 func TestServiceAvailabilityByCode(t *testing.T) {
 	server := NewServer(store.New())
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/services/github/availability", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/services/adobe/availability", nil)
 	request.Header.Set("X-HeroMail-User", "user-001")
 	response := httptest.NewRecorder()
 	server.Router.ServeHTTP(response, request)
@@ -365,7 +381,7 @@ func TestServiceAvailabilityByCode(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("解析平台余量响应失败：%v", err)
 	}
-	if body.Data.Code != "github" || body.Data.AvailableMailboxes <= 0 {
+	if body.Data.Code != "adobe" || body.Data.AvailableMailboxes <= 0 {
 		t.Fatalf("平台余量响应不正确：%+v", body.Data)
 	}
 
@@ -558,7 +574,7 @@ func TestAdminImportsMailboxFileAndQueuesVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = part.Write([]byte("alpha@outlook.com:password\nbeta@hotmail.com----password\ngamma@outlook.de:password\n"))
+	_, _ = part.Write([]byte("alpha@outlook.com:password\nbeta@hotmail.com----password\ngamma@outlook.de:password\ndelta@gmail.com:app-password\necho@icloud.com:app-password\nfoxtrot@mail.com:app-password\n"))
 	_ = writer.Close()
 
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/mailboxes/import", &body)
@@ -570,7 +586,7 @@ func TestAdminImportsMailboxFileAndQueuesVerification(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("导入邮箱返回 %d，响应：%s", response.Code, response.Body.String())
 	}
-	if len(repository.saved) != 3 || len(repository.queued) != 3 {
+	if len(repository.saved) != 6 || len(repository.queued) != 6 {
 		t.Fatalf("邮箱或验证任务数量错误：saved=%d queued=%d", len(repository.saved), len(repository.queued))
 	}
 	for _, mailbox := range repository.saved {
@@ -578,6 +594,36 @@ func TestAdminImportsMailboxFileAndQueuesVerification(t *testing.T) {
 			t.Fatalf("导入邮箱初始状态错误：%+v", mailbox)
 		}
 	}
+}
+
+func TestAdminMarksMailboxRegisteredForSelectedService(t *testing.T) {
+	repository := store.New()
+	mailbox, ok := findMailboxByAddress(repository.Mailboxes(), "hero_01@outlook.com")
+	if !ok {
+		t.Fatal("未找到测试邮箱")
+	}
+	server := NewServer(repository)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/mailboxes/"+mailbox.ID+"/services/svc-openai/registered", nil)
+	request.Header.Set("X-HeroMail-Role", "admin")
+	request.Header.Set("X-HeroMail-User", "admin-001")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("手工标记返回 %d：%s", response.Code, response.Body.String())
+	}
+	updated, _ := findMailboxByAddress(repository.Mailboxes(), mailbox.Address)
+	if len(updated.RegisteredPlatforms) != 1 || updated.RegisteredPlatforms[0] != "openai" {
+		t.Fatalf("已注册平台 = %#v，期望 [openai]", updated.RegisteredPlatforms)
+	}
+}
+
+func findMailboxByAddress(mailboxes []domain.Mailbox, address string) (domain.Mailbox, bool) {
+	for _, mailbox := range mailboxes {
+		if mailbox.Address == address {
+			return mailbox, true
+		}
+	}
+	return domain.Mailbox{}, false
 }
 
 func (s *resourceRepositoryStub) SaveService(_ string, service domain.Service, _ string) (domain.Service, error) {
@@ -606,9 +652,9 @@ func TestAdminSaveServiceValidatesConfigPrecisely(t *testing.T) {
 		},
 		{
 			name:        "不支持的邮箱供应商",
-			body:        `{"code":"grok","name":"Grok 注册","enabled":true,"allowed_providers":["gmail"],"price":0.02,"ttl_seconds":1800,"sender_domains":["x.ai"],"regex":"\\b(\\d{6})\\b"}`,
+			body:        `{"code":"grok","name":"Grok 注册","enabled":true,"allowed_providers":["yahoo"],"price":0.02,"ttl_seconds":1800,"sender_domains":["x.ai"],"subject_keywords":["validate your email"],"regex":"\\b(\\d{6})\\b"}`,
 			wantStatus:  http.StatusBadRequest,
-			wantMessage: "只允许 outlook、outlook_de 和 hotmail",
+			wantMessage: "邮箱类型不受支持",
 		},
 		{
 			name:        "收码时限不是三十分钟",
@@ -618,7 +664,7 @@ func TestAdminSaveServiceValidatesConfigPrecisely(t *testing.T) {
 		},
 		{
 			name:       "有效配置",
-			body:       `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","outlook_de","hotmail"],"price":0.02,"ttl_seconds":1800,"sender_domains":["x.ai"],"subject_keywords":["verify","验证码"],"regex":"\\b(\\d{6})\\b"}`,
+			body:       `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","outlook_de","hotmail","gmail","icloud","mailcom"],"price":0.02,"ttl_seconds":1800,"sender_domains":["x.ai"],"subject_keywords":["validate your email"],"regex":"(?i)\\b([A-Z0-9]{3}-[A-Z0-9]{3}|[A-Z0-9]{6})\\b"}`,
 			wantStatus: http.StatusOK,
 		},
 	}

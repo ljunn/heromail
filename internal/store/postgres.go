@@ -102,11 +102,13 @@ func (s *PostgresStore) seed(config PostgresConfig) error {
 			return err
 		}
 	}
-	services := []sqlService{
-		{ID: "svc-github", Code: "github", Name: "GitHub", Description: "开发者平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 35, TTLSeconds: domain.MinimumOrderTTLSeconds, SenderDomains: []string{"github.com"}, SubjectKeywords: []string{"verification", "验证码"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-openai", Code: "openai", Name: "OpenAI", Description: "人工智能平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 60, TTLSeconds: domain.MinimumOrderTTLSeconds, SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification", "code"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-discord", Code: "discord", Name: "Discord", Description: "社区平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 30, TTLSeconds: domain.MinimumOrderTTLSeconds, SenderDomains: []string{"discord.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-telegram", Code: "telegram", Name: "Telegram", Description: "通讯平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), PriceCents: 25, TTLSeconds: domain.MinimumOrderTTLSeconds, SenderDomains: []string{"telegram.org"}, SubjectKeywords: []string{"login code", "code"}, Regex: `\b(\d{5})\b`},
+	services := make([]sqlService, 0, len(defaultServices()))
+	for _, service := range defaultServices() {
+		services = append(services, sqlService{
+			ID: service.ID, Code: service.Code, Name: service.Name, Description: service.Description,
+			Enabled: service.Enabled, AllowedProviders: service.AllowedProviders, PriceCents: int64(math.Round(service.Price * 100)),
+			TTLSeconds: service.TTLSeconds, SenderDomains: service.SenderDomains, SubjectKeywords: service.SubjectKeywords, Regex: service.Regex,
+		})
 	}
 	if err := s.ensureDefaultServices(services); err != nil {
 		return err
@@ -627,11 +629,14 @@ func (s *PostgresStore) ReapExpired() int {
 
 func (s *PostgresStore) Overview() domain.Overview {
 	var result domain.Overview
-	var total, outlook, outlookDE, hotmail, pending, verified, available, leased, authErrors, blocked int64
+	var total, outlook, outlookDE, hotmail, gmail, icloud, mailcom, pending, verified, available, leased, authErrors, blocked int64
 	s.db.Model(&sqlMailbox{}).Count(&total)
 	s.db.Model(&sqlMailbox{}).Where("provider = ?", domain.MailboxProviderOutlook).Count(&outlook)
 	s.db.Model(&sqlMailbox{}).Where("provider = ?", domain.MailboxProviderOutlookDE).Count(&outlookDE)
 	s.db.Model(&sqlMailbox{}).Where("provider = ?", domain.MailboxProviderHotmail).Count(&hotmail)
+	s.db.Model(&sqlMailbox{}).Where("provider = ?", domain.MailboxProviderGmail).Count(&gmail)
+	s.db.Model(&sqlMailbox{}).Where("provider = ?", domain.MailboxProviderICloud).Count(&icloud)
+	s.db.Model(&sqlMailbox{}).Where("provider = ?", domain.MailboxProviderMailCom).Count(&mailcom)
 	s.db.Model(&sqlMailbox{}).Where("verification_status = ?", domain.MailboxVerificationPending).Count(&pending)
 	s.db.Model(&sqlMailbox{}).Where("verification_status = ?", domain.MailboxVerificationVerified).Count(&verified)
 	s.db.Model(&sqlMailbox{}).Where("state = ?", domain.MailboxAvailable).Count(&available)
@@ -643,6 +648,9 @@ func (s *PostgresStore) Overview() domain.Overview {
 	result.OutlookMailboxes = int(outlook)
 	result.OutlookDEMailboxes = int(outlookDE)
 	result.HotmailMailboxes = int(hotmail)
+	result.GmailMailboxes = int(gmail)
+	result.ICloudMailboxes = int(icloud)
+	result.MailComMailboxes = int(mailcom)
 	result.PendingMailboxes = int(pending)
 	result.VerifiedMailboxes = int(verified)
 	result.ActiveLeases = int(leased)

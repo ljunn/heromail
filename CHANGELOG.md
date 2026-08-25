@@ -2,6 +2,38 @@
 
 本项目的所有正式版本变更都记录在此文件。版本号遵循语义化版本，发布日期使用 UTC。
 
+## [1.9.0] - 2026-08-25
+
+### 新增
+
+- 邮箱池新增 Gmail、iCloud 和 Mail.com 渠道；Mail.com 覆盖官网当前列出的完整邮箱域名集合，三类渠道均通过 TLS IMAP 读取邮件。
+- 空库默认目标平台调整为 Adobe、Imagine、Krea、Leonardo、OpenAI、Runway 和 Grok；Grok 使用 `x.ai`、`Validate your email` 与字母数字验证码规则，OpenAI 使用远端注册代码中确认的三组标题关键词。
+- 管理员邮箱列表新增“平台注册”入口，可按“邮箱 × 目标平台”手工标记已注册；导入验证仍会自动扫描全部平台历史邮件并写入状态。
+
+### 修复
+
+- 修复非 Microsoft 邮箱可能误用 Microsoft Graph 或 Microsoft Token 刷新流程的问题；Gmail、iCloud 和 Mail.com 现在直接选择各自 IMAP 服务端。
+- 修复 Microsoft OAuth 可能接受非 Microsoft 邮箱域名并在后续连接阶段选择错误渠道的问题。
+- 移除新安装默认配置中的 GitHub、Discord 和 Telegram，并清理公开页面与 API 示例中的旧平台文案。
+
+### 安全
+
+- 邮箱渠道按精确域名识别，未知域名不允许导入；所有 IMAP 连接固定使用 TLS 1.2 及以上和对应服务端 SNI。
+- 手工标记平台注册状态使用数据库行锁和事务，租用中的邮箱平台状态禁止覆盖，实际变更写入管理员审计日志。
+- Microsoft Graph Token 仅发送到 Microsoft API；Google、Apple 和 Mail.com 凭证只用于对应 IMAP 连接，凭证仍使用 AES-256-GCM 加密存储。
+
+### 兼容性
+
+- 保持现有 TXT、CSV、JSON Lines 流式导入格式、统一分页响应、订单状态机、自动扣费和超时退款规则不变。
+- 不新增 PostgreSQL 表或必填字段；现有邮箱、订单、余额、支付配置和邮箱平台注册状态无需迁移。
+- 已有数据库不会自动新增或恢复目标平台，管理员删除或修改的平台在升级后保持原样；新默认平台仅用于空库首次初始化。
+
+### 部署注意事项
+
+- 发布前创建并校验 PostgreSQL 备份；在线升级页面会再次执行升级前备份，禁止绕过网页升级流程。
+- 升级后在目标平台页面新增或更新 Adobe、Imagine、Krea、Leonardo、OpenAI、Runway 和 Grok，并删除或停用不再需要的 GitHub、Discord、Telegram。
+- 升级后验证 `/readyz`、登录、列表分页和支付回调配置；分别导入一条 Gmail、iCloud 或 Mail.com 测试账号时，应使用已启用 IMAP 的应用专用密码并确认自动历史扫描结果。
+
 ## [1.8.8] - 2026-08-24
 
 ### 新增

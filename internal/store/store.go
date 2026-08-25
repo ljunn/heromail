@@ -21,6 +21,8 @@ var (
 	ErrVerificationCodeRequired = errors.New("verification code is required")
 	ErrInsufficientBalance      = errors.New("insufficient balance")
 	ErrDuplicateRequest         = errors.New("request_id already exists")
+	ErrMailboxServiceLeased     = errors.New("邮箱在该目标平台存在进行中的订单")
+	ErrMailboxServiceNotFound   = errors.New("邮箱目标平台状态不存在")
 )
 
 type Store struct {
@@ -46,14 +48,9 @@ func (s *Store) seed() {
 	s.users["user-001"] = &domain.User{ID: "user-001", Email: "demo@example.com", Balance: 48.60, Role: "user"}
 	s.users["admin-001"] = &domain.User{ID: "admin-001", Email: "admin@heromail.local", Balance: 0, Role: "admin"}
 
-	services := []*domain.Service{
-		{ID: "svc-github", Code: "github", Name: "GitHub", Description: "开发者平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), Price: 0.35, TTLSeconds: domain.MinimumOrderTTLSeconds, SenderDomains: []string{"github.com"}, SubjectKeywords: []string{"verification", "验证码"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-openai", Code: "openai", Name: "OpenAI", Description: "人工智能平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), Price: 0.60, TTLSeconds: domain.MinimumOrderTTLSeconds, SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification", "code"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-discord", Code: "discord", Name: "Discord", Description: "社区平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), Price: 0.30, TTLSeconds: domain.MinimumOrderTTLSeconds, SenderDomains: []string{"discord.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
-		{ID: "svc-telegram", Code: "telegram", Name: "Telegram", Description: "通讯平台", Enabled: true, AllowedProviders: append([]string(nil), domain.SupportedMailboxProviders...), Price: 0.25, TTLSeconds: domain.MinimumOrderTTLSeconds, SenderDomains: []string{"telegram.org"}, SubjectKeywords: []string{"login code", "code"}, Regex: `\b(\d{5})\b`},
-	}
-	for _, service := range services {
-		s.services[service.ID] = service
+	for _, service := range defaultServices() {
+		serviceCopy := service
+		s.services[service.ID] = &serviceCopy
 	}
 
 	providers := []string{domain.MailboxProviderOutlook, domain.MailboxProviderHotmail}
@@ -400,6 +397,15 @@ func (s *Store) Overview() domain.Overview {
 		if mailbox.Provider == domain.MailboxProviderHotmail {
 			result.HotmailMailboxes++
 		}
+		if mailbox.Provider == domain.MailboxProviderGmail {
+			result.GmailMailboxes++
+		}
+		if mailbox.Provider == domain.MailboxProviderICloud {
+			result.ICloudMailboxes++
+		}
+		if mailbox.Provider == domain.MailboxProviderMailCom {
+			result.MailComMailboxes++
+		}
 		if mailbox.VerificationStatus == domain.MailboxVerificationPending {
 			result.PendingMailboxes++
 		}
@@ -481,6 +487,32 @@ func (s *Store) MarkMailboxServiceConsumed(mailboxID, serviceID string, changedA
 	}
 	state.State = domain.ServiceConsumed
 	state.ChangedAt = changedAt
+	mailbox.Services[serviceID] = state
+	return nil
+}
+
+func (s *Store) MarkMailboxServiceRegistered(_, mailboxID, serviceID, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	mailbox, ok := s.mailboxes[mailboxID]
+	if !ok {
+		return ErrMailboxNotFound
+	}
+	if _, ok := s.services[serviceID]; !ok {
+		return ErrServiceNotFound
+	}
+	state, ok := mailbox.Services[serviceID]
+	if !ok {
+		return ErrMailboxServiceNotFound
+	}
+	if state.State == domain.ServiceLeased {
+		return ErrMailboxServiceLeased
+	}
+	if state.State == domain.ServiceConsumed {
+		return nil
+	}
+	state.State = domain.ServiceConsumed
+	state.ChangedAt = time.Now().UTC()
 	mailbox.Services[serviceID] = state
 	return nil
 }

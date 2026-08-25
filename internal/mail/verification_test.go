@@ -183,19 +183,56 @@ func TestMailboxVerifierReadsMessagesWithGraphPriorityAndIMAPFallback(t *testing
 	}
 }
 
+func TestMailboxVerifierUsesIMAPDirectlyForNonMicrosoftProviders(t *testing.T) {
+	repository := &verificationRepositoryStub{credential: store.MailboxCredential{
+		Mailbox: domain.Mailbox{ID: "mailbox-1", Address: "user@gmail.com", Provider: domain.MailboxProviderGmail},
+		Config:  map[string]string{"access_token": "google-access", "password": "app-password"},
+	}}
+	graph := &graphConnectorStub{allMessages: []Message{{ID: "wrong-graph-message"}}}
+	imap := &imapConnectorStub{allMessages: []Message{{ID: "imap-message"}}}
+	verifier := NewMailboxVerifier(repository, graph, imap)
+
+	result, err := verifier.Verify(context.Background(), "admin", "mailbox-1", "")
+	if err != nil || result.Method != domain.MailboxConnectionIMAP || graph.calls != 0 || graph.refreshes != 0 || imap.calls != 1 {
+		t.Fatalf("非 Microsoft 邮箱验证通道路由错误：result=%+v err=%v graph=%d refresh=%d imap=%d", result, err, graph.calls, graph.refreshes, imap.calls)
+	}
+	messages, err := verifier.ReadMessages(context.Background(), "admin", "mailbox-1", "")
+	if err != nil || len(messages) != 1 || messages[0].ID != "imap-message" || graph.allCalls != 0 || imap.allCalls != 1 {
+		t.Fatalf("非 Microsoft 邮箱收件通道路由错误：messages=%+v err=%v graph=%d imap=%d", messages, err, graph.allCalls, imap.allCalls)
+	}
+}
+
+func TestIMAPServerConfigForSupportedProviders(t *testing.T) {
+	tests := []struct {
+		address string
+		server  string
+	}{
+		{address: "user@outlook.com", server: "outlook.office365.com:993"},
+		{address: "user@gmail.com", server: "imap.gmail.com:993"},
+		{address: "user@icloud.com", server: "imap.mail.me.com:993"},
+		{address: "user@mail.com", server: "imap.mail.com:993"},
+	}
+	for _, test := range tests {
+		config, err := imapServerConfig(test.address)
+		if err != nil || config.Address != test.server {
+			t.Fatalf("邮箱 %s 的 IMAP 配置 = %+v, %v，期望 %s", test.address, config, err, test.server)
+		}
+	}
+}
+
 func TestMailboxVerifierScansHistoryAfterConnectionVerification(t *testing.T) {
 	repository := &historyVerificationRepository{
 		verificationRepositoryStub: &verificationRepositoryStub{credential: store.MailboxCredential{
 			Mailbox: domain.Mailbox{ID: "mailbox-1", Address: "user@outlook.com"},
 			Config:  map[string]string{"access_token": "access", "expires_at": time.Now().Add(time.Hour).Format(time.RFC3339)},
 		}},
-		services: []domain.Service{{ID: "service-github", SenderDomains: []string{"github.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`}},
+		services: []domain.Service{{ID: "service-adobe", SenderDomains: []string{"adobe.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`}},
 	}
-	graph := &graphConnectorStub{allMessages: []Message{{Sender: "noreply@github.com", Subject: "Verification code", BodyPreview: "628419"}}}
+	graph := &graphConnectorStub{allMessages: []Message{{Sender: "noreply@adobe.com", Subject: "Verification code", BodyPreview: "628419"}}}
 	verifier := NewMailboxVerifier(repository, graph, &imapConnectorStub{})
 
 	matched, err := verifier.ScanMailboxHistory(context.Background(), "system", "mailbox-1", "")
-	if err != nil || matched != 1 || len(repository.marked) != 1 || repository.marked[0] != "service-github" {
+	if err != nil || matched != 1 || len(repository.marked) != 1 || repository.marked[0] != "service-adobe" {
 		t.Fatalf("历史收件扫描错误：matched=%d marked=%v err=%v", matched, repository.marked, err)
 	}
 }

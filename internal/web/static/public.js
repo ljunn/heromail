@@ -37,9 +37,9 @@ async function renderPricing() {
 
 function renderDocs() {
   const serviceExample = `GET /api/v1/services?page=1&page_size=20\nAuthorization: Bearer hm_your_api_key`;
-  const createExample = `POST /api/v1/orders\nAuthorization: Bearer hm_your_api_key\nContent-Type: application/json\n\n{\n  "service": "github",\n  "request_id": "client-request-001"\n}`;
-  const responseExample = `{\n  "data": {\n    "id": "ord_01J...",\n    "service_name": "GitHub",\n    "mailbox_address": "assigned@outlook.com",\n    "status": "waiting_code",\n    "code": "",\n    "expires_at": "2026-08-18T12:30:00Z"\n  }\n}`;
-  const serviceResponse = `{\n  "data": [{\n    "code": "github",\n    "name": "GitHub",\n    "description": "GitHub 注册验证码",\n    "allowed_providers": ["outlook", "hotmail"],\n    "price": 1.50,\n    "ttl_seconds": 1800\n  }],\n  "pagination": { "page": 1, "page_size": 20, "total": 1, "total_pages": 1 }\n}`;
+  const createExample = `POST /api/v1/orders\nAuthorization: Bearer hm_your_api_key\nContent-Type: application/json\n\n{\n  "service": "openai",\n  "request_id": "client-request-001"\n}`;
+  const responseExample = `{\n  "data": {\n    "id": "ord_01J...",\n    "service_name": "OpenAI",\n    "mailbox_address": "assigned@outlook.com",\n    "status": "waiting_code",\n    "code": "",\n    "expires_at": "2026-08-18T12:30:00Z"\n  }\n}`;
+  const serviceResponse = `{\n  "data": [{\n    "code": "openai",\n    "name": "OpenAI",\n    "description": "OpenAI 注册验证码",\n    "allowed_providers": ["outlook", "hotmail", "gmail", "icloud", "mailcom"],\n    "price": 0.60,\n    "ttl_seconds": 1800\n  }],\n  "pagination": { "page": 1, "page_size": 20, "total": 1, "total_pages": 1 }\n}`;
   publicContent.innerHTML = pageShell(
     "开发者文档",
     "用 API 管理注册收码任务",
@@ -60,7 +60,7 @@ function renderDocs() {
 }
 
 function renderOpenSource() {
-  publicContent.innerHTML = pageShell("开源与自托管", "数据、邮箱资产和升级流程由你掌控", "HeroMail 使用 MIT 许可证发布，正式镜像、安装脚本和版本日志均来自 GitHub Release。", `<div class="docs-content"><section><h2>一行命令安装</h2><pre class="public-code">curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh | sudo bash</pre></section><section><h2>默认技术栈</h2><p>Go + Gin 提供 API 和内嵌前端，PostgreSQL 保存业务事实，Redis 负责跨进程锁与协调，Microsoft Graph Worker 拉取并匹配验证码邮件。</p></section><section><h2>正式升级</h2><p>首次安装绑定 GitHub 正式 Release。后续版本在管理后台检查更新，系统会先创建并校验 PostgreSQL 备份，再通过官方 <code>ghcr.io/ljunn/heromail:latest</code> 镜像完成升级。</p><a class="solid-action" href="https://github.com/ljunn/heromail" target="_blank" rel="noopener">查看 GitHub 仓库</a></section></div>`);
+  publicContent.innerHTML = pageShell("开源与自托管", "数据、邮箱资产和升级流程由你掌控", "HeroMail 使用 MIT 许可证发布，正式镜像、安装脚本和版本日志均来自 GitHub Release。", `<div class="docs-content"><section><h2>一行命令安装</h2><pre class="public-code">curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh | sudo bash</pre></section><section><h2>默认技术栈</h2><p>Go + Gin 提供 API 和内嵌前端，PostgreSQL 保存业务事实，Redis 负责跨进程锁与协调，Graph / IMAP Worker 拉取并匹配验证码邮件。</p></section><section><h2>正式升级</h2><p>首次安装绑定 GitHub 正式 Release。后续版本在管理后台检查更新，系统会先创建并校验 PostgreSQL 备份，再通过官方 <code>ghcr.io/ljunn/heromail:latest</code> 镜像完成升级。</p><a class="solid-action" href="https://github.com/ljunn/heromail" target="_blank" rel="noopener">查看 GitHub 仓库</a></section></div>`);
 }
 
 function renderAuth(register) {

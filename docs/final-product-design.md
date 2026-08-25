@@ -2,7 +2,7 @@
 
 ## 1. 产品定位
 
-HeroMail 是一个可自托管的邮箱资源池与注册验证码平台。平台管理员维护 Outlook/Hotmail 等邮箱资产和各目标平台的收码规则；平台用户不提交自己的邮箱，而是选择目标平台、创建注册任务，由系统分配一个可用邮箱并返回该邮箱收到的验证码。
+HeroMail 是一个可自托管的邮箱资源池与注册验证码平台。平台管理员维护 Outlook、Hotmail、Gmail、iCloud、Mail.com 等邮箱资产和各目标平台的收码规则；平台用户不提交自己的邮箱，而是选择目标平台、创建注册任务，由系统分配一个可用邮箱并返回该邮箱收到的验证码。
 
 首版核心不是完整邮件客户端，也不是通用收件箱。核心是：
 
@@ -224,7 +224,7 @@ POST   /api/v1/admin/orders/{id}/cancel
 
 ```json
 {
-  "service": "github",
+  "service": "openai",
   "mail_provider": "auto",
   "request_id": "client-unique-id",
   "webhook_url": "https://client.example/callback"
@@ -240,7 +240,7 @@ POST   /api/v1/admin/orders/{id}/cancel
 必须完成：
 
 - 用户注册登录、余额/额度、API Key。
-- Outlook/Hotmail OAuth2 导入、健康检查和自动刷新。
+- Outlook/Hotmail OAuth2 导入、健康检查和自动刷新；Gmail、iCloud、Mail.com 使用 IMAP 与应用专用密码接入。
 - 邮箱池、目标平台、收码规则和平台占用记录。
 - 网页/API 创建订单、原子分配、轮询收码、订单结算。
 - 订单记录、管理监控、基础告警、审计日志。

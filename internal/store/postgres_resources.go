@@ -50,7 +50,7 @@ func (s *PostgresStore) SaveMailbox(actorID string, mailbox domain.Mailbox, cred
 	mailbox.Address = strings.ToLower(strings.TrimSpace(mailbox.Address))
 	provider, supported := domain.DetectMailboxProvider(mailbox.Address)
 	if !supported {
-		return domain.Mailbox{}, errors.New("首版只支持 Outlook/Hotmail 邮箱")
+		return domain.Mailbox{}, errors.New("不支持该邮箱类型")
 	}
 	mailbox.Provider = provider
 	mailbox.Pool = strings.TrimSpace(mailbox.Pool)
@@ -416,6 +416,41 @@ func (s *PostgresStore) MarkMailboxServiceConsumed(mailboxID, serviceID string, 
 			ResourceType: "mailbox_service",
 			ResourceID:   mailboxID + ":" + serviceID,
 			Detail:       "历史收件匹配目标平台，标记邮箱已注册",
+		}).Error
+	})
+}
+
+func (s *PostgresStore) MarkMailboxServiceRegistered(actorID, mailboxID, serviceID, ip string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var state sqlMailboxService
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&state, "mailbox_id = ? AND service_id = ?", mailboxID, serviceID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrMailboxServiceNotFound
+			}
+			return err
+		}
+		if state.State == string(domain.ServiceLeased) {
+			return ErrMailboxServiceLeased
+		}
+		if state.State == string(domain.ServiceConsumed) {
+			return nil
+		}
+		now := time.Now().UTC()
+		if err := tx.Model(&state).Updates(map[string]any{
+			"state":      string(domain.ServiceConsumed),
+			"changed_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		return tx.Create(&sqlAuditLog{
+			ID:           uuid.NewString(),
+			ActorID:      actorID,
+			Action:       "mailbox.service.manual_register",
+			ResourceType: "mailbox_service",
+			ResourceID:   mailboxID + ":" + serviceID,
+			Detail:       "管理员手工标记邮箱已完成目标平台注册",
+			IP:           ip,
 		}).Error
 	})
 }

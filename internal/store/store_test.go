@@ -12,7 +12,7 @@ import (
 
 func TestRegistrationConsumesMailboxForOneServiceOnly(t *testing.T) {
 	s := New()
-	first, err := s.CreateOrder("user-001", "svc-github", "test-1")
+	first, err := s.CreateOrder("user-001", "svc-adobe", "test-1")
 	if err != nil {
 		t.Fatalf("create first order: %v", err)
 	}
@@ -24,17 +24,17 @@ func TestRegistrationConsumesMailboxForOneServiceOnly(t *testing.T) {
 	if !ok {
 		t.Fatalf("mailbox %s not found", first.MailboxAddress)
 	}
-	if got := mailbox.Services["svc-github"].State; got != domain.ServiceConsumed {
-		t.Fatalf("github state = %s, want %s", got, domain.ServiceConsumed)
+	if got := mailbox.Services["svc-adobe"].State; got != domain.ServiceConsumed {
+		t.Fatalf("adobe state = %s, want %s", got, domain.ServiceConsumed)
 	}
 	if got := mailbox.Services["svc-openai"].State; got != domain.ServiceAvailable {
 		t.Fatalf("openai state = %s, want %s", got, domain.ServiceAvailable)
 	}
-	if len(mailbox.RegisteredPlatforms) != 1 || mailbox.RegisteredPlatforms[0] != "github" {
-		t.Fatalf("registered platforms = %#v, want [github]", mailbox.RegisteredPlatforms)
+	if len(mailbox.RegisteredPlatforms) != 1 || mailbox.RegisteredPlatforms[0] != "adobe" {
+		t.Fatalf("registered platforms = %#v, want [adobe]", mailbox.RegisteredPlatforms)
 	}
 
-	second, err := s.CreateOrder("user-001", "svc-github", "test-2")
+	second, err := s.CreateOrder("user-001", "svc-adobe", "test-2")
 	if err != nil {
 		t.Fatalf("create second order: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestReceiveCodeRejectsExpiredOrder(t *testing.T) {
 func TestCancelRefundsAndReleasesLease(t *testing.T) {
 	s := New()
 	before, _ := s.User("user-001")
-	order, err := s.CreateOrder("user-001", "svc-github", "cancel-1")
+	order, err := s.CreateOrder("user-001", "svc-adobe", "cancel-1")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestFiveNoCodeTimeoutsConsumeMailboxService(t *testing.T) {
 	}
 	initialBalance, _ := s.User("user-001")
 	for attempt := 1; attempt <= 5; attempt++ {
-		order, err := s.CreateOrder("user-001", "svc-github", fmt.Sprintf("timeout-%d", attempt))
+		order, err := s.CreateOrder("user-001", "svc-adobe", fmt.Sprintf("timeout-%d", attempt))
 		if err != nil {
 			t.Fatalf("第 %d 次创建订单失败：%v", attempt, err)
 		}
@@ -138,7 +138,7 @@ func TestFiveNoCodeTimeoutsConsumeMailboxService(t *testing.T) {
 			t.Fatalf("第 %d 次回收数 = %d，期望 1", attempt, reaped)
 		}
 		mailbox, _ := findMailbox(s.Mailboxes(), mailboxAddress)
-		state := mailbox.Services["svc-github"]
+		state := mailbox.Services["svc-adobe"]
 		if state.TimeoutCount != attempt {
 			t.Fatalf("第 %d 次超时计数 = %d", attempt, state.TimeoutCount)
 		}
@@ -154,7 +154,7 @@ func TestFiveNoCodeTimeoutsConsumeMailboxService(t *testing.T) {
 			t.Fatalf("第 %d 次超时退款后余额 = %.2f，期望 %.2f", attempt, balance.Balance, initialBalance.Balance)
 		}
 	}
-	if _, err := s.CreateOrder("user-001", "svc-github", "timeout-six"); !errors.Is(err, ErrNoMailboxAvailable) {
+	if _, err := s.CreateOrder("user-001", "svc-adobe", "timeout-six"); !errors.Is(err, ErrNoMailboxAvailable) {
 		t.Fatalf("第 5 次超时后仍可分配，返回 %v", err)
 	}
 }
@@ -195,16 +195,16 @@ func TestReceivedCodeCannotBeCanceledOrRefunded(t *testing.T) {
 
 func TestServiceAvailabilityTracksAllocatableMailboxes(t *testing.T) {
 	s := New()
-	before := s.ServiceAvailability([]string{"svc-github"})["svc-github"]
+	before := s.ServiceAvailability([]string{"svc-adobe"})["svc-adobe"]
 	if before <= 0 {
-		t.Fatalf("初始 GitHub 余量 = %d，期望大于 0", before)
+		t.Fatalf("初始 Adobe 余量 = %d，期望大于 0", before)
 	}
 
-	order, err := s.CreateOrder("user-001", "svc-github", "availability-1")
+	order, err := s.CreateOrder("user-001", "svc-adobe", "availability-1")
 	if err != nil {
 		t.Fatalf("创建订单失败：%v", err)
 	}
-	afterAllocation := s.ServiceAvailability([]string{"svc-github"})["svc-github"]
+	afterAllocation := s.ServiceAvailability([]string{"svc-adobe"})["svc-adobe"]
 	if afterAllocation != before-1 {
 		t.Fatalf("分配后余量 = %d，期望 %d", afterAllocation, before-1)
 	}
@@ -212,7 +212,7 @@ func TestServiceAvailabilityTracksAllocatableMailboxes(t *testing.T) {
 	if _, err := s.CancelOrder(order.ID, "user-001"); err != nil {
 		t.Fatalf("取消订单失败：%v", err)
 	}
-	afterCancel := s.ServiceAvailability([]string{"svc-github"})["svc-github"]
+	afterCancel := s.ServiceAvailability([]string{"svc-adobe"})["svc-adobe"]
 	if afterCancel != before {
 		t.Fatalf("取消后余量 = %d，期望恢复为 %d", afterCancel, before)
 	}
@@ -220,18 +220,18 @@ func TestServiceAvailabilityTracksAllocatableMailboxes(t *testing.T) {
 
 func TestUserOrderFilterIsServerSideSemantics(t *testing.T) {
 	s := New()
-	github, err := s.CreateOrder("user-001", "svc-github", "filter-github")
+	adobe, err := s.CreateOrder("user-001", "svc-adobe", "filter-adobe")
 	if err != nil {
-		t.Fatalf("创建 GitHub 订单失败：%v", err)
+		t.Fatalf("创建 Adobe 订单失败：%v", err)
 	}
-	if _, err := s.CancelOrder(github.ID, "user-001"); err != nil {
-		t.Fatalf("取消 GitHub 订单失败：%v", err)
+	if _, err := s.CancelOrder(adobe.ID, "user-001"); err != nil {
+		t.Fatalf("取消 Adobe 订单失败：%v", err)
 	}
 	if _, err := s.CreateOrder("user-001", "svc-openai", "filter-openai"); err != nil {
 		t.Fatalf("创建 OpenAI 订单失败：%v", err)
 	}
-	items, total := s.ListUserOrdersPage("user-001", UserOrderFilter{Status: string(domain.OrderCanceled), Service: "github", Query: "ORD"}, 1, 20)
-	if total != 1 || len(items) != 1 || items[0].ID != github.ID {
+	items, total := s.ListUserOrdersPage("user-001", UserOrderFilter{Status: string(domain.OrderCanceled), Service: "adobe", Query: "ORD"}, 1, 20)
+	if total != 1 || len(items) != 1 || items[0].ID != adobe.ID {
 		t.Fatalf("用户订单筛选结果不正确：total=%d items=%+v", total, items)
 	}
 }
@@ -248,6 +248,30 @@ func TestDefaultServiceSeedDoesNotRestoreDeletedConfiguration(t *testing.T) {
 	}
 }
 
+func TestDefaultServicesMatchSupportedRegistrationPlatforms(t *testing.T) {
+	services := defaultServices()
+	got := make(map[string]domain.Service, len(services))
+	for _, service := range services {
+		got[service.Code] = service
+	}
+	for _, code := range []string{"adobe", "imagine", "krea", "leonardo", "openai", "runway", "grok"} {
+		if _, ok := got[code]; !ok {
+			t.Fatalf("默认平台缺少 %s", code)
+		}
+	}
+	for _, removed := range []string{"github", "discord", "telegram"} {
+		if _, ok := got[removed]; ok {
+			t.Fatalf("已移除平台 %s 仍存在于默认配置", removed)
+		}
+	}
+	if grok := got["grok"]; len(grok.SenderDomains) != 1 || grok.SenderDomains[0] != "x.ai" || len(grok.SubjectKeywords) != 1 || grok.SubjectKeywords[0] != "validate your email" {
+		t.Fatalf("Grok 邮件规则不正确：%+v", grok)
+	}
+	if openai := got["openai"]; len(openai.SubjectKeywords) != 3 {
+		t.Fatalf("OpenAI 邮件标题关键词不正确：%+v", openai.SubjectKeywords)
+	}
+}
+
 func TestMarkMailboxServiceConsumedUpdatesRegisteredPlatforms(t *testing.T) {
 	s := New()
 	mailbox, ok := findMailbox(s.Mailboxes(), "hero_01@outlook.com")
@@ -255,15 +279,44 @@ func TestMarkMailboxServiceConsumedUpdatesRegisteredPlatforms(t *testing.T) {
 		t.Fatal("未找到测试邮箱")
 	}
 	changedAt := time.Now().UTC().Add(-time.Minute)
-	if err := s.MarkMailboxServiceConsumed(mailbox.ID, "svc-github", changedAt); err != nil {
+	if err := s.MarkMailboxServiceConsumed(mailbox.ID, "svc-adobe", changedAt); err != nil {
 		t.Fatalf("标记平台注册状态失败：%v", err)
 	}
 	updated, ok := findMailbox(s.Mailboxes(), mailbox.Address)
-	if !ok || len(updated.RegisteredPlatforms) != 1 || updated.RegisteredPlatforms[0] != "github" {
-		t.Fatalf("已注册平台 = %#v，期望 [github]", updated.RegisteredPlatforms)
+	if !ok || len(updated.RegisteredPlatforms) != 1 || updated.RegisteredPlatforms[0] != "adobe" {
+		t.Fatalf("已注册平台 = %#v，期望 [adobe]", updated.RegisteredPlatforms)
 	}
-	if err := s.MarkMailboxServiceConsumed(mailbox.ID, "svc-github", changedAt); err != nil {
+	if err := s.MarkMailboxServiceConsumed(mailbox.ID, "svc-adobe", changedAt); err != nil {
 		t.Fatalf("重复标记平台注册状态失败：%v", err)
+	}
+}
+
+func TestAdminCanMarkMailboxRegisteredForService(t *testing.T) {
+	s := New()
+	mailbox, ok := findMailbox(s.Mailboxes(), "hero_01@outlook.com")
+	if !ok {
+		t.Fatal("未找到测试邮箱")
+	}
+	if err := s.MarkMailboxServiceRegistered("admin-001", mailbox.ID, "svc-openai", "127.0.0.1"); err != nil {
+		t.Fatalf("管理员手工标记失败：%v", err)
+	}
+	updated, _ := findMailbox(s.Mailboxes(), mailbox.Address)
+	if len(updated.RegisteredPlatforms) != 1 || updated.RegisteredPlatforms[0] != "openai" {
+		t.Fatalf("已注册平台 = %#v，期望 [openai]", updated.RegisteredPlatforms)
+	}
+	if err := s.MarkMailboxServiceRegistered("admin-001", mailbox.ID, "svc-openai", "127.0.0.1"); err != nil {
+		t.Fatalf("重复手工标记应当幂等：%v", err)
+	}
+}
+
+func TestAdminCannotMarkLeasedMailboxServiceRegistered(t *testing.T) {
+	s := New()
+	order, err := s.CreateOrder("user-001", "svc-openai", "manual-register-leased")
+	if err != nil {
+		t.Fatalf("创建订单失败：%v", err)
+	}
+	if err := s.MarkMailboxServiceRegistered("admin-001", order.MailboxID, order.ServiceID, "127.0.0.1"); !errors.Is(err, ErrMailboxServiceLeased) {
+		t.Fatalf("租用中的邮箱平台标记返回 %v，期望 %v", err, ErrMailboxServiceLeased)
 	}
 }
 

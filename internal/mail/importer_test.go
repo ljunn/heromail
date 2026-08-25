@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestMailboxLineParserSupportsMicrosoftFormats(t *testing.T) {
+func TestMailboxLineParserSupportsConfiguredProviderFormats(t *testing.T) {
 	clientID := "00000000-0000-0000-0000-000000000001"
 	tests := []struct {
 		name         string
@@ -24,6 +24,9 @@ func TestMailboxLineParserSupportsMicrosoftFormats(t *testing.T) {
 		{name: "CSV", line: fmt.Sprintf("delta@hotmail.com,secret,%s,refresh-value", clientID), address: "delta@hotmail.com", provider: "hotmail", password: "secret", clientID: clientID, refreshToken: "refresh-value"},
 		{name: "交换字段顺序", line: fmt.Sprintf("echo@outlook.com----secret----refresh-value----%s", clientID), address: "echo@outlook.com", provider: "outlook", password: "secret", clientID: clientID, refreshToken: "refresh-value"},
 		{name: "JSON Lines", line: fmt.Sprintf(`{"email":"foxtrot@hotmail.com","password":"secret","client_id":"%s","refresh_token":"refresh-value"}`, clientID), address: "foxtrot@hotmail.com", provider: "hotmail", password: "secret", clientID: clientID, refreshToken: "refresh-value"},
+		{name: "Gmail 应用密码", line: "gmail@gmail.com:app-password", address: "gmail@gmail.com", provider: "gmail", password: "app-password"},
+		{name: "iCloud 应用密码", line: "apple@icloud.com----app-password", address: "apple@icloud.com", provider: "icloud", password: "app-password"},
+		{name: "Mail.com 应用密码", line: "mailbox@mail.com|app-password", address: "mailbox@mail.com", provider: "mailcom", password: "app-password"},
 	}
 	parser := NewMailboxLineParser()
 	for _, test := range tests {
@@ -44,9 +47,9 @@ func TestMailboxLineParserSupportsMicrosoftFormats(t *testing.T) {
 }
 
 func TestMailboxLineParserRejectsUnsupportedProviderWithoutLeakingLine(t *testing.T) {
-	line := "someone@gmail.com:very-secret-password"
+	line := "someone@example.com:very-secret-password"
 	_, err := NewMailboxLineParser().Parse(line)
-	if err == nil || !strings.Contains(err.Error(), "Outlook/Hotmail") {
+	if err == nil || !strings.Contains(err.Error(), "不支持该邮箱类型") {
 		t.Fatalf("未拒绝不支持的邮箱：%v", err)
 	}
 	if strings.Contains(err.Error(), "very-secret-password") {

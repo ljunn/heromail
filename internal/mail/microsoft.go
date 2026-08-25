@@ -308,10 +308,14 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 		return
 	}
 	credential := mailbox.Config
-	useIMAP := mailbox.Mailbox.ConnectionMethod == domain.MailboxConnectionIMAP
+	microsoftMailbox := supportsMicrosoftGraph(mailbox.Mailbox)
+	useIMAP := !microsoftMailbox || mailbox.Mailbox.ConnectionMethod == domain.MailboxConnectionIMAP
 	validUntil, _ := time.Parse(time.RFC3339, credential["expires_at"])
-	needsRefresh := credential["refresh_token"] != "" && (credential["access_token"] == "" || time.Until(validUntil) < 5*time.Minute)
+	needsRefresh := microsoftMailbox && credential["refresh_token"] != "" && (credential["access_token"] == "" || time.Until(validUntil) < 5*time.Minute)
 	if needsRefresh {
+		if w.client == nil {
+			return
+		}
 		refreshed, newValidUntil, refreshErr := w.client.RefreshCredential(ctx, credential)
 		if refreshErr != nil {
 			return
@@ -324,7 +328,7 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 	if useIMAP {
 		messages, messageErr = w.imap.Messages(ctx, mailbox.Mailbox.Address, credential)
 	} else {
-		if credential["access_token"] == "" {
+		if w.client == nil || credential["access_token"] == "" {
 			return
 		}
 		messages, messageErr = w.client.Messages(ctx, credential["access_token"])

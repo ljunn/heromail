@@ -56,22 +56,86 @@ const (
 	MailboxProviderOutlook   = "outlook"
 	MailboxProviderOutlookDE = "outlook_de"
 	MailboxProviderHotmail   = "hotmail"
+	MailboxProviderGmail     = "gmail"
+	MailboxProviderICloud    = "icloud"
+	MailboxProviderMailCom   = "mailcom"
 )
 
-var SupportedMailboxProviders = []string{MailboxProviderOutlook, MailboxProviderOutlookDE, MailboxProviderHotmail}
+var SupportedMailboxProviders = []string{
+	MailboxProviderOutlook,
+	MailboxProviderOutlookDE,
+	MailboxProviderHotmail,
+	MailboxProviderGmail,
+	MailboxProviderICloud,
+	MailboxProviderMailCom,
+}
 
-// DetectMailboxProvider 按邮箱域名识别首版支持的 Microsoft 邮箱类型。
+var mailComDomains = map[string]struct{}{
+	"2trom.com": {}, "acdcfan.com": {}, "accountant.com": {}, "activist.com": {}, "adexec.com": {},
+	"africamail.com": {}, "alumni.com": {}, "angelic.com": {}, "archaeologist.com": {}, "arcticmail.com": {},
+	"artlover.com": {}, "asia.com": {}, "atheist.com": {}, "australiamail.com": {}, "bartender.net": {},
+	"berlin.com": {}, "bikerider.com": {}, "birdlover.com": {}, "boardermail.com": {}, "brazilmail.com": {},
+	"brew-master.com": {}, "bsdmail.com": {}, "californiamail.com": {}, "catlover.com": {}, "chef.net": {},
+	"chemist.com": {}, "cheerful.com": {}, "chinamail.com": {}, "clubmember.org": {}, "collector.org": {},
+	"columnist.com": {}, "comic.com": {}, "consultant.com": {}, "contractor.net": {}, "counsellor.com": {},
+	"cutey.com": {}, "cyberdude.com": {}, "cybergal.com": {}, "cyberservices.com": {}, "cyber-wizard.com": {},
+	"dallasmail.com": {}, "dbzmail.com": {}, "diplomats.com": {}, "discofan.com": {}, "doglover.com": {},
+	"doramail.com": {}, "dr.com": {}, "dublin.com": {}, "dutchmail.com": {}, "email.com": {},
+	"elvisfan.com": {}, "engineer.com": {}, "englandmail.com": {}, "europe.com": {}, "europemail.com": {},
+	"execs.com": {}, "financier.com": {}, "fireman.net": {}, "galaxyhit.com": {}, "gardener.com": {},
+	"geologist.com": {}, "germanymail.com": {}, "graduate.org": {}, "graphic-designer.com": {}, "greenmail.net": {},
+	"hackermail.com": {}, "hairdresser.net": {}, "hilarious.com": {}, "hiphopfan.com": {}, "iname.com": {},
+	"innocent.com": {}, "irelandmail.com": {}, "israelmail.com": {}, "italymail.com": {}, "keromail.com": {},
+	"kissfans.com": {}, "kittymail.com": {}, "koreamail.com": {}, "legislator.com": {}, "linuxmail.org": {},
+	"lobbyist.com": {}, "lovecat.com": {}, "madonnafan.com": {}, "mail.com": {},
+	"marchmail.com": {}, "metalfan.com": {}, "mexicomail.com": {}, "minister.com": {}, "moscowmail.com": {},
+	"munich.com": {}, "musician.org": {}, "muslim.com": {}, "myself.com": {}, "ninfan.com": {},
+	"nonpartisan.com": {}, "null.net": {}, "nycmail.com": {}, "optician.com": {}, "orthodontist.net": {},
+	"pediatrician.com": {}, "petlover.com": {}, "photographer.net": {}, "physicist.net": {}, "polandmail.com": {},
+	"politician.com": {}, "post.com": {}, "priest.com": {}, "programmer.net": {}, "protestant.com": {},
+	"publicist.com": {}, "ravemail.com": {}, "realtyagent.com": {}, "reborn.com": {}, "reggaefan.com": {},
+	"registerednurses.com": {}, "reincarnate.com": {}, "religious.com": {}, "repairman.com": {}, "safrica.com": {},
+	"saintly.com": {}, "sanfranmail.com": {}, "scotlandmail.com": {}, "secretary.net": {}, "socialworker.net": {},
+	"sociologist.com": {}, "songwriter.net": {}, "spainmail.com": {}, "swedenmail.com": {}, "swissmail.com": {},
+	"teachers.org": {}, "techie.com": {}, "technologist.com": {}, "theplate.com": {}, "therapist.net": {},
+	"toothfairy.com": {}, "toke.com": {}, "torontomail.com": {}, "tvstar.com": {}, "usa.com": {},
+	"uymail.com": {}, "webname.com": {},
+}
+
+// DetectMailboxProvider 按精确邮箱域名识别已配置的邮箱渠道。
 func DetectMailboxProvider(address string) (string, bool) {
 	address = strings.ToLower(strings.TrimSpace(address))
-	switch {
-	case strings.HasSuffix(address, "@outlook.de"):
-		return MailboxProviderOutlookDE, true
-	case strings.Contains(address, "@outlook."):
-		return MailboxProviderOutlook, true
-	case strings.Contains(address, "@hotmail."):
-		return MailboxProviderHotmail, true
-	default:
+	separator := strings.LastIndexByte(address, '@')
+	if separator < 1 || separator == len(address)-1 {
 		return "", false
+	}
+	domainName := address[separator+1:]
+	switch {
+	case domainName == "outlook.de":
+		return MailboxProviderOutlookDE, true
+	case strings.HasPrefix(domainName, "outlook."):
+		return MailboxProviderOutlook, true
+	case strings.HasPrefix(domainName, "hotmail."):
+		return MailboxProviderHotmail, true
+	case domainName == "gmail.com" || domainName == "googlemail.com":
+		return MailboxProviderGmail, true
+	case domainName == "icloud.com" || domainName == "me.com" || domainName == "mac.com":
+		return MailboxProviderICloud, true
+	default:
+		_, supported := mailComDomains[domainName]
+		if supported {
+			return MailboxProviderMailCom, true
+		}
+		return "", false
+	}
+}
+
+func IsMicrosoftMailboxProvider(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case MailboxProviderOutlook, MailboxProviderOutlookDE, MailboxProviderHotmail:
+		return true
+	default:
+		return false
 	}
 }
 
