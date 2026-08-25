@@ -5,6 +5,10 @@ const state = {
   role: "user",
   view: "apply",
   services: [],
+  serviceInventoryLoaded: false,
+  serviceInventoryLoading: false,
+  serviceInventoryError: "",
+  serviceInventoryRequest: 0,
   orders: [],
   mailboxes: [],
   overview: null,
@@ -116,6 +120,8 @@ async function navigate(view, replace = false) {
   stopPolling();
   state.view = view;
   history[replace ? "replaceState" : "pushState"]({ view }, "", path);
+  // 先切换到目标页面，数据请求在页面内后台刷新，避免点击后继续停留在旧页面。
+  await render();
   await refresh();
 }
 
@@ -196,15 +202,18 @@ function renderApplyServiceGrid() {
 function renderApplySummary(service = selectedService()) {
   const ttlMinutes = Math.max(1, Math.round(Number(service.ttl_seconds || 1800) / 60));
   const selected = selectedProviderEntries(service); const balance = Number(state.user?.balance || 0);
+  const inventoryReady = state.serviceInventoryLoaded;
   const maximumPrice = selected.length ? Math.max(...selected.map(([, price]) => price)) : 0;
   const selectedInventory = selected.reduce((total, [provider]) => total + Number(service.available_by_provider?.[provider] || 0), 0);
   const enoughBalance = balance >= maximumPrice;
   const providerOptions = providerPriceEntries(service).map(([provider, price]) => {
     const inventory = Number(service.available_by_provider?.[provider] || 0); const checked = state.selectedProviders.includes(provider);
-    return `<label class="order-provider-option ${checked ? "selected" : ""} ${inventory <= 0 ? "unavailable" : ""}"><input type="checkbox" name="order-provider" value="${esc(provider)}" ${checked ? "checked" : ""} ${inventory <= 0 ? "disabled" : ""}><span><strong>${esc(providerLabel(provider))}</strong><small>${money(price)} · 库存 ${inventory}</small></span></label>`;
+    const unavailable = inventoryReady && inventory <= 0;
+    return `<label class="order-provider-option ${checked ? "selected" : ""} ${unavailable ? "unavailable" : ""}"><input type="checkbox" name="order-provider" value="${esc(provider)}" ${checked ? "checked" : ""} ${unavailable ? "disabled" : ""}><span><strong>${esc(providerLabel(provider))}</strong><small>${money(price)} · ${inventoryReady ? `库存 ${inventory}` : "库存读取中"}</small></span></label>`;
   }).join("");
-  const submit = state.busy ? `<button class="primary-btn portal-submit" disabled>正在分配…</button>` : !selected.length ? `<button class="ghost-btn portal-submit" disabled>请选择邮箱类型</button>` : !selectedInventory ? `<button class="ghost-btn portal-submit" disabled>所选类型暂无库存</button>` : !enoughBalance ? `<button class="primary-btn portal-submit" data-action="view" data-view="balance">余额不足，去充值</button>` : `<button class="primary-btn portal-submit" data-action="create">申请邮箱</button>`;
-  return `${state.orderError ? `<div class="inline-error" role="alert">${icon("activity")}<span>${esc(state.orderError)}</span></div>` : ""}<fieldset class="order-provider-picker"><legend>选择邮箱类型 <span>可多选</span></legend>${providerOptions || `<div class="empty">该平台尚未配置邮箱类型价格</div>`}</fieldset><dl class="config-list"><div class="config-row"><dt>目标平台</dt><dd>${esc(service.name)}</dd></div><div class="config-row"><dt>所选库存</dt><dd>${selectedInventory} 个</dd></div><div class="config-row"><dt>收码时限</dt><dd>${ttlMinutes} 分钟</dd></div><div class="config-row"><dt>余额要求</dt><dd>${selected.length ? money(maximumPrice) : "选择后计算"}</dd></div><div class="config-row"><dt>实际费用</dt><dd>按分配类型扣费</dd></div></dl>${submit}<p class="portal-policy">余额需覆盖所选类型中的最高价格；分配后只扣实际邮箱类型的价格，30 分钟未收到验证码自动退款。</p>`;
+  const submit = state.busy ? `<button class="primary-btn portal-submit" disabled>正在分配…</button>` : !inventoryReady ? `<button class="ghost-btn portal-submit" disabled>正在读取库存…</button>` : !selected.length ? `<button class="ghost-btn portal-submit" disabled>请选择邮箱类型</button>` : !selectedInventory ? `<button class="ghost-btn portal-submit" disabled>所选类型暂无库存</button>` : !enoughBalance ? `<button class="primary-btn portal-submit" data-action="view" data-view="balance">余额不足，去充值</button>` : `<button class="primary-btn portal-submit" data-action="create">申请邮箱</button>`;
+  const inventoryStatus = state.serviceInventoryError ? `<div class="inline-error" role="alert">${icon("activity")}<span>${esc(state.serviceInventoryError)}</span><button class="link-btn" data-action="refresh-inventory">重试</button></div>` : "";
+  return `${state.orderError ? `<div class="inline-error" role="alert">${icon("activity")}<span>${esc(state.orderError)}</span></div>` : ""}${inventoryStatus}<fieldset class="order-provider-picker"><legend>选择邮箱类型 <span>可多选</span></legend>${providerOptions || `<div class="empty">该平台尚未配置邮箱类型价格</div>`}</fieldset><dl class="config-list"><div class="config-row"><dt>目标平台</dt><dd>${esc(service.name)}</dd></div><div class="config-row"><dt>所选库存</dt><dd>${inventoryReady ? `${selectedInventory} 个` : "读取中…"}</dd></div><div class="config-row"><dt>收码时限</dt><dd>${ttlMinutes} 分钟</dd></div><div class="config-row"><dt>余额要求</dt><dd>${selected.length ? money(maximumPrice) : "选择后计算"}</dd></div><div class="config-row"><dt>实际费用</dt><dd>按分配类型扣费</dd></div></dl>${submit}<p class="portal-policy">余额需覆盖所选类型中的最高价格；分配后只扣实际邮箱类型的价格，30 分钟未收到验证码自动退款。</p>`;
 }
 
 function renderApplyTaskBody() {
@@ -653,7 +662,7 @@ async function loadUser(forceUser = false) {
   if (filteringOrders && state.userOrderFilters.query) params.set("query", state.userOrderFilters.query);
   const needsUser = forceUser || !state.user || Date.now() - state.userLoadedAt > 5000;
   const requests = needsUser ? [api("/api/v1/me")] : [];
-  if (needsServices) requests.push(api("/api/v1/services?page=1&page_size=100"));
+  if (needsServices) requests.push(api("/api/v1/services?page=1&page_size=100&availability=false"));
   if (needsOrders) requests.push(api(`/api/v1/orders?${params}`));
   const responses = await Promise.all(requests);
   let responseIndex = 0;
@@ -662,6 +671,10 @@ async function loadUser(forceUser = false) {
   const orders = needsOrders ? responses[responseIndex] : null;
   if (needsServices) {
     state.services = services.data || [];
+    if (state.view === "apply") {
+      state.serviceInventoryLoaded = false;
+      state.serviceInventoryError = "";
+    }
     if (!state.services.some(service => service.code === state.selectedService) && state.services[0]) { state.selectedService = state.services[0].code; state.selectedProviders = []; }
   }
   if (needsOrders) state.orders = rememberPage("orders", orders);
@@ -670,6 +683,29 @@ async function loadUser(forceUser = false) {
   if (!state.currentOrder || !["assigned", "waiting_code", "code_received"].includes(state.currentOrder.status)) state.currentOrder = state.orders.find(order => ["assigned", "waiting_code", "code_received"].includes(order.status)) || null;
   if (["keys", "usage", "balance", "webhooks"].includes(state.view)) await loadUserModule(state.view);
   if (["apply", "current"].includes(state.view) && state.currentOrder && !state.polling && ["assigned", "waiting_code", "code_received"].includes(state.currentOrder.status)) startPolling(state.currentOrder.id);
+}
+async function loadServiceInventory() {
+  if (state.role === "admin" || state.view !== "apply" || state.serviceInventoryLoading) return;
+  const requestID = ++state.serviceInventoryRequest;
+  state.serviceInventoryLoading = true;
+  await render();
+  try {
+    const response = await api("/api/v1/services?page=1&page_size=100&availability=true");
+    if (requestID !== state.serviceInventoryRequest) return;
+    state.services = response.data || [];
+    state.serviceInventoryLoaded = true;
+    state.serviceInventoryError = "";
+    const service = selectedService();
+    const selectableProviders = new Set(providerPriceEntries(service).map(([provider]) => provider));
+    state.selectedProviders = state.selectedProviders.filter(provider => selectableProviders.has(provider) && Number(service.available_by_provider?.[provider] || 0) > 0);
+  } catch (error) {
+    if (requestID === state.serviceInventoryRequest) state.serviceInventoryError = "库存暂时无法读取，请重试。";
+  } finally {
+    if (requestID === state.serviceInventoryRequest) {
+      state.serviceInventoryLoading = false;
+      if (state.view === "apply") await render();
+    }
+  }
 }
 async function loadUserModule(view) {
   if (view === "keys") state.apiKeys = rememberPage("keys", await api(`/api/v1/api-keys?page=${requestedPage("keys")}&page_size=20`));
@@ -680,7 +716,14 @@ async function loadUserModule(view) {
     if (methods) { state.paymentMethods = methods.data || []; state.paymentMethodsLoadedAt = Date.now(); }
     state.paymentOrders = rememberPage("payments", paymentOrders);
   }
-  if (view === "webhooks") { state.webhookEndpoints = rememberPage("webhooks", await api(`/api/v1/webhooks?page=${requestedPage("webhooks")}&page_size=20`)); state.webhookDeliveries = rememberPage("webhook-deliveries", await api(`/api/v1/webhook-deliveries?page=${requestedPage("webhook-deliveries")}&page_size=20`)); }
+  if (view === "webhooks") {
+    const [endpoints, deliveries] = await Promise.all([
+      api(`/api/v1/webhooks?page=${requestedPage("webhooks")}&page_size=20`),
+      api(`/api/v1/webhook-deliveries?page=${requestedPage("webhook-deliveries")}&page_size=20`)
+    ]);
+    state.webhookEndpoints = rememberPage("webhooks", endpoints);
+    state.webhookDeliveries = rememberPage("webhook-deliveries", deliveries);
+  }
 }
 async function loadAdmin() {
   state.user = await api("/api/v1/me");
@@ -737,6 +780,7 @@ async function refresh() {
     state.loading = false;
   }
   await render();
+  if (state.role !== "admin" && state.view === "apply") void loadServiceInventory();
 }
 function stopPolling() { if (state.polling) { clearInterval(state.polling); state.polling = null; } }
 function startPolling(orderID) {
@@ -990,6 +1034,7 @@ document.addEventListener("click", async event => {
     await updateApplyView({ selection: true, summary: true });
     return;
   }
+  if (action === "refresh-inventory") { state.serviceInventoryError = ""; state.serviceInventoryLoaded = false; await loadServiceInventory(); return; }
   if (action === "create") { await createOrder(); return; }
   if (action === "admin-order-transition") { await transitionAdminOrder(target.dataset.order, target.dataset.transition); return; }
   if (action === "select-order") { await selectOrder(target.dataset.order); return; }

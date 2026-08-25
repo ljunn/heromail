@@ -94,8 +94,8 @@ func (sqlMailbox) TableName() string { return "mailboxes" }
 
 type sqlMailboxService struct {
 	MailboxID    string    `gorm:"primaryKey;size:64"`
-	ServiceID    string    `gorm:"primaryKey;size:64;index"`
-	State        string    `gorm:"size:32;not null;index"`
+	ServiceID    string    `gorm:"primaryKey;size:64;index:idx_mailbox_service_state,priority:1"`
+	State        string    `gorm:"size:32;not null;index;index:idx_mailbox_service_state,priority:2"`
 	TimeoutCount int       `gorm:"not null;default:0"`
 	ChangedAt    time.Time `gorm:"not null"`
 }

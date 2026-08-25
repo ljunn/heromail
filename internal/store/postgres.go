@@ -409,18 +409,23 @@ func (s *PostgresStore) ServiceAvailabilityByProvider(serviceIDs []string) map[s
 	}
 
 	var rows []availabilityRow
+	// 每日额度先按邮箱池聚合一次，避免对每个候选邮箱重复扫描整个 mailboxes 表。
+	dailyUsage := s.db.Table("mailboxes AS daily_m").
+		Select("daily_m.pool, COALESCE(SUM(CASE WHEN daily_m.last_received_at::date = CURRENT_DATE THEN daily_m.today_codes ELSE 0 END), 0) AS today_codes").
+		Group("daily_m.pool")
 	s.db.Table("mailbox_service_states AS mss").
 		Select("mss.service_id, m.provider, COUNT(*) AS count").
 		Joins("JOIN target_services AS ts ON ts.id = mss.service_id").
 		Joins("JOIN mailboxes AS m ON m.id = mss.mailbox_id").
 		Joins("JOIN mailbox_pools AS mp ON mp.name = m.pool AND mp.enabled = ?", true).
+		Joins("LEFT JOIN (?) AS daily_usage ON daily_usage.pool = mp.name", dailyUsage).
 		Where("mss.service_id IN ? AND ts.enabled = ?", serviceIDs, true).
 		Where("m.state = ? AND m.active_order_id = '' AND m.health_score >= ? AND m.verification_status = ?", domain.MailboxAvailable, 60, domain.MailboxVerificationVerified).
 		Where("(m.connection_method = ? OR m.oauth_valid_until > ?)", domain.MailboxConnectionIMAP, time.Now()).
 		Where("mss.state = ?", domain.ServiceAvailable).
 		Where("ts.allowed_providers @> jsonb_build_array(m.provider)").
 		Where("m.last_received_at IS NULL OR m.last_received_at <= NOW() - (mp.cooldown_seconds * INTERVAL '1 second')").
-		Where("mp.daily_limit <= 0 OR (SELECT COALESCE(SUM(CASE WHEN inner_m.last_received_at::date = CURRENT_DATE THEN inner_m.today_codes ELSE 0 END), 0) FROM mailboxes AS inner_m WHERE inner_m.pool = mp.name) < mp.daily_limit").
+		Where("mp.daily_limit <= 0 OR COALESCE(daily_usage.today_codes, 0) < mp.daily_limit").
 		Group("mss.service_id, m.provider").
 		Scan(&rows)
 	for _, row := range rows {
@@ -470,15 +475,19 @@ func (s *PostgresStore) CreateOrder(userID, serviceID, requestID string, mailbox
 			return ErrInsufficientBalance
 		}
 		var mailbox sqlMailbox
+		dailyUsage := tx.Table("mailboxes AS daily_m").
+			Select("daily_m.pool, COALESCE(SUM(CASE WHEN daily_m.last_received_at::date = CURRENT_DATE THEN daily_m.today_codes ELSE 0 END), 0) AS today_codes").
+			Group("daily_m.pool")
 		query := tx.Table("mailboxes AS m").Select("m.*").
 			Joins("JOIN mailbox_service_states AS mss ON mss.mailbox_id = m.id AND mss.service_id = ?", service.ID).
 			Joins("JOIN mailbox_pools AS mp ON mp.name = m.pool AND mp.enabled = ?", true).
+			Joins("LEFT JOIN (?) AS daily_usage ON daily_usage.pool = mp.name", dailyUsage).
 			Where("m.state = ? AND m.active_order_id = '' AND m.health_score >= ? AND m.verification_status = ?", domain.MailboxAvailable, 60, domain.MailboxVerificationVerified).
 			Where("(m.connection_method = ? OR m.oauth_valid_until > ?)", domain.MailboxConnectionIMAP, time.Now()).
 			Where("mss.state = ?", domain.ServiceAvailable).
 			Where("m.provider IN ?", requestedProviders).
 			Where("m.last_received_at IS NULL OR m.last_received_at <= NOW() - (mp.cooldown_seconds * INTERVAL '1 second')").
-			Where("mp.daily_limit <= 0 OR (SELECT COALESCE(SUM(CASE WHEN inner_m.last_received_at::date = CURRENT_DATE THEN inner_m.today_codes ELSE 0 END), 0) FROM mailboxes AS inner_m WHERE inner_m.pool = mp.name) < mp.daily_limit").
+			Where("mp.daily_limit <= 0 OR COALESCE(daily_usage.today_codes, 0) < mp.daily_limit").
 			Order("m.health_score DESC, m.id ASC").
 			Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "m"}, Options: "SKIP LOCKED"}).
 			Limit(1).Scan(&mailbox)

@@ -396,6 +396,38 @@ func TestUserServicesIncludePriceAndAvailabilityWithoutInternalRules(t *testing.
 	}
 }
 
+func TestUserServicesCanSkipInventoryForFastNavigation(t *testing.T) {
+	server := NewServer(store.New())
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/services?page=1&page_size=2&availability=false", nil)
+	request.Header.Set("X-HeroMail-User", "user-001")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("轻量用户平台列表返回 %d，响应：%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Data []struct {
+			AvailableMailboxes  int            `json:"available_mailboxes"`
+			AvailableByProvider map[string]int `json:"available_by_provider"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("解析轻量用户平台列表失败：%v", err)
+	}
+	if len(body.Data) == 0 {
+		t.Fatal("轻量用户平台列表为空")
+	}
+	for _, service := range body.Data {
+		inventoryCount := 0
+		for _, count := range service.AvailableByProvider {
+			inventoryCount += count
+		}
+		if service.AvailableMailboxes != 0 || inventoryCount != 0 {
+			t.Fatalf("轻量平台列表不应执行库存查询：%+v", service)
+		}
+	}
+}
+
 func TestServiceAvailabilityByCode(t *testing.T) {
 	server := NewServer(store.New())
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/services/adobe/availability", nil)

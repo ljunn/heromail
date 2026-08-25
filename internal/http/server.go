@@ -194,8 +194,16 @@ func (s *Server) services(c *gin.Context) {
 	for _, service := range services {
 		serviceIDs = append(serviceIDs, service.ID)
 	}
-	availability := s.Store.ServiceAvailability(serviceIDs)
-	availabilityByProvider := s.Store.ServiceAvailabilityByProvider(serviceIDs)
+	availability := map[string]int{}
+	availabilityByProvider := map[string]map[string]int{}
+	if c.Query("availability") != "false" {
+		availabilityByProvider = s.Store.ServiceAvailabilityByProvider(serviceIDs)
+		for serviceID, providers := range availabilityByProvider {
+			for _, count := range providers {
+				availability[serviceID] += count
+			}
+		}
+	}
 	items := make([]userServiceView, 0, len(services))
 	for _, service := range services {
 		items = append(items, newUserServiceView(service, availability[service.ID], availabilityByProvider[service.ID]))
