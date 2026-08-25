@@ -79,7 +79,7 @@ func (c *MicrosoftClient) Exchange(ctx context.Context, code string) (map[string
 }
 
 func (c *MicrosoftClient) Refresh(ctx context.Context, refreshToken string) (map[string]string, time.Time, error) {
-	return c.token(ctx, url.Values{"client_id": {c.config.ClientID}, "client_secret": {c.config.ClientSecret}, "grant_type": {"refresh_token"}, "refresh_token": {refreshToken}, "scope": {"offline_access Mail.Read User.Read"}})
+	return c.token(ctx, refreshTokenValues(c.config.ClientID, refreshToken, c.config.ClientSecret))
 }
 
 func (c *MicrosoftClient) RefreshCredential(ctx context.Context, credential map[string]string) (map[string]string, time.Time, error) {
@@ -91,24 +91,29 @@ func (c *MicrosoftClient) RefreshCredential(ctx context.Context, credential map[
 	if clientID == "" || refreshToken == "" {
 		return nil, time.Time{}, errors.New("缺少 Microsoft client_id 或 refresh_token")
 	}
-	values := url.Values{
-		"client_id":     {clientID},
-		"grant_type":    {"refresh_token"},
-		"refresh_token": {refreshToken},
-		"scope":         {"offline_access Mail.Read User.Read"},
-	}
 	clientSecret := strings.TrimSpace(credential["client_secret"])
 	if clientSecret == "" && clientID == c.config.ClientID {
 		clientSecret = c.config.ClientSecret
 	}
-	if clientSecret != "" {
-		values.Set("client_secret", clientSecret)
-	}
+	values := refreshTokenValues(clientID, refreshToken, clientSecret)
 	tenant := strings.TrimSpace(credential["tenant"])
 	if tenant == "" {
 		tenant = c.config.Tenant
 	}
 	return c.tokenForTenant(ctx, tenant, values)
+}
+
+// refreshTokenValues 不携带 scope。OAuth refresh token 只能沿用首次授权的权限，重新提交 scope 可能触发 AADSTS70000。
+func refreshTokenValues(clientID, refreshToken, clientSecret string) url.Values {
+	values := url.Values{
+		"client_id":     {clientID},
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+	}
+	if clientSecret != "" {
+		values.Set("client_secret", clientSecret)
+	}
+	return values
 }
 
 func (c *MicrosoftClient) token(ctx context.Context, values url.Values) (map[string]string, time.Time, error) {
@@ -310,38 +315,52 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 	credential := mailbox.Config
 	microsoftMailbox := supportsMicrosoftGraph(mailbox.Mailbox)
 	useIMAP := !microsoftMailbox || mailbox.Mailbox.ConnectionMethod == domain.MailboxConnectionIMAP
+	var graphErr error
 	validUntil, _ := time.Parse(time.RFC3339, credential["expires_at"])
 	needsRefresh := microsoftMailbox && credential["refresh_token"] != "" && (credential["access_token"] == "" || time.Until(validUntil) < 5*time.Minute)
 	if needsRefresh {
 		if w.client == nil {
-			return
+			graphErr = errors.New("缺少 Microsoft Graph 客户端")
+		} else {
+			refreshed, newValidUntil, refreshErr := w.client.RefreshCredential(ctx, credential)
+			if refreshErr != nil {
+				graphErr = refreshErr
+				useIMAP = credential["password"] != ""
+			} else {
+				credential, validUntil = mergeCredential(credential, refreshed), newValidUntil
+				_ = w.repository.UpdateMailboxCredential("system", mailbox.Mailbox.ID, credential, validUntil, "")
+			}
 		}
-		refreshed, newValidUntil, refreshErr := w.client.RefreshCredential(ctx, credential)
-		if refreshErr != nil {
-			return
-		}
-		credential, validUntil = mergeCredential(credential, refreshed), newValidUntil
-		_ = w.repository.UpdateMailboxCredential("system", mailbox.Mailbox.ID, credential, validUntil, "")
 	}
 	var messages []Message
 	var messageErr error
 	if useIMAP {
 		messages, messageErr = w.imap.Messages(ctx, mailbox.Mailbox.Address, credential)
+	} else if graphErr != nil {
+		messageErr = graphErr
 	} else {
 		if w.client == nil || credential["access_token"] == "" {
-			return
+			messageErr = errors.New("缺少 Graph OAuth 凭证")
+		} else {
+			messages, messageErr = w.client.Messages(ctx, credential["access_token"])
 		}
-		messages, messageErr = w.client.Messages(ctx, credential["access_token"])
+	}
+	if messageErr != nil && !useIMAP && credential["password"] != "" {
+		useIMAP = true
+		messages, messageErr = w.imap.Messages(ctx, mailbox.Mailbox.Address, credential)
 	}
 	if messageErr != nil {
+		method := domain.MailboxConnectionMicrosoftGraph
+		message := compactGraphError(messageErr)
 		if useIMAP {
-			message := messageErr.Error()
-			if len(message) > 480 {
-				message = message[:480]
-			}
-			_ = w.repository.UpdateMailboxVerification("system", mailbox.Mailbox.ID, domain.MailboxConnectionIMAP, domain.MailboxVerificationFailed, message, time.Now().UTC(), "")
+			method = domain.MailboxConnectionIMAP
+			message = compactGraphError(messageErr)
 		}
+		_ = w.repository.UpdateMailboxVerification("system", mailbox.Mailbox.ID, method, domain.MailboxVerificationFailed, message, time.Now().UTC(), "")
 		return
+	}
+	if microsoftMailbox && useIMAP && graphErr != nil {
+		_ = w.repository.UpdateMailboxVerification("system", mailbox.Mailbox.ID, domain.MailboxConnectionIMAP, domain.MailboxVerificationVerified, "", time.Now().UTC(), "")
 	}
 	for _, message := range messages {
 		messageOrders := make([]domain.Order, 0, len(orders))

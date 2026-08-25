@@ -2,6 +2,26 @@
 
 本项目的所有正式版本变更都记录在此文件。版本号遵循语义化版本，发布日期使用 UTC。
 
+## [1.10.8] - 2026-08-25
+
+### 修复
+
+- Microsoft Graph 刷新 token 时不再重复提交 `scope`，避免未授予权限的 refresh token 触发 `AADSTS70000 invalid_grant`。
+- Graph 授权失效后会停止重复轮询并记录可操作提示；存在邮箱密码时自动回退 IMAP，成功后将连接方式切换为 IMAP。
+- 管理员错误信息不再展示整段 Microsoft 原始 JSON，改为“重新授权 Graph 或切换 IMAP”的明确处理建议。
+
+### 安全
+
+- refresh token 仍只发送到对应 Microsoft 租户的官方 token 接口；授权失效不会降级为绕过权限的 Graph 请求。
+
+### 兼容性
+
+- 首次 OAuth 授权仍请求 `offline_access Mail.Read User.Read`；仅调整后续 refresh token 请求，已有合法授权继续兼容。
+
+### 部署注意事项
+
+- 发布前创建并校验 PostgreSQL 备份；升级后重新验证一个 Graph 邮箱，确认授权失效时可回退 IMAP，未配置 IMAP 时提示重新授权。
+
 ## [1.10.7] - 2026-08-25
 
 ### 修复

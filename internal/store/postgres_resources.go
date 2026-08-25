@@ -191,7 +191,7 @@ func (s *PostgresStore) ListMailboxCredentialsPage(afterID string, limit int) ([
 		limit = 100
 	}
 	var rows []sqlMailbox
-	query := s.db.Where("encrypted_credential <> '' AND state NOT IN ?", []string{string(domain.MailboxBlocked), string(domain.MailboxError)})
+	query := s.db.Where("encrypted_credential <> '' AND state NOT IN ? AND (verification_status IS NULL OR verification_status <> ?)", []string{string(domain.MailboxBlocked), string(domain.MailboxError)}, domain.MailboxVerificationFailed)
 	if afterID != "" {
 		query = query.Where("id > ?", afterID)
 	}

@@ -218,7 +218,7 @@ func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, 
 	if !microsoftMailbox {
 		return nil, errors.New("缺少 IMAP 凭证")
 	}
-	return nil, graphErr
+	return nil, fmt.Errorf("Graph：%s", compactGraphError(graphErr))
 }
 
 // ScanMailboxHistory 在邮箱连接验证成功后检查历史邮件，写入邮箱×平台的已注册状态。
@@ -286,9 +286,26 @@ func mergeCredential(existing, refreshed map[string]string) map[string]string {
 }
 
 func compactVerificationError(graphErr, imapErr error) string {
-	message := fmt.Sprintf("Graph：%v；IMAP：%v", graphErr, imapErr)
+	message := fmt.Sprintf("Graph：%s；IMAP：%s", compactGraphError(graphErr), compactGraphError(imapErr))
 	if len(message) > 480 {
 		message = message[:480]
+	}
+	return message
+}
+
+func compactGraphError(err error) string {
+	if err == nil {
+		return "无错误"
+	}
+	message := err.Error()
+	if strings.Contains(message, "invalid_grant") || strings.Contains(message, "AADSTS70000") {
+		return "Microsoft OAuth 授权已失效（invalid_grant），请重新授权 Graph 或切换 IMAP"
+	}
+	if strings.Contains(message, "AADSTS65001") {
+		return "Microsoft OAuth 尚未授予所需权限，请重新授权 Graph"
+	}
+	if len(message) > 240 {
+		return message[:240]
 	}
 	return message
 }

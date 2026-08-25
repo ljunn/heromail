@@ -126,6 +126,26 @@ func TestMailboxVerifierUsesAccessTokenWithoutExpiryBeforeRefresh(t *testing.T) 
 	}
 }
 
+func TestMailboxVerifierCompactsInvalidGrantAndFallsBackToIMAP(t *testing.T) {
+	repository := &verificationRepositoryStub{credential: store.MailboxCredential{
+		Mailbox: domain.Mailbox{ID: "mailbox-invalid-grant", Address: "user@outlook.com"},
+		Config:  map[string]string{"refresh_token": "expired-refresh", "password": "imap-password"},
+	}}
+	graph := &graphConnectorStub{refreshErr: errors.New(`Microsoft Token 接口返回 400: {"error":"invalid_grant","error_description":"AADSTS70000"}`)}
+	imap := &imapConnectorStub{}
+	result, err := NewMailboxVerifier(repository, graph, imap).Verify(context.Background(), "system", "mailbox-invalid-grant", "")
+	if err != nil || result.Method != domain.MailboxConnectionIMAP || result.Status != domain.MailboxVerificationVerified || imap.calls != 1 {
+		t.Fatalf("invalid_grant 未正确回退 IMAP：result=%+v err=%v imap=%d", result, err, imap.calls)
+	}
+}
+
+func TestCompactGraphErrorExplainsInvalidGrant(t *testing.T) {
+	message := compactGraphError(errors.New(`Microsoft Token 接口返回 400: {"error":"invalid_grant","error_description":"AADSTS70000"}`))
+	if !strings.Contains(message, "重新授权 Graph") || strings.Contains(message, "AADSTS70000") {
+		t.Fatalf("invalid_grant 未转为可操作提示：%q", message)
+	}
+}
+
 func (s *graphConnectorStub) Profile(context.Context, string) (Profile, error) {
 	s.calls++
 	return s.profile, s.profileErr

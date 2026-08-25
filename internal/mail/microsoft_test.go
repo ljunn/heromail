@@ -247,6 +247,16 @@ func TestMicrosoftAuthorizationURL(t *testing.T) {
 	}
 }
 
+func TestRefreshTokenRequestKeepsOriginallyGrantedScopes(t *testing.T) {
+	values := refreshTokenValues("client-id", "refresh-token", "client-secret")
+	if values.Get("scope") != "" {
+		t.Fatalf("refresh_token 请求不应重新声明 scope：%q", values.Get("scope"))
+	}
+	if values.Get("client_secret") != "client-secret" || values.Get("grant_type") != "refresh_token" {
+		t.Fatalf("refresh_token 请求参数不完整：%v", values)
+	}
+}
+
 func TestMatchCodeRequiresAllRules(t *testing.T) {
 	service := domain.Service{SenderDomains: []string{"adobe.com"}, SubjectKeywords: []string{"verification", "验证码"}, Regex: `\b(\d{6})\b`}
 	tests := []struct {
