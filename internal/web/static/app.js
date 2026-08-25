@@ -502,7 +502,7 @@ function renderPager(key) {
 }
 
 function renderAPIKeys() {
-  return pageHead("开发者", "管理 API 密钥、Webhook 和接口文档。", `<div class="page-head-tabs"><button class="ghost-btn" data-action="view" data-view="webhooks">Webhook</button><button class="ghost-btn" data-action="view" data-view="docs">API 文档</button></div>`) + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>密钥列表</h2></div><div class="table-wrap"><table><thead><tr><th>名称</th><th>前缀</th><th>权限</th><th>最后使用</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${state.apiKeys.map(key => `<tr><td>${esc(key.name)}</td><td><code>${esc(key.prefix)}…</code></td><td>${esc(key.scopes.join(", "))}</td><td>${time(key.last_used_at)}</td><td>${time(key.created_at)}</td><td><button class="link-btn danger-text" data-action="revoke-key" data-id="${key.id}">吊销</button></td></tr>`).join("") || `<tr><td colspan="6" class="empty">暂无 API Key，创建一个给服务端调用</td></tr>`}</tbody></table></div>${renderPager("keys")}</div><div class="card"><div class="card-head"><h2>创建密钥</h2></div><div class="card-body form-grid"><label>密钥名称<input id="key-name" class="field" placeholder="生产环境"></label><label>权限范围<select id="key-scope" class="field"><option value="orders">订单读写</option><option value="read">仅订单读取</option></select></label><button class="primary-btn" data-action="create-key">创建 API Key</button><div class="notice">密钥明文只显示一次，服务端仅保存 SHA-256 哈希。</div></div></div></div>`;
+  return pageHead("开发者", "管理 API 密钥、Webhook 和接口文档。", `<div class="page-head-tabs"><button class="ghost-btn" data-action="view" data-view="webhooks">Webhook</button><button class="ghost-btn" data-action="view" data-view="docs">API 文档</button></div>`) + `<div class="admin-grid"><div class="card"><div class="card-head"><h2>密钥列表</h2><span class="muted">列表只显示前缀</span></div><div class="table-wrap"><table><thead><tr><th>名称</th><th>前缀</th><th>权限</th><th>状态</th><th>最后使用</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${state.apiKeys.map(key => `<tr><td>${esc(key.name)}</td><td><code>${esc(key.prefix)}…</code></td><td>${esc(key.scopes.join(", "))}</td><td>${key.revoked_at ? `<span class="chip red">已吊销</span>` : `<span class="chip green">有效</span>`}</td><td>${time(key.last_used_at)}</td><td>${time(key.created_at)}</td><td>${key.revoked_at ? `<span class="muted">不可用</span>` : `<button class="link-btn danger-text" data-action="revoke-key" data-id="${esc(key.id)}">吊销</button>`}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">暂无 API Key，创建一个给服务端调用</td></tr>`}</tbody></table></div>${renderPager("keys")}</div><div class="card"><div class="card-head"><h2>创建密钥</h2></div><div class="card-body form-grid"><label>密钥名称<input id="key-name" class="field" placeholder="生产环境"></label><label>权限范围<select id="key-scope" class="field"><option value="orders">订单读写</option><option value="read">仅订单读取</option></select></label><button class="primary-btn" data-action="create-key">创建 API Key</button><div class="notice">完整密钥只在创建完成后显示一次。弹窗关闭后无法恢复，请在关闭前复制并保存。</div></div></div></div>`;
 }
 
 function renderUsage() {
@@ -528,7 +528,7 @@ function renderAdminAccount() {
 
 function renderDocs() {
   const rows = [["GET", "/api/v1/services", "分页获取平台、邮箱类型价格和余量"], ["GET", "/api/v1/services/{code}/availability", "按邮箱类型查询实时余量"], ["POST", "/api/v1/orders", "指定一个或多个邮箱类型并创建订单"], ["GET", "/api/v1/orders/{id}", "查询实际分配类型、状态与验证码"], ["GET", "/api/v1/orders/{id}/messages", "分页查看本订单平台相关邮件"], ["GET", "/api/v1/webhook-deliveries", "分页查询 Webhook 投递"]];
-  return pageHead("API 文档", "用 Bearer API Key 管理注册收码任务。", "接口只返回完成任务所需的信息；邮箱密码、OAuth Token 和完整邮件始终留在服务端。") + `<div class="card"><div class="table-wrap"><table><thead><tr><th>方法</th><th>路径</th><th>用途</th></tr></thead><tbody>${rows.map(row => `<tr><td><code>${row[0]}</code></td><td><code>${row[1]}</code></td><td>${row[2]}</td></tr>`).join("")}</tbody></table></div><div class="card-body"><h3>鉴权</h3><pre class="code-sample">Authorization: Bearer hm_your_api_key</pre><h3>创建订单</h3><pre class="code-sample">POST /api/v1/orders\nContent-Type: application/json\n\n{\n  "service": "openai",\n  "mailbox_providers": ["outlook", "hotmail"],\n  "request_id": "client-request-001"\n}</pre><p class="muted"><code>mailbox_providers</code> 至少选择一个，可多选。余额需覆盖所选类型最高价，实际按最终分配的 <code>mailbox_provider</code> 扣费。</p><h3>查询验证码</h3><pre class="code-sample">GET /api/v1/orders/{id}</pre><p class="muted">当响应中的 <code>status</code> 为 <code>code_received</code> 时读取 <code>code</code>。列表响应包含 <code>data</code> 与 <code>pagination</code>；错误响应包含 <code>error</code> 与 <code>message</code>。</p></div></div>`;
+  return pageHead("API 文档", "用 Bearer API Key 管理注册收码任务。", "接口只返回完成任务所需的信息；邮箱密码、OAuth Token 和完整邮件始终留在服务端。") + `<div class="card"><div class="table-wrap"><table><thead><tr><th>方法</th><th>路径</th><th>用途</th></tr></thead><tbody>${rows.map(row => `<tr><td><code>${row[0]}</code></td><td><code>${row[1]}</code></td><td>${row[2]}</td></tr>`).join("")}</tbody></table></div><div class="card-body"><h3>鉴权</h3><pre class="code-sample">Authorization: Bearer hm_your_api_key</pre><p class="muted">必须使用创建弹窗中的完整密钥；列表里的前缀（例如 <code>hm_xxxxxxxx…</code>）不能调用接口。只支持有效且未吊销的密钥，也兼容将完整密钥放在 <code>X-API-Key</code> 请求头。</p><h3>创建订单</h3><pre class="code-sample">POST /api/v1/orders\nContent-Type: application/json\n\n{\n  "service": "openai",\n  "mailbox_providers": ["outlook", "hotmail"],\n  "request_id": "client-request-001"\n}</pre><p class="muted"><code>mailbox_providers</code> 至少选择一个，可多选。余额需覆盖所选类型最高价，实际按最终分配的 <code>mailbox_provider</code> 扣费。</p><h3>查询验证码</h3><pre class="code-sample">GET /api/v1/orders/{id}</pre><p class="muted">当响应中的 <code>status</code> 为 <code>code_received</code> 时读取 <code>code</code>。列表响应包含 <code>data</code> 与 <code>pagination</code>；错误响应包含 <code>error</code> 与 <code>message</code>。</p></div></div>`;
 }
 
 function renderWebhooks() {
@@ -842,7 +842,7 @@ async function selectOrder(id) { const found = state.orders.find(order => order.
 
 function showSecret(title, secret) {
   document.querySelector("#secret-modal")?.remove();
-  document.body.insertAdjacentHTML("beforeend", `<div id="secret-modal" class="modal-backdrop"><div class="modal"><div class="card-head"><h2>${esc(title)}</h2><button class="icon-btn" data-action="close-modal" title="关闭">×</button></div><div class="card-body"><div class="notice warning">此密钥只显示一次。</div><div class="secret-value"><code>${esc(secret)}</code><button class="ghost-btn" data-action="copy" data-copy="${esc(secret)}">复制</button></div></div></div></div>`);
+  document.body.insertAdjacentHTML("beforeend", `<div id="secret-modal" class="modal-backdrop"><div class="modal"><div class="card-head"><div><h2>${esc(title)}</h2><div class="modal-subtitle">创建成功 · 请立即保存</div></div><button class="icon-btn" data-action="close-modal" title="关闭">×</button></div><div class="card-body"><div class="notice warning">完整密钥只在本次创建后显示。弹窗关闭后服务端无法恢复明文。</div><div class="secret-value"><code>${esc(secret)}</code><button class="primary-btn" data-action="copy" data-copy="${esc(secret)}" data-copy-label="API Key">复制完整密钥</button></div></div></div></div>`);
 }
 
 function showServiceEditor(serviceID = "") {
@@ -872,7 +872,41 @@ async function saveService() {
 async function deleteService(id) { if (!window.confirm("确定删除该目标平台？已有订单的平台不能删除，可改为停用。")) return; await api(`/api/v1/admin/services/${id}`, { method: "DELETE" }); await refresh(); toast("目标平台已删除"); }
 async function deleteMailbox(id) { if (!window.confirm("确定删除该邮箱及其加密凭证？")) return; await api(`/api/v1/admin/mailboxes/${id}`, { method: "DELETE" }); await refresh(); toast("邮箱资源已删除"); }
 
-async function createKey() { const name = document.querySelector("#key-name")?.value.trim(); if (!name) return toast("请输入密钥名称"); const scope = document.querySelector("#key-scope")?.value; const scopes = scope === "read" ? ["orders:read"] : ["orders:read", "orders:write"]; const result = await api("/api/v1/api-keys", { method: "POST", body: JSON.stringify({ name, scopes }) }); showSecret("API Key", result.data.secret); await refresh(); }
+async function createKey() {
+  if (state.busyAction === "create-key") return;
+  const name = document.querySelector("#key-name")?.value.trim();
+  if (!name) return toast("请输入密钥名称");
+  const button = document.querySelector('[data-action="create-key"]');
+  const scope = document.querySelector("#key-scope")?.value;
+  const scopes = scope === "read" ? ["orders:read"] : ["orders:read", "orders:write"];
+  state.busyAction = "create-key";
+  if (button) { button.disabled = true; button.textContent = "正在创建…"; }
+  try {
+    const result = await api("/api/v1/api-keys", { method: "POST", body: JSON.stringify({ name, scopes }) });
+    await refresh();
+    showSecret("API Key", result.data.secret);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    state.busyAction = "";
+  }
+}
+async function revokeAPIKey(id, button) {
+  if (state.busyAction === `revoke-key:${id}`) return;
+  if (!window.confirm("吊销后该 API Key 将立即失效，确认继续吗？")) return;
+  state.busyAction = `revoke-key:${id}`;
+  if (button) { button.disabled = true; button.textContent = "正在吊销…"; }
+  try {
+    await api(`/api/v1/api-keys/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await refresh();
+    toast("API Key 已吊销");
+  } catch (error) {
+    toast(error.message);
+    if (button) { button.disabled = false; button.textContent = "吊销"; }
+  } finally {
+    state.busyAction = "";
+  }
+}
 async function saveProfile() {
   const result = await api("/api/v1/me", { method: "PUT", body: JSON.stringify({ display_name: document.querySelector("#profile-name")?.value || "" }) });
   state.user = result.data; await render(); toast("账户资料已保存");
@@ -1053,11 +1087,11 @@ document.addEventListener("click", async event => {
   if (action === "reset-mailbox-filters") { state.mailboxFilters = { query: "" }; state.pagination.mailboxes = { page: 1 }; await refresh(); return; }
   if (action === "reset-user-order-filters") { state.userOrderFilters = { status: "", service: "", query: "" }; state.pagination.orders = { page: 1 }; await refresh(); return; }
   if (action === "refresh") { await refresh(); return; }
-  if (action === "copy") { await copyText(target.dataset.copy || ""); return; }
+  if (action === "copy") { await copyText(target.dataset.copy || "", target.dataset.copyLabel || "内容"); return; }
   if (action === "message") { toast(target.dataset.message || "该功能正在接入中"); }
   if (action === "page") { state.pagination[target.dataset.key] = { ...(state.pagination[target.dataset.key] || {}), page: Number(target.dataset.page) }; await refresh(); return; }
   if (action === "create-key") { await createKey(); return; }
-  if (action === "revoke-key") { await api(`/api/v1/api-keys/${target.dataset.id}`, { method: "DELETE" }); await refresh(); return; }
+  if (action === "revoke-key") { await revokeAPIKey(target.dataset.id, target); return; }
   if (action === "save-profile") { await saveProfile(); return; }
   if (action === "change-password") { await changePassword(); return; }
   if (action === "logout") { await logout(); return; }
@@ -1140,13 +1174,15 @@ document.addEventListener("submit", async event => {
   await refresh();
 });
 
-async function copyText(value) {
+async function copyText(value, label = "内容") {
+  let input;
   try {
     if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(value); toast("已复制"); return; }
-    const input = document.createElement("textarea"); input.value = value; input.style.position = "fixed"; input.style.opacity = "0"; document.body.appendChild(input); input.select();
+    input = document.createElement("textarea"); input.value = value; input.style.position = "fixed"; input.style.opacity = "0"; document.body.appendChild(input); input.select();
     if (!document.execCommand("copy")) throw new Error("copy failed");
-    input.remove(); toast("已复制");
-  } catch (_) { toast("复制失败，请手动选择邮箱"); }
+    toast("已复制");
+  } catch (_) { toast(`${label}复制失败，请手动复制`); }
+  finally { input?.remove(); }
 }
 document.addEventListener("dragover", event => {
   if (event.target.closest(".mailbox-dropzone")) event.preventDefault();

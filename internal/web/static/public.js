@@ -51,7 +51,7 @@ function renderDocs() {
   publicContent.innerHTML = pageShell(
     "开发者文档",
     "用 API 管理注册收码任务",
-    "所有接口均返回 JSON。API Key 只在用户门户创建并展示一次；邮箱凭证、完整邮件和内部规则永不通过 API 返回。",
+    "所有接口均返回 JSON。API Key 只在用户门户创建弹窗中展示；请使用完整密钥，列表前缀不能调用接口。邮箱凭证、完整邮件和内部规则永不通过 API 返回。",
     `<div class="docs-layout">
       <nav class="docs-nav"><a href="#concept">接口约定</a><a href="#auth">鉴权</a><a href="#services">服务列表</a><a href="#create">创建订单</a><a href="#status-api">查询验证码</a><a href="#webhook">Webhook</a><a href="#errors">错误处理</a></nav>
       <div class="docs-content">

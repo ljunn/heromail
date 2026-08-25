@@ -794,6 +794,7 @@ type accountRepositoryStub struct {
 	store.Repository
 	store.AccountRepository
 	user             domain.User
+	acceptedTokens   map[string]bool
 	changedUserID    string
 	currentPassword  string
 	newPassword      string
@@ -805,7 +806,43 @@ type accountRepositoryStub struct {
 }
 
 func (s *accountRepositoryStub) ResolveAccessToken(token string) (domain.User, bool) {
+	if s.acceptedTokens != nil {
+		return s.user, s.acceptedTokens[token]
+	}
 	return s.user, token == "有效会话"
+}
+
+func TestAPIKeyAuthenticationRequiresCompleteBearerToken(t *testing.T) {
+	repository := &accountRepositoryStub{
+		Repository:     store.New(),
+		user:           domain.User{ID: "user-001", Email: "user@example.com", Role: "user", Status: "active"},
+		acceptedTokens: map[string]bool{"hm_test_key": true},
+	}
+	server := NewServer(repository)
+
+	valid := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	valid.Header.Set("Authorization", "Bearer hm_test_key")
+	validResponse := httptest.NewRecorder()
+	server.Router.ServeHTTP(validResponse, valid)
+	if validResponse.Code != http.StatusOK {
+		t.Fatalf("完整 Bearer API Key 返回 %d，响应：%s", validResponse.Code, validResponse.Body.String())
+	}
+
+	malformed := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	malformed.Header.Set("Authorization", "hm_test_key")
+	malformedResponse := httptest.NewRecorder()
+	server.Router.ServeHTTP(malformedResponse, malformed)
+	if malformedResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("缺少 Bearer 前缀时返回 %d，期望 %d", malformedResponse.Code, http.StatusUnauthorized)
+	}
+
+	compatible := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	compatible.Header.Set("X-API-Key", "hm_test_key")
+	compatibleResponse := httptest.NewRecorder()
+	server.Router.ServeHTTP(compatibleResponse, compatible)
+	if compatibleResponse.Code != http.StatusOK {
+		t.Fatalf("X-API-Key 兼容格式返回 %d，响应：%s", compatibleResponse.Code, compatibleResponse.Body.String())
+	}
 }
 
 func (s *accountRepositoryStub) ChangePassword(userID, currentPassword, newPassword string) (string, error) {

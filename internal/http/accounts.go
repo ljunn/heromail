@@ -266,6 +266,10 @@ func bearerToken(c *gin.Context) string {
 	if len(value) > 7 && strings.EqualFold(value[:7], "Bearer ") {
 		return strings.TrimSpace(value[7:])
 	}
+	// 兼容只支持独立 API Key 输入框的客户端；浏览器和文档仍统一使用 Bearer。
+	if value = strings.TrimSpace(c.GetHeader("X-API-Key")); strings.HasPrefix(value, "hm_") {
+		return value
+	}
 	return ""
 }
 
