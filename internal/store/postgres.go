@@ -365,7 +365,11 @@ func (s *PostgresStore) ServiceUsage(serviceIDs []string) map[string]ServiceUsag
 	}
 	var rows []usageRow
 	if len(serviceIDs) > 0 {
-		s.db.Model(&sqlMailboxService{}).Select("service_id, state, count(*) AS count").Where("service_id IN ?", serviceIDs).Group("service_id, state").Scan(&rows)
+		s.db.Table("mailbox_service_states AS mss").
+			Select("mss.service_id, mss.state, count(*) AS count").
+			Joins("JOIN mailboxes AS m ON m.id = mss.mailbox_id").
+			Where("mss.service_id IN ? AND m.verification_status = ?", serviceIDs, domain.MailboxVerificationVerified).
+			Group("mss.service_id, mss.state").Scan(&rows)
 	}
 	result := make(map[string]ServiceUsage, len(serviceIDs))
 	for _, row := range rows {
@@ -717,7 +721,7 @@ func (s *PostgresStore) Overview() domain.Overview {
 	s.db.Model(&sqlMailbox{}).Where("provider = ?", domain.MailboxProviderMailCom).Count(&mailcom)
 	s.db.Model(&sqlMailbox{}).Where("verification_status = ?", domain.MailboxVerificationPending).Count(&pending)
 	s.db.Model(&sqlMailbox{}).Where("verification_status = ?", domain.MailboxVerificationVerified).Count(&verified)
-	s.db.Model(&sqlMailbox{}).Where("state = ?", domain.MailboxAvailable).Count(&available)
+	s.db.Model(&sqlMailbox{}).Where("state = ? AND verification_status = ?", domain.MailboxAvailable, domain.MailboxVerificationVerified).Count(&available)
 	s.db.Model(&sqlMailbox{}).Where("state = ?", domain.MailboxLeased).Count(&leased)
 	s.db.Model(&sqlMailbox{}).Where("state = ?", domain.MailboxError).Count(&authErrors)
 	s.db.Model(&sqlMailbox{}).Where("state = ?", domain.MailboxBlocked).Count(&blocked)
@@ -954,6 +958,16 @@ func mapMailbox(row sqlMailbox, states map[string]domain.MailboxService) domain.
 // compactStoredMailboxVerificationError 兼容压缩旧版本已经写入数据库的 Graph 原始错误。
 func compactStoredMailboxVerificationError(message string) string {
 	if strings.Contains(message, "AADSTS70000") || strings.Contains(strings.ToLower(message), "invalid_grant") {
+		if marker := "；IMAP："; strings.Contains(message, marker) {
+			imapDetail := strings.TrimSpace(message[strings.Index(message, marker)+len(marker):])
+			if imapDetail == "" || imapDetail == "缺少 IMAP 凭证" {
+				return "Graph：OAuth 授权已失效；未提供可用的 IMAP 密码或应用专用密码，无法自动切换"
+			}
+			if len(imapDetail) > 180 {
+				imapDetail = imapDetail[:180]
+			}
+			return "Graph：OAuth 授权已失效；IMAP 自动切换失败：" + imapDetail
+		}
 		return "Graph：Microsoft OAuth 授权已失效（invalid_grant），请重新授权 Graph 或切换 IMAP"
 	}
 	if strings.Contains(message, "AADSTS65001") {

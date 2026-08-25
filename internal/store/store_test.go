@@ -231,6 +231,30 @@ func TestServiceAvailabilityGroupsMailboxProviders(t *testing.T) {
 	}
 }
 
+func TestUnverifiedMailboxIsExcludedFromServiceInventory(t *testing.T) {
+	s := New()
+	serviceID := "svc-adobe"
+	before := s.ServiceAvailability([]string{serviceID})[serviceID]
+	usageBefore := s.ServiceUsage([]string{serviceID})[serviceID].Available
+	var mailbox *domain.Mailbox
+	for _, candidate := range s.mailboxes {
+		if candidate.VerificationStatus == domain.MailboxVerificationVerified && candidate.Services[serviceID].State == domain.ServiceAvailable {
+			mailbox = candidate
+			break
+		}
+	}
+	if mailbox == nil {
+		t.Fatal("没有找到可用于测试的已验证邮箱")
+	}
+	mailbox.VerificationStatus = domain.MailboxVerificationPending
+	if got := s.ServiceAvailability([]string{serviceID})[serviceID]; got != before-1 {
+		t.Fatalf("待验证邮箱仍计入用户库存：%d，期望 %d", got, before-1)
+	}
+	if got := s.ServiceUsage([]string{serviceID})[serviceID].Available; got != usageBefore-1 {
+		t.Fatalf("待验证邮箱仍计入平台库存：%d，期望 %d", got, usageBefore-1)
+	}
+}
+
 func TestCreateOrderChargesAllocatedMailboxProviderPrice(t *testing.T) {
 	s := New()
 	s.services["svc-adobe"].ProviderPrices[domain.MailboxProviderOutlook] = 0.37
@@ -432,5 +456,9 @@ func TestCompactStoredMailboxVerificationError(t *testing.T) {
 	}
 	if compactStoredMailboxVerificationError("IMAP：连接超时") != "IMAP：连接超时" {
 		t.Fatal("正常 IMAP 错误不应被改写")
+	}
+	combined := "Graph：Microsoft Token 接口返回 400：invalid_grant；IMAP：认证失败：密码错误"
+	if got := compactStoredMailboxVerificationError(combined); got != "Graph：OAuth 授权已失效；IMAP 自动切换失败：认证失败：密码错误" {
+		t.Fatalf("组合 Graph/IMAP 错误未保留回退结果：%q", got)
 	}
 }

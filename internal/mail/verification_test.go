@@ -163,23 +163,43 @@ func (s *graphConnectorStub) AllMessages(context.Context, string) ([]Message, er
 type imapConnectorStub struct {
 	err         error
 	calls       int
+	credentials []map[string]string
 	allMessages []Message
 	allErr      error
 	allCalls    int
 }
 
-func (s *imapConnectorStub) Verify(context.Context, string, map[string]string) error {
+func (s *imapConnectorStub) Verify(_ context.Context, _ string, credential map[string]string) error {
 	s.calls++
+	s.credentials = append(s.credentials, credential)
 	return s.err
 }
 
-func (s *imapConnectorStub) AllMessages(context.Context, string, map[string]string) ([]Message, error) {
+func (s *imapConnectorStub) AllMessages(_ context.Context, _ string, credential map[string]string) ([]Message, error) {
 	s.allCalls++
+	s.credentials = append(s.credentials, credential)
 	return s.allMessages, s.allErr
 }
 
-func (s *imapConnectorStub) Messages(context.Context, string, map[string]string) ([]Message, error) {
+func (s *imapConnectorStub) Messages(_ context.Context, _ string, credential map[string]string) ([]Message, error) {
+	s.credentials = append(s.credentials, credential)
 	return s.allMessages, s.allErr
+}
+
+func TestMailboxVerifierFallsBackToPasswordWhenGraphTokenIsInvalid(t *testing.T) {
+	repository := &verificationRepositoryStub{credential: store.MailboxCredential{
+		Mailbox: domain.Mailbox{ID: "mailbox-password-fallback", Address: "user@outlook.com"},
+		Config:  map[string]string{"access_token": "expired-access", "refresh_token": "expired-refresh", "password": "app-password", "expires_at": time.Now().Add(-time.Hour).Format(time.RFC3339)},
+	}}
+	graph := &graphConnectorStub{refreshErr: errors.New(`Microsoft Token 接口返回 400: {"error":"invalid_grant"}`)}
+	imap := &imapConnectorStub{}
+	result, err := NewMailboxVerifier(repository, graph, imap).Verify(context.Background(), "system", repository.credential.Mailbox.ID, "")
+	if err != nil || result.Method != domain.MailboxConnectionIMAP || imap.calls != 1 {
+		t.Fatalf("Graph 失效后没有成功回退密码登录：result=%+v err=%v calls=%d", result, err, imap.calls)
+	}
+	if len(imap.credentials) != 1 || imap.credentials[0]["access_token"] != "" || imap.credentials[0]["password"] != "app-password" {
+		t.Fatalf("IMAP 回退仍携带失效 access_token：%+v", imap.credentials)
+	}
 }
 
 func TestMailboxVerifierReadsMessagesWithGraphPriorityAndIMAPFallback(t *testing.T) {
@@ -200,6 +220,9 @@ func TestMailboxVerifierReadsMessagesWithGraphPriorityAndIMAPFallback(t *testing
 	messages, err = verifier.ReadMessages(context.Background(), "admin", "mailbox-1", "")
 	if err != nil || len(messages) != 1 || messages[0].ID != "imap-message" || imap.allCalls != 1 {
 		t.Fatalf("Graph 失败后的 IMAP 回退错误：messages=%+v err=%v imap_calls=%d", messages, err, imap.allCalls)
+	}
+	if len(imap.credentials) != 1 || imap.credentials[0]["access_token"] != "" || imap.credentials[0]["password"] != "secret" {
+		t.Fatalf("收件回退仍携带失效 access_token：%+v", imap.credentials)
 	}
 }
 

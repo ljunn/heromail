@@ -126,6 +126,10 @@ func (s *Store) ServiceUsage(serviceIDs []string) map[string]ServiceUsage {
 	for _, serviceID := range serviceIDs {
 		usage := ServiceUsage{}
 		for _, mailbox := range s.mailboxes {
+			// 未验证邮箱不能作为目标平台库存，也不计入平台状态统计。
+			if mailbox.VerificationStatus != domain.MailboxVerificationVerified {
+				continue
+			}
 			switch mailbox.Services[serviceID].State {
 			case domain.ServiceAvailable:
 				usage.Available++
@@ -163,7 +167,7 @@ func (s *Store) ServiceAvailabilityByProvider(serviceIDs []string) map[string]ma
 			continue
 		}
 		for _, mailbox := range s.mailboxes {
-			if mailbox.State != domain.MailboxAvailable || mailbox.ActiveOrderID != "" || mailbox.HealthScore < 60 || !mailboxConnectionValid(mailbox, now) {
+			if mailbox.VerificationStatus != domain.MailboxVerificationVerified || mailbox.State != domain.MailboxAvailable || mailbox.ActiveOrderID != "" || mailbox.HealthScore < 60 || !mailboxConnectionValid(mailbox, now) {
 				continue
 			}
 			if !contains(service.AllowedProviders, mailbox.Provider) {
@@ -454,7 +458,7 @@ func (s *Store) Overview() domain.Overview {
 		if mailbox.VerificationStatus == domain.MailboxVerificationVerified {
 			result.VerifiedMailboxes++
 		}
-		if mailbox.State == domain.MailboxAvailable {
+		if mailbox.VerificationStatus == domain.MailboxVerificationVerified && mailbox.State == domain.MailboxAvailable {
 			result.AvailableMailboxes++
 		}
 		if mailbox.State == domain.MailboxLeased {

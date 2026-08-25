@@ -363,8 +363,9 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 	}
 	var messages []Message
 	var messageErr error
+	imapCredential := credentialForIMAPFallback(credential, graphErr)
 	if useIMAP {
-		messages, messageErr = w.imap.Messages(ctx, mailbox.Mailbox.Address, credential)
+		messages, messageErr = w.imap.Messages(ctx, mailbox.Mailbox.Address, imapCredential)
 	} else if graphErr != nil {
 		messageErr = graphErr
 	} else {
@@ -376,14 +377,14 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 	}
 	if messageErr != nil && !useIMAP && credential["password"] != "" {
 		useIMAP = true
-		messages, messageErr = w.imap.Messages(ctx, mailbox.Mailbox.Address, credential)
+		messages, messageErr = w.imap.Messages(ctx, mailbox.Mailbox.Address, credentialForIMAPFallback(credential, messageErr))
 	}
 	if messageErr != nil {
 		method := domain.MailboxConnectionMicrosoftGraph
 		message := compactGraphError(messageErr)
 		if useIMAP {
 			method = domain.MailboxConnectionIMAP
-			message = compactGraphError(messageErr)
+			message = compactIMAPError(messageErr)
 		}
 		_ = w.repository.UpdateMailboxVerification("system", mailbox.Mailbox.ID, method, domain.MailboxVerificationFailed, message, time.Now().UTC(), "")
 		return

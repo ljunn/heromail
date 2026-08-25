@@ -132,8 +132,9 @@ func (v *MailboxVerifier) Verify(ctx context.Context, actorID, mailboxID, ip str
 
 	imapErr := errors.New("缺少 IMAP 凭证")
 	if v.imap != nil && (config["access_token"] != "" || config["password"] != "") {
+		imapCredential := credentialForIMAPFallback(config, graphErr)
 		verifyContext, cancel := context.WithTimeout(ctx, 25*time.Second)
-		imapErr = v.imap.Verify(verifyContext, credential.Mailbox.Address, config)
+		imapErr = v.imap.Verify(verifyContext, credential.Mailbox.Address, imapCredential)
 		cancel()
 		if imapErr == nil {
 			return v.markVerified(actorID, mailboxID, domain.MailboxConnectionIMAP, now, ip)
@@ -192,10 +193,11 @@ func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, 
 		}
 	}
 	if v.imap != nil && (config["access_token"] != "" || config["password"] != "") {
+		imapCredential := credentialForIMAPFallback(config, graphErr)
 		imapContext, cancel := context.WithTimeout(ctx, 45*time.Second)
 		defer cancel()
 		if reader, ok := v.imap.(imapAllMessageConnector); ok {
-			if messages, readErr := reader.AllMessages(imapContext, credential.Mailbox.Address, config); readErr == nil {
+			if messages, readErr := reader.AllMessages(imapContext, credential.Mailbox.Address, imapCredential); readErr == nil {
 				return messages, nil
 			} else {
 				if !microsoftMailbox {
@@ -205,7 +207,7 @@ func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, 
 			}
 		}
 		if reader, ok := v.imap.(IMAPMessageConnector); ok {
-			if messages, readErr := reader.Messages(imapContext, credential.Mailbox.Address, config); readErr == nil {
+			if messages, readErr := reader.Messages(imapContext, credential.Mailbox.Address, imapCredential); readErr == nil {
 				return messages, nil
 			} else {
 				if !microsoftMailbox {
@@ -282,6 +284,17 @@ func mergeCredential(existing, refreshed map[string]string) map[string]string {
 			result[key] = value
 		}
 	}
+	return result
+}
+
+// credentialForIMAPFallback 避免 Graph 失效时拿同一个失效 access_token 再去尝试 IMAP。
+// 只要存在密码，就优先使用密码或应用专用密码登录 IMAP；没有密码时保留 OAuth Token，支持 IMAP OAuth。
+func credentialForIMAPFallback(config map[string]string, graphErr error) map[string]string {
+	if graphErr == nil || strings.TrimSpace(config["password"]) == "" {
+		return config
+	}
+	result := cloneCredential(config)
+	delete(result, "access_token")
 	return result
 }
 
