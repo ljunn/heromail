@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ljunn/heromail/internal/domain"
@@ -244,11 +245,12 @@ func (c *MicrosoftClient) messagesPage(ctx context.Context, accessToken, endpoin
 }
 
 type Worker struct {
-	repository workerRepository
-	receiver   CodeReceiver
-	client     *MicrosoftClient
-	imap       IMAPMessageConnector
-	interval   time.Duration
+	repository  workerRepository
+	receiver    CodeReceiver
+	client      *MicrosoftClient
+	imap        IMAPMessageConnector
+	interval    time.Duration
+	concurrency int
 }
 
 type workerRepository interface {
@@ -265,10 +267,20 @@ type mailboxServiceCatalog interface {
 }
 
 func NewWorker(repository workerRepository, receiver CodeReceiver, client *MicrosoftClient, interval time.Duration) *Worker {
+	return NewWorkerWithConcurrency(repository, receiver, client, interval, 32)
+}
+
+func NewWorkerWithConcurrency(repository workerRepository, receiver CodeReceiver, client *MicrosoftClient, interval time.Duration, concurrency int) *Worker {
 	if interval < 5*time.Second {
 		interval = 15 * time.Second
 	}
-	return &Worker{repository: repository, receiver: receiver, client: client, imap: NewMicrosoftIMAPConnector(), interval: interval}
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	if concurrency > 128 {
+		concurrency = 128
+	}
+	return &Worker{repository: repository, receiver: receiver, client: client, imap: NewMicrosoftIMAPConnector(), interval: interval, concurrency: concurrency}
 }
 
 func (w *Worker) Run(ctx context.Context) {
@@ -288,14 +300,32 @@ func (w *Worker) Run(ctx context.Context) {
 func (w *Worker) poll(ctx context.Context) {
 	const batchSize = 100
 	afterID := ""
+	concurrency := w.concurrency
+	if concurrency < 1 {
+		concurrency = 1
+	}
 	for {
 		mailboxes, err := w.repository.ListMailboxCredentialsPage(afterID, batchSize)
 		if err != nil {
 			return
 		}
+		semaphore := make(chan struct{}, concurrency)
+		var group sync.WaitGroup
 		for _, mailbox := range mailboxes {
-			w.pollMailbox(ctx, mailbox)
+			select {
+			case <-ctx.Done():
+				group.Wait()
+				return
+			case semaphore <- struct{}{}:
+			}
+			group.Add(1)
+			go func(mailbox store.MailboxCredential) {
+				defer group.Done()
+				defer func() { <-semaphore }()
+				w.pollMailbox(ctx, mailbox)
+			}(mailbox)
 		}
+		group.Wait()
 		if len(mailboxes) < batchSize {
 			return
 		}
@@ -305,11 +335,9 @@ func (w *Worker) poll(ctx context.Context) {
 
 func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredential) {
 	orders := w.repository.WaitingOrdersForMailbox(mailbox.Mailbox.ID)
-	var services []domain.Service
-	if catalog, ok := w.repository.(mailboxServiceCatalog); ok {
-		services = catalog.ListServices()
-	}
-	if len(orders) == 0 && len(services) == 0 {
+	// 历史平台注册识别在邮箱验证成功后由 ScanMailboxHistory 完成；
+	// 实时 Worker 只服务活跃订单，避免空闲邮箱反复读取整箱邮件。
+	if len(orders) == 0 {
 		return
 	}
 	credential := mailbox.Config
@@ -375,20 +403,12 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 			}
 			messageOrders = append(messageOrders, order)
 		}
-		if len(messageOrders) == 0 && len(services) == 0 {
+		if len(messageOrders) == 0 {
 			continue
 		}
 		fresh, markErr := w.repository.MarkMailEvent(mailbox.Mailbox.ID, message.ID, message.Sender, message.Subject, message.ReceivedAt)
 		if markErr != nil || !fresh {
 			continue
-		}
-		for _, service := range services {
-			if _, matched := matchCode(service, message); !matched {
-				continue
-			}
-			if writer, ok := w.repository.(store.MailboxServiceStateRepository); ok {
-				_ = writer.MarkMailboxServiceConsumed(mailbox.Mailbox.ID, service.ID, message.ReceivedAt)
-			}
 		}
 		for _, order := range messageOrders {
 			service, ok := w.repository.ServiceByID(order.ServiceID)

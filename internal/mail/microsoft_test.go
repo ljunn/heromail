@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,6 +52,62 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return f(request)
+}
+
+type concurrentPollRepository struct {
+	mailboxes []store.MailboxCredential
+}
+
+func (s *concurrentPollRepository) ListMailboxCredentialsPage(afterID string, limit int) ([]store.MailboxCredential, error) {
+	start := 0
+	for start < len(s.mailboxes) && s.mailboxes[start].Mailbox.ID <= afterID {
+		start++
+	}
+	end := start + limit
+	if end > len(s.mailboxes) {
+		end = len(s.mailboxes)
+	}
+	return s.mailboxes[start:end], nil
+}
+func (*concurrentPollRepository) UpdateMailboxCredential(string, string, map[string]string, time.Time, string) error {
+	return nil
+}
+func (*concurrentPollRepository) UpdateMailboxVerification(string, string, string, string, string, time.Time, string) error {
+	return nil
+}
+func (*concurrentPollRepository) WaitingOrdersForMailbox(id string) []domain.Order {
+	return []domain.Order{{ID: "order-" + id, ServiceID: "service-openai", Status: domain.OrderWaitingCode, AssignedAt: time.Now().Add(-time.Minute)}}
+}
+func (*concurrentPollRepository) ServiceByID(string) (domain.Service, bool) {
+	return domain.Service{ID: "service-openai", SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`}, true
+}
+func (*concurrentPollRepository) MarkMailEvent(string, string, string, string, time.Time) (bool, error) {
+	return false, nil
+}
+
+type concurrentMessageConnector struct {
+	active    atomic.Int32
+	maxActive atomic.Int32
+}
+
+func (*concurrentMessageConnector) Verify(context.Context, string, map[string]string) error {
+	return nil
+}
+func (s *concurrentMessageConnector) Messages(ctx context.Context, _ string, _ map[string]string) ([]Message, error) {
+	active := s.active.Add(1)
+	for {
+		previous := s.maxActive.Load()
+		if active <= previous || s.maxActive.CompareAndSwap(previous, active) {
+			break
+		}
+	}
+	defer s.active.Add(-1)
+	select {
+	case <-time.After(20 * time.Millisecond):
+		return []Message{}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (codeReceiverStub) ReceiveCodeValue(string, string) (domain.Order, error) {
@@ -146,6 +203,20 @@ func TestWorkerScansMailboxCredentialsPastFirstPage(t *testing.T) {
 	}
 }
 
+func TestWorkerPollsActiveMailboxesConcurrently(t *testing.T) {
+	repository := &concurrentPollRepository{mailboxes: make([]store.MailboxCredential, 6)}
+	for index := range repository.mailboxes {
+		repository.mailboxes[index] = store.MailboxCredential{Mailbox: domain.Mailbox{ID: fmt.Sprintf("mailbox-%03d", index), Address: fmt.Sprintf("user-%03d@outlook.com", index), ConnectionMethod: domain.MailboxConnectionIMAP}, Config: map[string]string{"password": "test-only"}}
+	}
+	worker := NewWorkerWithConcurrency(repository, codeReceiverStub{}, NewMicrosoftClient(MicrosoftConfig{}), time.Minute, 3)
+	connector := &concurrentMessageConnector{}
+	worker.imap = connector
+	worker.poll(context.Background())
+	if connector.maxActive.Load() < 3 {
+		t.Fatalf("活跃邮箱没有并发收码，最大并发数=%d", connector.maxActive.Load())
+	}
+}
+
 func TestWorkerReceivesMailSentBeforeUserConfirmation(t *testing.T) {
 	now := time.Now().UTC()
 	repository := &earlyMailRepository{
@@ -182,7 +253,7 @@ func TestWorkerReceivesMailSentBeforeUserConfirmation(t *testing.T) {
 	}
 }
 
-func TestWorkerMatchesHistoryForAllServicesWithoutActiveOrder(t *testing.T) {
+func TestWorkerSkipsIdleMailboxWithoutActiveOrder(t *testing.T) {
 	now := time.Now().UTC()
 	repository := &historyMatchingRepository{services: []domain.Service{
 		{ID: "service-adobe", Code: "adobe", SenderDomains: []string{"adobe.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
@@ -199,8 +270,8 @@ func TestWorkerMatchesHistoryForAllServicesWithoutActiveOrder(t *testing.T) {
 		Config:  map[string]string{"password": "test-only"},
 	})
 
-	if len(repository.marked) != 2 || repository.marked[0] != "service-adobe" || repository.marked[1] != "service-openai" {
-		t.Fatalf("历史邮件未标记所有命中的平台：%v", repository.marked)
+	if len(repository.marked) != 0 {
+		t.Fatalf("空闲邮箱不应由实时收码 Worker 扫描历史邮件：%v", repository.marked)
 	}
 }
 

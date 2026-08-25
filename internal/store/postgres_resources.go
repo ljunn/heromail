@@ -191,7 +191,9 @@ func (s *PostgresStore) ListMailboxCredentialsPage(afterID string, limit int) ([
 		limit = 100
 	}
 	var rows []sqlMailbox
-	query := s.db.Where("encrypted_credential <> '' AND state NOT IN ? AND (verification_status IS NULL OR verification_status <> ?)", []string{string(domain.MailboxBlocked), string(domain.MailboxError)}, domain.MailboxVerificationFailed)
+	// 收码 Worker 只读取已经验证的邮箱。待验证邮箱由 VerificationWorker 独立处理，
+	// 否则导入大批账号时会把验证请求和实时收码请求互相拖慢。
+	query := s.db.Where("encrypted_credential <> '' AND state NOT IN ? AND verification_status = ?", []string{string(domain.MailboxBlocked), string(domain.MailboxError)}, domain.MailboxVerificationVerified)
 	if afterID != "" {
 		query = query.Where("id > ?", afterID)
 	}

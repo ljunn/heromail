@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -46,12 +47,12 @@ func main() {
 	server := httpapi.NewServer(repository)
 	if resources, ok := repository.(store.ResourceRepository); ok && server.MailboxVerifier != nil {
 		if queue, queueOK := repository.(store.MailboxVerificationQueue); queueOK {
-			go mail.NewVerificationWorker(resources, queue, server.MailboxVerifier).Run(ctx)
+			go mail.NewVerificationWorkerWithConcurrency(resources, queue, server.MailboxVerifier, positiveEnvInt("HEROMAIL_VERIFICATION_CONCURRENCY", 32), positiveEnvInt("HEROMAIL_HISTORY_SCAN_CONCURRENCY", 4)).Run(ctx)
 		}
 	}
 	if resources, ok := repository.(store.ResourceRepository); ok && server.Microsoft != nil {
 		if receiver, receiverOK := repository.(mail.CodeReceiver); receiverOK {
-			go mail.NewWorker(resources, receiver, server.Microsoft, 15*time.Second).Run(ctx)
+			go mail.NewWorkerWithConcurrency(resources, receiver, server.Microsoft, 15*time.Second, positiveEnvInt("HEROMAIL_MAIL_POLL_CONCURRENCY", 32)).Run(ctx)
 		}
 	}
 	if webhooks, ok := repository.(store.WebhookRepository); ok {
@@ -85,4 +86,12 @@ func main() {
 	if err := httpServer.Shutdown(shutdownContext); err != nil {
 		log.Printf("HTTP 服务关闭失败：%v", err)
 	}
+}
+
+func positiveEnvInt(name string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name)))
+	if err != nil || value < 1 {
+		return fallback
+	}
+	return value
 }
