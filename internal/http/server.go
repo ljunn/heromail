@@ -242,8 +242,12 @@ func (s *Server) serviceAvailability(c *gin.Context) {
 		writeError(c, http.StatusNotFound, "service_not_found", "target service not found")
 		return
 	}
-	available := s.Store.ServiceAvailability([]string{service.ID})[service.ID]
+	// 按供应商一次查询库存；ServiceAvailability 本身也会执行同一查询，不能重复调用。
 	availableByProvider := s.Store.ServiceAvailabilityByProvider([]string{service.ID})[service.ID]
+	available := 0
+	for _, count := range availableByProvider {
+		available += count
+	}
 	providerAvailability := make(map[string]int, len(service.AllowedProviders))
 	for _, provider := range service.AllowedProviders {
 		providerAvailability[provider] = availableByProvider[provider]
