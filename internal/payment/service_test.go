@@ -49,7 +49,7 @@ func TestAlipayRSA2Verify(t *testing.T) {
 		"total_amount": {"88.00"},
 		"sign_type":    {"RSA2"},
 	}
-	digest := sha256.Sum256([]byte(canonical(values, false)))
+	digest := sha256.Sum256([]byte(canonical(values, true)))
 	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, digest[:])
 	if err != nil {
 		t.Fatalf("生成测试签名失败：%v", err)
@@ -57,6 +57,10 @@ func TestAlipayRSA2Verify(t *testing.T) {
 	values.Set("sign", base64.StdEncoding.EncodeToString(signature))
 	if !verifyAlipay(values, publicPEM) {
 		t.Fatal("支付宝 RSA2 正确签名未通过")
+	}
+	values.Set("sign_type", "RSA1")
+	if !verifyAlipay(values, publicPEM) {
+		t.Fatal("支付宝 sign_type 不应参与回调签名校验")
 	}
 	values.Set("total_amount", "89.00")
 	if verifyAlipay(values, publicPEM) {

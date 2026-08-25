@@ -102,7 +102,8 @@ func ValidateProviderConfig(providerType string, config map[string]string) error
 
 func (s *Service) Notify(providerType, providerID string, values url.Values) error {
 	provider, err := s.repository.GetPaymentProviderSecret(providerID)
-	if err != nil || provider.Provider.Type != providerType || !provider.Provider.Enabled {
+	// 已创建的支付单即使通道后来停用，也必须继续验证并接收该单的异步回调。
+	if err != nil || provider.Provider.Type != providerType {
 		return store.ErrPaymentProviderNotFound
 	}
 	var orderID, tradeNo string
@@ -190,7 +191,7 @@ func (s *Service) createAlipay(provider store.PaymentProviderSecret, order domai
 	if err != nil {
 		return "", err
 	}
-	digest := sha256.Sum256([]byte(canonical(values, false)))
+	digest := sha256.Sum256([]byte(canonical(values, true)))
 	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, digest[:])
 	if err != nil {
 		return "", err
@@ -217,7 +218,7 @@ func verifyAlipay(values url.Values, publicKeyText string) bool {
 	if err != nil {
 		return false
 	}
-	digest := sha256.Sum256([]byte(canonical(values, false)))
+	digest := sha256.Sum256([]byte(canonical(values, true)))
 	return rsa.VerifyPKCS1v15(publicKey, crypto.SHA256, digest[:], signature) == nil
 }
 

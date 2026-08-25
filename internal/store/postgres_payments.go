@@ -182,7 +182,7 @@ func (s *PostgresStore) CompletePaymentOrder(orderID, providerTradeNo string, pa
 			result = mapPaymentOrder(order)
 			return nil
 		}
-		if order.Status != "pending" && order.Status != "paid" {
+		if !paymentOrderCanComplete(order.Status) {
 			return errors.New("支付订单状态不允许入账")
 		}
 		if cents(paidAmount) != order.AmountCents {
@@ -213,6 +213,11 @@ func (s *PostgresStore) CompletePaymentOrder(orderID, providerTradeNo string, pa
 		return nil
 	})
 	return result, err
+}
+
+// 支付平台的异步通知可能晚于本地 30 分钟回收任务；只要回调已验签且金额一致，过期单仍应入账。
+func paymentOrderCanComplete(status string) bool {
+	return status == "pending" || status == "paid" || status == "expired"
 }
 
 func (s *PostgresStore) ReapExpiredPaymentOrders() int {
