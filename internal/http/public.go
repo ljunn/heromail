@@ -8,12 +8,12 @@ import (
 )
 
 type publicServiceView struct {
-	Code             string   `json:"code"`
-	Name             string   `json:"name"`
-	Description      string   `json:"description"`
-	AllowedProviders []string `json:"allowed_providers"`
-	Price            float64  `json:"price"`
-	TTLSeconds       int      `json:"ttl_seconds"`
+	Code             string             `json:"code"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description"`
+	AllowedProviders []string           `json:"allowed_providers"`
+	ProviderPrices   map[string]float64 `json:"provider_prices"`
+	TTLSeconds       int                `json:"ttl_seconds"`
 }
 
 func (s *Server) publicServices(c *gin.Context) {
@@ -26,11 +26,19 @@ func (s *Server) publicServices(c *gin.Context) {
 			Name:             service.Name,
 			Description:      service.Description,
 			AllowedProviders: append([]string(nil), service.AllowedProviders...),
-			Price:            service.Price,
+			ProviderPrices:   copyProviderPrices(service.ProviderPrices),
 			TTLSeconds:       service.TTLSeconds,
 		})
 	}
 	writePage(c, items, page, pageSize, total)
+}
+
+func copyProviderPrices(prices map[string]float64) map[string]float64 {
+	result := make(map[string]float64, len(prices))
+	for provider, price := range prices {
+		result[provider] = price
+	}
+	return result
 }
 
 func (s *Server) publicStatus(c *gin.Context) {

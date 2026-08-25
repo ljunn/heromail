@@ -10,9 +10,11 @@ import (
 	"github.com/ljunn/heromail/internal/domain"
 )
 
+var testOrderProviders = []string{domain.MailboxProviderOutlook, domain.MailboxProviderHotmail}
+
 func TestRegistrationConsumesMailboxForOneServiceOnly(t *testing.T) {
 	s := New()
-	first, err := s.CreateOrder("user-001", "svc-adobe", "test-1")
+	first, err := s.CreateOrder("user-001", "svc-adobe", "test-1", testOrderProviders)
 	if err != nil {
 		t.Fatalf("create first order: %v", err)
 	}
@@ -34,7 +36,7 @@ func TestRegistrationConsumesMailboxForOneServiceOnly(t *testing.T) {
 		t.Fatalf("registered platforms = %#v, want [adobe]", mailbox.RegisteredPlatforms)
 	}
 
-	second, err := s.CreateOrder("user-001", "svc-adobe", "test-2")
+	second, err := s.CreateOrder("user-001", "svc-adobe", "test-2", testOrderProviders)
 	if err != nil {
 		t.Fatalf("create second order: %v", err)
 	}
@@ -45,7 +47,7 @@ func TestRegistrationConsumesMailboxForOneServiceOnly(t *testing.T) {
 
 func TestReceiveCodeRejectsEmptyValueAndAcceptsAssignedOrder(t *testing.T) {
 	s := New()
-	order, err := s.CreateOrder("user-001", "svc-openai", "real-code-only")
+	order, err := s.CreateOrder("user-001", "svc-openai", "real-code-only", testOrderProviders)
 	if err != nil {
 		t.Fatalf("创建订单失败：%v", err)
 	}
@@ -63,7 +65,7 @@ func TestReceiveCodeRejectsEmptyValueAndAcceptsAssignedOrder(t *testing.T) {
 
 func TestReceiveCodeRejectsExpiredOrder(t *testing.T) {
 	s := New()
-	order, err := s.CreateOrder("user-001", "svc-openai", "expired-code")
+	order, err := s.CreateOrder("user-001", "svc-openai", "expired-code", testOrderProviders)
 	if err != nil {
 		t.Fatalf("创建订单失败：%v", err)
 	}
@@ -76,7 +78,7 @@ func TestReceiveCodeRejectsExpiredOrder(t *testing.T) {
 func TestCancelRefundsAndReleasesLease(t *testing.T) {
 	s := New()
 	before, _ := s.User("user-001")
-	order, err := s.CreateOrder("user-001", "svc-adobe", "cancel-1")
+	order, err := s.CreateOrder("user-001", "svc-adobe", "cancel-1", testOrderProviders)
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -100,7 +102,7 @@ func TestCancelRefundsAndReleasesLease(t *testing.T) {
 func TestCreateOrderStartsListeningForAtLeastThirtyMinutes(t *testing.T) {
 	s := New()
 	before, _ := s.User("user-001")
-	order, err := s.CreateOrder("user-001", "svc-openai", "automatic-listening")
+	order, err := s.CreateOrder("user-001", "svc-openai", "automatic-listening", testOrderProviders)
 	if err != nil {
 		t.Fatalf("创建订单失败：%v", err)
 	}
@@ -126,7 +128,7 @@ func TestFiveNoCodeTimeoutsConsumeMailboxService(t *testing.T) {
 	}
 	initialBalance, _ := s.User("user-001")
 	for attempt := 1; attempt <= 5; attempt++ {
-		order, err := s.CreateOrder("user-001", "svc-adobe", fmt.Sprintf("timeout-%d", attempt))
+		order, err := s.CreateOrder("user-001", "svc-adobe", fmt.Sprintf("timeout-%d", attempt), testOrderProviders)
 		if err != nil {
 			t.Fatalf("第 %d 次创建订单失败：%v", attempt, err)
 		}
@@ -154,14 +156,14 @@ func TestFiveNoCodeTimeoutsConsumeMailboxService(t *testing.T) {
 			t.Fatalf("第 %d 次超时退款后余额 = %.2f，期望 %.2f", attempt, balance.Balance, initialBalance.Balance)
 		}
 	}
-	if _, err := s.CreateOrder("user-001", "svc-adobe", "timeout-six"); !errors.Is(err, ErrNoMailboxAvailable) {
+	if _, err := s.CreateOrder("user-001", "svc-adobe", "timeout-six", testOrderProviders); !errors.Is(err, ErrNoMailboxAvailable) {
 		t.Fatalf("第 5 次超时后仍可分配，返回 %v", err)
 	}
 }
 
 func TestManualCancelDoesNotCountAsNoCodeTimeout(t *testing.T) {
 	s := New()
-	order, err := s.CreateOrder("user-001", "svc-openai", "manual-cancel")
+	order, err := s.CreateOrder("user-001", "svc-openai", "manual-cancel", testOrderProviders)
 	if err != nil {
 		t.Fatalf("创建订单失败：%v", err)
 	}
@@ -177,7 +179,7 @@ func TestManualCancelDoesNotCountAsNoCodeTimeout(t *testing.T) {
 func TestReceivedCodeCannotBeCanceledOrRefunded(t *testing.T) {
 	s := New()
 	before, _ := s.User("user-001")
-	order, err := s.CreateOrder("user-001", "svc-openai", "received-no-cancel")
+	order, err := s.CreateOrder("user-001", "svc-openai", "received-no-cancel", testOrderProviders)
 	if err != nil {
 		t.Fatalf("创建订单失败：%v", err)
 	}
@@ -200,7 +202,7 @@ func TestServiceAvailabilityTracksAllocatableMailboxes(t *testing.T) {
 		t.Fatalf("初始 Adobe 余量 = %d，期望大于 0", before)
 	}
 
-	order, err := s.CreateOrder("user-001", "svc-adobe", "availability-1")
+	order, err := s.CreateOrder("user-001", "svc-adobe", "availability-1", testOrderProviders)
 	if err != nil {
 		t.Fatalf("创建订单失败：%v", err)
 	}
@@ -218,16 +220,79 @@ func TestServiceAvailabilityTracksAllocatableMailboxes(t *testing.T) {
 	}
 }
 
+func TestServiceAvailabilityGroupsMailboxProviders(t *testing.T) {
+	s := New()
+	availability := s.ServiceAvailabilityByProvider([]string{"svc-adobe"})["svc-adobe"]
+	if availability[domain.MailboxProviderOutlook] <= 0 || availability[domain.MailboxProviderHotmail] <= 0 {
+		t.Fatalf("邮箱类型库存没有正确分组：%+v", availability)
+	}
+	if got, want := availability[domain.MailboxProviderOutlook]+availability[domain.MailboxProviderHotmail], s.ServiceAvailability([]string{"svc-adobe"})["svc-adobe"]; got != want {
+		t.Fatalf("分组库存合计 = %d，平台总库存 = %d", got, want)
+	}
+}
+
+func TestCreateOrderChargesAllocatedMailboxProviderPrice(t *testing.T) {
+	s := New()
+	s.services["svc-adobe"].ProviderPrices[domain.MailboxProviderOutlook] = 0.37
+	s.services["svc-adobe"].ProviderPrices[domain.MailboxProviderHotmail] = 0.81
+	before, _ := s.User("user-001")
+
+	order, err := s.CreateOrder("user-001", "svc-adobe", "provider-price", []string{domain.MailboxProviderHotmail})
+	if err != nil {
+		t.Fatalf("按邮箱类型创建订单失败：%v", err)
+	}
+	after, _ := s.User("user-001")
+	if order.MailboxProvider != domain.MailboxProviderHotmail || len(order.RequestedProviders) != 1 || order.RequestedProviders[0] != domain.MailboxProviderHotmail {
+		t.Fatalf("订单邮箱类型记录不正确：%+v", order)
+	}
+	if math.Abs(order.Price-0.81) > 0.000001 || math.Abs((before.Balance-after.Balance)-0.81) > 0.000001 {
+		t.Fatalf("订单费用 %.2f，余额变化 %.2f，期望均为 0.81", order.Price, before.Balance-after.Balance)
+	}
+}
+
+func TestCreateOrderAllowsVerifiedDirectIMAPMailbox(t *testing.T) {
+	s := New()
+	for _, mailbox := range s.mailboxes {
+		if mailbox.ID != "mb-001" {
+			mailbox.State = domain.MailboxBlocked
+			continue
+		}
+		mailbox.Address = "hero@gmail.com"
+		mailbox.Provider = domain.MailboxProviderGmail
+		mailbox.ConnectionMethod = domain.MailboxConnectionIMAP
+		mailbox.OAuthValidUntil = time.Time{}
+	}
+
+	order, err := s.CreateOrder("user-001", "svc-adobe", "direct-imap", []string{domain.MailboxProviderGmail})
+	if err != nil {
+		t.Fatalf("有效 IMAP 邮箱不能参与分配：%v", err)
+	}
+	if order.MailboxProvider != domain.MailboxProviderGmail {
+		t.Fatalf("实际邮箱类型 = %s，期望 %s", order.MailboxProvider, domain.MailboxProviderGmail)
+	}
+}
+
+func TestCreateOrderRequiresBalanceForHighestSelectedProviderPrice(t *testing.T) {
+	s := New()
+	s.services["svc-adobe"].ProviderPrices[domain.MailboxProviderOutlook] = 0.10
+	s.services["svc-adobe"].ProviderPrices[domain.MailboxProviderHotmail] = 100
+
+	_, err := s.CreateOrder("user-001", "svc-adobe", "provider-price-balance", []string{domain.MailboxProviderOutlook, domain.MailboxProviderHotmail})
+	if !errors.Is(err, ErrInsufficientBalance) {
+		t.Fatalf("余额不能覆盖所选最高价时返回 %v，期望 %v", err, ErrInsufficientBalance)
+	}
+}
+
 func TestUserOrderFilterIsServerSideSemantics(t *testing.T) {
 	s := New()
-	adobe, err := s.CreateOrder("user-001", "svc-adobe", "filter-adobe")
+	adobe, err := s.CreateOrder("user-001", "svc-adobe", "filter-adobe", testOrderProviders)
 	if err != nil {
 		t.Fatalf("创建 Adobe 订单失败：%v", err)
 	}
 	if _, err := s.CancelOrder(adobe.ID, "user-001"); err != nil {
 		t.Fatalf("取消 Adobe 订单失败：%v", err)
 	}
-	if _, err := s.CreateOrder("user-001", "svc-openai", "filter-openai"); err != nil {
+	if _, err := s.CreateOrder("user-001", "svc-openai", "filter-openai", testOrderProviders); err != nil {
 		t.Fatalf("创建 OpenAI 订单失败：%v", err)
 	}
 	items, total := s.ListUserOrdersPage("user-001", UserOrderFilter{Status: string(domain.OrderCanceled), Service: "adobe", Query: "ORD"}, 1, 20)
@@ -245,6 +310,25 @@ func TestDefaultServiceSeedDoesNotRestoreDeletedConfiguration(t *testing.T) {
 	}
 	if shouldSeedDefaultServices(3, false) {
 		t.Fatal("已有平台的数据库不得补种缺失平台")
+	}
+}
+
+func TestLegacyServicePriceBackfillsEveryAllowedProvider(t *testing.T) {
+	row := sqlService{
+		AllowedProviders: []string{domain.MailboxProviderOutlook, domain.MailboxProviderHotmail},
+		PriceCents:       73,
+	}
+	service := mapService(row)
+	if service.ProviderPrices[domain.MailboxProviderOutlook] != 0.73 || service.ProviderPrices[domain.MailboxProviderHotmail] != 0.73 {
+		t.Fatalf("旧平台价格没有按允许类型兼容：%+v", service.ProviderPrices)
+	}
+}
+
+func TestLegacyOrderMapsMailboxProviderMigrationFields(t *testing.T) {
+	row := sqlOrder{MailboxProvider: domain.MailboxProviderHotmail, RequestedProviders: []string{domain.MailboxProviderHotmail}, PriceCents: 81}
+	order := mapOrder(row)
+	if order.MailboxProvider != domain.MailboxProviderHotmail || len(order.RequestedProviders) != 1 || order.RequestedProviders[0] != domain.MailboxProviderHotmail || order.Price != 0.81 {
+		t.Fatalf("订单邮箱类型迁移字段映射不正确：%+v", order)
 	}
 }
 
@@ -311,7 +395,7 @@ func TestAdminCanMarkMailboxRegisteredForService(t *testing.T) {
 
 func TestAdminCannotMarkLeasedMailboxServiceRegistered(t *testing.T) {
 	s := New()
-	order, err := s.CreateOrder("user-001", "svc-openai", "manual-register-leased")
+	order, err := s.CreateOrder("user-001", "svc-openai", "manual-register-leased", testOrderProviders)
 	if err != nil {
 		t.Fatalf("创建订单失败：%v", err)
 	}

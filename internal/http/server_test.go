@@ -25,7 +25,7 @@ import (
 
 func TestCreateOrderAutomaticallyListensWithoutUserMutationEndpoints(t *testing.T) {
 	server := NewServer(store.New())
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/orders", bytes.NewBufferString(`{"service":"adobe","request_id":"http-test-001"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/orders", bytes.NewBufferString(`{"service":"adobe","mailbox_providers":["outlook","hotmail"],"request_id":"http-test-001"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-HeroMail-User", "user-001")
 	response := httptest.NewRecorder()
@@ -42,6 +42,9 @@ func TestCreateOrderAutomaticallyListensWithoutUserMutationEndpoints(t *testing.
 	}
 	if created.Data.Status != domain.OrderWaitingCode || created.Data.SubmittedAt.IsZero() || created.Data.MailboxAddress == "" {
 		t.Fatalf("订单分配结果不正确：%+v", created.Data)
+	}
+	if created.Data.MailboxProvider == "" || len(created.Data.RequestedProviders) != 2 {
+		t.Fatalf("订单没有记录实际和请求邮箱类型：%+v", created.Data)
 	}
 	if created.Data.ExpiresAt.Sub(created.Data.CreatedAt) < 30*time.Minute {
 		t.Fatalf("订单有效期 = %s，期望至少 30 分钟", created.Data.ExpiresAt.Sub(created.Data.CreatedAt))
@@ -63,10 +66,37 @@ func TestCreateOrderAutomaticallyListensWithoutUserMutationEndpoints(t *testing.
 	}
 }
 
+func TestCreateOrderRequiresMailboxProviderSelection(t *testing.T) {
+	server := NewServer(store.New())
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "缺少邮箱类型", body: `{"service":"adobe","request_id":"missing-provider"}`},
+		{name: "邮箱类型为空", body: `{"service":"adobe","mailbox_providers":[],"request_id":"empty-provider"}`},
+		{name: "包含未知邮箱类型", body: `{"service":"adobe","mailbox_providers":["outlook","yahoo"],"request_id":"unknown-provider"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/orders", bytes.NewBufferString(tt.body))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("X-HeroMail-User", "user-001")
+			response := httptest.NewRecorder()
+			server.Router.ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("非法邮箱类型返回 %d，期望 %d，响应：%s", response.Code, http.StatusBadRequest, response.Body.String())
+			}
+			if !strings.Contains(response.Body.String(), "mailbox_providers") {
+				t.Fatalf("错误提示没有指明 mailbox_providers：%s", response.Body.String())
+			}
+		})
+	}
+}
+
 func TestAdminOwnsOrderCompletionAndCancellation(t *testing.T) {
 	repository := store.New()
 	server := NewServer(repository)
-	waiting, err := repository.CreateOrder("user-001", "svc-adobe", "admin-cancel")
+	waiting, err := repository.CreateOrder("user-001", "svc-adobe", "admin-cancel", []string{domain.MailboxProviderOutlook})
 	if err != nil {
 		t.Fatalf("创建待收码订单失败：%v", err)
 	}
@@ -79,7 +109,7 @@ func TestAdminOwnsOrderCompletionAndCancellation(t *testing.T) {
 		t.Fatalf("管理员取消返回 %d：%s", cancelResponse.Code, cancelResponse.Body.String())
 	}
 
-	received, err := repository.CreateOrder("user-001", "svc-openai", "admin-complete")
+	received, err := repository.CreateOrder("user-001", "svc-openai", "admin-complete", []string{domain.MailboxProviderOutlook})
 	if err != nil {
 		t.Fatalf("创建收码订单失败：%v", err)
 	}
@@ -125,14 +155,14 @@ func TestAdminEndpointRequiresRole(t *testing.T) {
 
 func TestAdminOrdersFiltersOnServerAndIncludesUserEmail(t *testing.T) {
 	repository := store.New()
-	adobe, err := repository.CreateOrder("user-001", "svc-adobe", "admin-filter-adobe")
+	adobe, err := repository.CreateOrder("user-001", "svc-adobe", "admin-filter-adobe", []string{domain.MailboxProviderOutlook})
 	if err != nil {
 		t.Fatalf("创建 Adobe 订单失败：%v", err)
 	}
 	if _, err := repository.CancelOrder(adobe.ID, "user-001"); err != nil {
 		t.Fatalf("取消 Adobe 订单失败：%v", err)
 	}
-	if _, err := repository.CreateOrder("user-001", "svc-openai", "admin-filter-openai"); err != nil {
+	if _, err := repository.CreateOrder("user-001", "svc-openai", "admin-filter-openai", []string{domain.MailboxProviderOutlook}); err != nil {
 		t.Fatalf("创建 OpenAI 订单失败：%v", err)
 	}
 
@@ -167,7 +197,7 @@ func TestAdminOrdersFiltersOnServerAndIncludesUserEmail(t *testing.T) {
 
 func TestUserOrdersFiltersOnServer(t *testing.T) {
 	repository := store.New()
-	adobe, err := repository.CreateOrder("user-001", "svc-adobe", "user-filter-adobe")
+	adobe, err := repository.CreateOrder("user-001", "svc-adobe", "user-filter-adobe", []string{domain.MailboxProviderOutlook})
 	if err != nil {
 		t.Fatalf("创建订单失败：%v", err)
 	}
@@ -350,12 +380,12 @@ func TestUserServicesIncludePriceAndAvailabilityWithoutInternalRules(t *testing.
 		t.Fatalf("用户平台分页不正确：data=%d pagination=%+v", len(body.Data), body.Pagination)
 	}
 	for _, service := range body.Data {
-		for _, field := range []string{"code", "name", "description", "allowed_providers", "price", "ttl_seconds", "available_mailboxes"} {
+		for _, field := range []string{"code", "name", "description", "allowed_providers", "provider_prices", "ttl_seconds", "available_mailboxes", "available_by_provider"} {
 			if _, exists := service[field]; !exists {
 				t.Fatalf("用户平台响应缺少字段 %s：%+v", field, service)
 			}
 		}
-		for _, field := range []string{"id", "enabled", "leased_mailboxes", "consumed_mailboxes", "sender_domains", "subject_keywords", "regex"} {
+		for _, field := range []string{"id", "enabled", "price", "leased_mailboxes", "consumed_mailboxes", "sender_domains", "subject_keywords", "regex"} {
 			if _, exists := service[field]; exists {
 				t.Fatalf("用户平台响应泄露内部字段 %s：%+v", field, service)
 			}
@@ -374,14 +404,15 @@ func TestServiceAvailabilityByCode(t *testing.T) {
 	}
 	var body struct {
 		Data struct {
-			Code               string `json:"code"`
-			AvailableMailboxes int    `json:"available_mailboxes"`
+			Code                string         `json:"code"`
+			AvailableMailboxes  int            `json:"available_mailboxes"`
+			AvailableByProvider map[string]int `json:"available_by_provider"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("解析平台余量响应失败：%v", err)
 	}
-	if body.Data.Code != "adobe" || body.Data.AvailableMailboxes <= 0 {
+	if body.Data.Code != "adobe" || body.Data.AvailableMailboxes <= 0 || body.Data.AvailableByProvider[domain.MailboxProviderOutlook] <= 0 {
 		t.Fatalf("平台余量响应不正确：%+v", body.Data)
 	}
 
@@ -640,31 +671,43 @@ func TestAdminSaveServiceValidatesConfigPrecisely(t *testing.T) {
 	}{
 		{
 			name:        "缺少发件人域名",
-			body:        `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","hotmail"],"price":0.02,"ttl_seconds":1800,"sender_domains":[],"subject_keywords":[],"regex":"\\b(\\d{6})\\b"}`,
+			body:        `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","hotmail"],"provider_prices":{"outlook":0.02,"hotmail":0.03},"ttl_seconds":1800,"sender_domains":[],"subject_keywords":[],"regex":"\\b(\\d{6})\\b"}`,
 			wantStatus:  http.StatusBadRequest,
 			wantMessage: "至少填写一个发件人域名",
 		},
 		{
 			name:        "缺少主题关键词",
-			body:        `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","hotmail"],"price":0.02,"ttl_seconds":1800,"sender_domains":["x.ai"],"subject_keywords":[],"regex":"\\b(\\d{6})\\b"}`,
+			body:        `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","hotmail"],"provider_prices":{"outlook":0.02,"hotmail":0.03},"ttl_seconds":1800,"sender_domains":["x.ai"],"subject_keywords":[],"regex":"\\b(\\d{6})\\b"}`,
 			wantStatus:  http.StatusBadRequest,
 			wantMessage: "至少填写一个主题关键词",
 		},
 		{
 			name:        "不支持的邮箱供应商",
-			body:        `{"code":"grok","name":"Grok 注册","enabled":true,"allowed_providers":["yahoo"],"price":0.02,"ttl_seconds":1800,"sender_domains":["x.ai"],"subject_keywords":["validate your email"],"regex":"\\b(\\d{6})\\b"}`,
+			body:        `{"code":"grok","name":"Grok 注册","enabled":true,"allowed_providers":["yahoo"],"provider_prices":{"yahoo":0.02},"ttl_seconds":1800,"sender_domains":["x.ai"],"subject_keywords":["validate your email"],"regex":"\\b(\\d{6})\\b"}`,
 			wantStatus:  http.StatusBadRequest,
 			wantMessage: "邮箱类型不受支持",
 		},
 		{
+			name:        "允许类型缺少价格",
+			body:        `{"code":"grok","name":"Grok 注册","enabled":true,"allowed_providers":["outlook","hotmail"],"provider_prices":{"outlook":0.02},"ttl_seconds":1800,"sender_domains":["x.ai"],"subject_keywords":["validate your email"],"regex":"\\b(\\d{6})\\b"}`,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "每个允许的邮箱类型都必须配置非负价格",
+		},
+		{
+			name:        "价格包含未允许类型",
+			body:        `{"code":"grok","name":"Grok 注册","enabled":true,"allowed_providers":["outlook"],"provider_prices":{"outlook":0.02,"hotmail":0.03},"ttl_seconds":1800,"sender_domains":["x.ai"],"subject_keywords":["validate your email"],"regex":"\\b(\\d{6})\\b"}`,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "provider_prices 只能包含已允许的邮箱类型",
+		},
+		{
 			name:        "收码时限不是三十分钟",
-			body:        `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","hotmail"],"price":0.02,"ttl_seconds":600,"sender_domains":["x.ai"],"subject_keywords":["verify"],"regex":"\\b(\\d{6})\\b"}`,
+			body:        `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","hotmail"],"provider_prices":{"outlook":0.02,"hotmail":0.03},"ttl_seconds":600,"sender_domains":["x.ai"],"subject_keywords":["verify"],"regex":"\\b(\\d{6})\\b"}`,
 			wantStatus:  http.StatusBadRequest,
 			wantMessage: "任务有效期固定为 1800 秒",
 		},
 		{
 			name:       "有效配置",
-			body:       `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","outlook_de","hotmail","gmail","icloud","mailcom"],"price":0.02,"ttl_seconds":1800,"sender_domains":["x.ai"],"subject_keywords":["validate your email"],"regex":"(?i)\\b([A-Z0-9]{3}-[A-Z0-9]{3}|[A-Z0-9]{6})\\b"}`,
+			body:       `{"code":"Grok","name":"grok 注册","enabled":true,"allowed_providers":["outlook","outlook_de","hotmail","gmail","icloud","mailcom"],"provider_prices":{"outlook":0.02,"outlook_de":0.03,"hotmail":0.04,"gmail":0.05,"icloud":0.06,"mailcom":0.07},"ttl_seconds":1800,"sender_domains":["x.ai"],"subject_keywords":["validate your email"],"regex":"(?i)\\b([A-Z0-9]{3}-[A-Z0-9]{3}|[A-Z0-9]{6})\\b"}`,
 			wantStatus: http.StatusOK,
 		},
 	}
@@ -686,8 +729,13 @@ func TestAdminSaveServiceValidatesConfigPrecisely(t *testing.T) {
 			if tt.wantMessage != "" && !strings.Contains(response.Body.String(), tt.wantMessage) {
 				t.Fatalf("错误提示不准确：%s", response.Body.String())
 			}
-			if tt.wantStatus == http.StatusOK && repository.savedService.Code != "grok" {
-				t.Fatalf("平台代码没有标准化：%q", repository.savedService.Code)
+			if tt.wantStatus == http.StatusOK {
+				if repository.savedService.Code != "grok" {
+					t.Fatalf("平台代码没有标准化：%q", repository.savedService.Code)
+				}
+				if repository.savedService.ProviderPrices[domain.MailboxProviderICloud] != 0.06 {
+					t.Fatalf("邮箱类型价格没有保存：%+v", repository.savedService.ProviderPrices)
+				}
 			}
 		})
 	}

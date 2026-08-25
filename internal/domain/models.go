@@ -63,17 +63,17 @@ type User struct {
 }
 
 type Service struct {
-	ID               string   `json:"id"`
-	Code             string   `json:"code"`
-	Name             string   `json:"name"`
-	Description      string   `json:"description"`
-	Enabled          bool     `json:"enabled"`
-	AllowedProviders []string `json:"allowed_providers"`
-	Price            float64  `json:"price"`
-	TTLSeconds       int      `json:"ttl_seconds"`
-	SenderDomains    []string `json:"sender_domains"`
-	SubjectKeywords  []string `json:"subject_keywords"`
-	Regex            string   `json:"regex"`
+	ID               string             `json:"id"`
+	Code             string             `json:"code"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description"`
+	Enabled          bool               `json:"enabled"`
+	AllowedProviders []string           `json:"allowed_providers"`
+	ProviderPrices   map[string]float64 `json:"provider_prices"`
+	TTLSeconds       int                `json:"ttl_seconds"`
+	SenderDomains    []string           `json:"sender_domains"`
+	SubjectKeywords  []string           `json:"subject_keywords"`
+	Regex            string             `json:"regex"`
 }
 
 type MailboxService struct {
@@ -103,25 +103,27 @@ type Mailbox struct {
 }
 
 type Order struct {
-	ID             string      `json:"id"`
-	UserID         string      `json:"user_id"`
-	ServiceID      string      `json:"service_id"`
-	ServiceCode    string      `json:"service_code"`
-	ServiceName    string      `json:"service_name"`
-	MailboxID      string      `json:"mailbox_id"`
-	MailboxAddress string      `json:"mailbox_address"`
-	Status         OrderStatus `json:"status"`
-	Code           string      `json:"code,omitempty"`
-	Price          float64     `json:"price"`
-	CreatedAt      time.Time   `json:"created_at"`
-	AssignedAt     time.Time   `json:"assigned_at,omitempty"`
-	SubmittedAt    time.Time   `json:"submitted_at,omitempty"`
-	CodeReceivedAt time.Time   `json:"code_received_at,omitempty"`
-	CompletedAt    time.Time   `json:"completed_at,omitempty"`
-	ExpiresAt      time.Time   `json:"expires_at"`
-	Refunded       bool        `json:"refunded"`
-	RequestID      string      `json:"request_id,omitempty"`
-	FailureReason  string      `json:"failure_reason,omitempty"`
+	ID                 string      `json:"id"`
+	UserID             string      `json:"user_id"`
+	ServiceID          string      `json:"service_id"`
+	ServiceCode        string      `json:"service_code"`
+	ServiceName        string      `json:"service_name"`
+	MailboxID          string      `json:"mailbox_id"`
+	MailboxAddress     string      `json:"mailbox_address"`
+	MailboxProvider    string      `json:"mailbox_provider"`
+	RequestedProviders []string    `json:"requested_providers"`
+	Status             OrderStatus `json:"status"`
+	Code               string      `json:"code,omitempty"`
+	Price              float64     `json:"price"`
+	CreatedAt          time.Time   `json:"created_at"`
+	AssignedAt         time.Time   `json:"assigned_at,omitempty"`
+	SubmittedAt        time.Time   `json:"submitted_at,omitempty"`
+	CodeReceivedAt     time.Time   `json:"code_received_at,omitempty"`
+	CompletedAt        time.Time   `json:"completed_at,omitempty"`
+	ExpiresAt          time.Time   `json:"expires_at"`
+	Refunded           bool        `json:"refunded"`
+	RequestID          string      `json:"request_id,omitempty"`
+	FailureReason      string      `json:"failure_reason,omitempty"`
 }
 
 type Overview struct {

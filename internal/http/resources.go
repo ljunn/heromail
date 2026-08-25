@@ -266,6 +266,11 @@ func (s *Server) adminSaveService(c *gin.Context) {
 	request.Description = strings.TrimSpace(request.Description)
 	request.Regex = strings.TrimSpace(request.Regex)
 	request.AllowedProviders = normalizeServiceList(request.AllowedProviders)
+	providerPrices := make(map[string]float64, len(request.ProviderPrices))
+	for provider, price := range request.ProviderPrices {
+		providerPrices[strings.ToLower(strings.TrimSpace(provider))] = price
+	}
+	request.ProviderPrices = providerPrices
 	request.SenderDomains = normalizeServiceList(request.SenderDomains)
 	request.SubjectKeywords = normalizeServiceList(request.SubjectKeywords)
 	if request.Code == "" || request.Name == "" || request.Regex == "" {
@@ -274,10 +279,6 @@ func (s *Server) adminSaveService(c *gin.Context) {
 	}
 	if _, err := regexp.Compile(request.Regex); err != nil {
 		writeError(c, http.StatusBadRequest, "invalid_code_regex", "验证码正则表达式无效")
-		return
-	}
-	if request.Price < 0 {
-		writeError(c, http.StatusBadRequest, "invalid_service_config", "单价不能小于 0")
 		return
 	}
 	if request.TTLSeconds != domain.MinimumOrderTTLSeconds {
@@ -293,6 +294,15 @@ func (s *Server) adminSaveService(c *gin.Context) {
 			writeError(c, http.StatusBadRequest, "invalid_service_config", "邮箱类型不受支持")
 			return
 		}
+		price, priced := request.ProviderPrices[provider]
+		if !priced || price < 0 {
+			writeError(c, http.StatusBadRequest, "invalid_service_config", "每个允许的邮箱类型都必须配置非负价格")
+			return
+		}
+	}
+	if len(request.ProviderPrices) != len(request.AllowedProviders) {
+		writeError(c, http.StatusBadRequest, "invalid_service_config", "provider_prices 只能包含已允许的邮箱类型")
+		return
 	}
 	if len(request.SenderDomains) == 0 {
 		writeError(c, http.StatusBadRequest, "invalid_service_config", "至少填写一个发件人域名")

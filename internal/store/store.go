@@ -21,6 +21,7 @@ var (
 	ErrVerificationCodeRequired = errors.New("verification code is required")
 	ErrInsufficientBalance      = errors.New("insufficient balance")
 	ErrDuplicateRequest         = errors.New("request_id already exists")
+	ErrInvalidMailboxProviders  = errors.New("mailbox_providers 必须是目标平台允许且已定价的邮箱类型")
 	ErrMailboxServiceLeased     = errors.New("邮箱在该目标平台存在进行中的订单")
 	ErrMailboxServiceNotFound   = errors.New("邮箱目标平台状态不存在")
 )
@@ -85,9 +86,7 @@ func (s *Store) ListServices() []domain.Service {
 	defer s.mu.RUnlock()
 	out := make([]domain.Service, 0, len(s.services))
 	for _, service := range s.services {
-		copy := *service
-		copy.AllowedProviders = append([]string(nil), service.AllowedProviders...)
-		out = append(out, copy)
+		out = append(out, cloneService(*service))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -114,9 +113,7 @@ func (s *Store) EnabledService(codeOrID string) (domain.Service, bool) {
 	defer s.mu.RUnlock()
 	for _, service := range s.services {
 		if service.Enabled && (service.ID == codeOrID || service.Code == codeOrID) {
-			copy := *service
-			copy.AllowedProviders = append([]string(nil), service.AllowedProviders...)
-			return copy, true
+			return cloneService(*service), true
 		}
 	}
 	return domain.Service{}, false
@@ -144,32 +141,43 @@ func (s *Store) ServiceUsage(serviceIDs []string) map[string]ServiceUsage {
 }
 
 func (s *Store) ServiceAvailability(serviceIDs []string) map[string]int {
+	byProvider := s.ServiceAvailabilityByProvider(serviceIDs)
+	result := make(map[string]int, len(serviceIDs))
+	for _, serviceID := range serviceIDs {
+		for _, count := range byProvider[serviceID] {
+			result[serviceID] += count
+		}
+	}
+	return result
+}
+
+func (s *Store) ServiceAvailabilityByProvider(serviceIDs []string) map[string]map[string]int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	now := time.Now()
-	result := make(map[string]int, len(serviceIDs))
+	result := make(map[string]map[string]int, len(serviceIDs))
 	for _, serviceID := range serviceIDs {
+		result[serviceID] = map[string]int{}
 		service, exists := s.services[serviceID]
 		if !exists || !service.Enabled {
-			result[serviceID] = 0
 			continue
 		}
 		for _, mailbox := range s.mailboxes {
-			if mailbox.State != domain.MailboxAvailable || mailbox.ActiveOrderID != "" || mailbox.HealthScore < 60 || !mailbox.OAuthValidUntil.After(now) {
+			if mailbox.State != domain.MailboxAvailable || mailbox.ActiveOrderID != "" || mailbox.HealthScore < 60 || !mailboxConnectionValid(mailbox, now) {
 				continue
 			}
 			if !contains(service.AllowedProviders, mailbox.Provider) {
 				continue
 			}
 			if state, ok := mailbox.Services[serviceID]; ok && state.State == domain.ServiceAvailable {
-				result[serviceID]++
+				result[serviceID][mailbox.Provider]++
 			}
 		}
 	}
 	return result
 }
 
-func (s *Store) CreateOrder(userID, serviceID, requestID string) (domain.Order, error) {
+func (s *Store) CreateOrder(userID, serviceID, requestID string, mailboxProviders []string) (domain.Order, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	user, ok := s.users[userID]
@@ -183,6 +191,10 @@ func (s *Store) CreateOrder(userID, serviceID, requestID string) (domain.Order, 
 	if !service.Enabled {
 		return domain.Order{}, ErrServiceDisabled
 	}
+	requestedProviders, maximumPrice, err := validateOrderProviders(*service, mailboxProviders)
+	if err != nil {
+		return domain.Order{}, err
+	}
 	if requestID != "" {
 		for _, existing := range s.orders {
 			if existing.UserID == userID && existing.RequestID == requestID {
@@ -190,17 +202,17 @@ func (s *Store) CreateOrder(userID, serviceID, requestID string) (domain.Order, 
 			}
 		}
 	}
-	if user.Balance < service.Price {
+	if user.Balance < maximumPrice {
 		return domain.Order{}, ErrInsufficientBalance
 	}
 
 	now := time.Now()
 	var selected *domain.Mailbox
 	for _, mailbox := range s.mailboxes {
-		if mailbox.State != domain.MailboxAvailable || mailbox.ActiveOrderID != "" || mailbox.HealthScore < 60 || !mailbox.OAuthValidUntil.After(now) {
+		if mailbox.State != domain.MailboxAvailable || mailbox.ActiveOrderID != "" || mailbox.HealthScore < 60 || !mailboxConnectionValid(mailbox, now) {
 			continue
 		}
-		if !contains(service.AllowedProviders, mailbox.Provider) {
+		if !contains(requestedProviders, mailbox.Provider) {
 			continue
 		}
 		state, exists := mailbox.Services[service.ID]
@@ -214,9 +226,10 @@ func (s *Store) CreateOrder(userID, serviceID, requestID string) (domain.Order, 
 	if selected == nil {
 		return domain.Order{}, ErrNoMailboxAvailable
 	}
+	price := service.ProviderPrices[selected.Provider]
 	s.seq++
-	order := &domain.Order{ID: fmt.Sprintf("ORD%06d", s.seq), UserID: userID, ServiceID: service.ID, ServiceCode: service.Code, ServiceName: service.Name, MailboxID: selected.ID, MailboxAddress: selected.Address, Status: domain.OrderWaitingCode, Price: service.Price, CreatedAt: now, AssignedAt: now, SubmittedAt: now, ExpiresAt: now.Add(time.Duration(effectiveOrderTTLSeconds(service.TTLSeconds)) * time.Second), RequestID: requestID}
-	user.Balance -= service.Price
+	order := &domain.Order{ID: fmt.Sprintf("ORD%06d", s.seq), UserID: userID, ServiceID: service.ID, ServiceCode: service.Code, ServiceName: service.Name, MailboxID: selected.ID, MailboxAddress: selected.Address, MailboxProvider: selected.Provider, RequestedProviders: requestedProviders, Status: domain.OrderWaitingCode, Price: price, CreatedAt: now, AssignedAt: now, SubmittedAt: now, ExpiresAt: now.Add(time.Duration(effectiveOrderTTLSeconds(service.TTLSeconds)) * time.Second), RequestID: requestID}
+	user.Balance -= price
 	selected.State, selected.ActiveOrderID = domain.MailboxLeased, order.ID
 	state := selected.Services[service.ID]
 	state.State, state.ChangedAt = domain.ServiceLeased, now
@@ -232,6 +245,35 @@ func contains(items []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func mailboxConnectionValid(mailbox *domain.Mailbox, now time.Time) bool {
+	return mailbox.ConnectionMethod == domain.MailboxConnectionIMAP || mailbox.OAuthValidUntil.After(now)
+}
+
+func validateOrderProviders(service domain.Service, requested []string) ([]string, float64, error) {
+	providers := make([]string, 0, len(requested))
+	seen := make(map[string]struct{}, len(requested))
+	maximumPrice := 0.0
+	for _, raw := range requested {
+		provider := strings.ToLower(strings.TrimSpace(raw))
+		if _, exists := seen[provider]; exists {
+			continue
+		}
+		price, priced := service.ProviderPrices[provider]
+		if provider == "" || !domain.IsSupportedMailboxProvider(provider) || !contains(service.AllowedProviders, provider) || !priced || price < 0 {
+			return nil, 0, ErrInvalidMailboxProviders
+		}
+		seen[provider] = struct{}{}
+		providers = append(providers, provider)
+		if price > maximumPrice {
+			maximumPrice = price
+		}
+	}
+	if len(providers) == 0 {
+		return nil, 0, ErrInvalidMailboxProviders
+	}
+	return providers, maximumPrice, nil
 }
 
 func (s *Store) GetOrder(id string) (domain.Order, bool) {
@@ -538,7 +580,26 @@ func (s *Store) refundAndReleaseLocked(order *domain.Order, timedOut bool) {
 	}
 }
 
-func cloneOrder(order domain.Order) domain.Order { return order }
+func cloneService(service domain.Service) domain.Service {
+	service.AllowedProviders = append([]string(nil), service.AllowedProviders...)
+	service.ProviderPrices = cloneProviderPrices(service.ProviderPrices)
+	service.SenderDomains = append([]string(nil), service.SenderDomains...)
+	service.SubjectKeywords = append([]string(nil), service.SubjectKeywords...)
+	return service
+}
+
+func cloneProviderPrices(prices map[string]float64) map[string]float64 {
+	result := make(map[string]float64, len(prices))
+	for provider, price := range prices {
+		result[provider] = price
+	}
+	return result
+}
+
+func cloneOrder(order domain.Order) domain.Order {
+	order.RequestedProviders = append([]string(nil), order.RequestedProviders...)
+	return order
+}
 func cloneMailbox(mailbox domain.Mailbox) domain.Mailbox {
 	services := make(map[string]domain.MailboxService, len(mailbox.Services))
 	for k, v := range mailbox.Services {

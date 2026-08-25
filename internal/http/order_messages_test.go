@@ -60,7 +60,7 @@ func (s *orderMessagesGraph) AllMessages(context.Context, string) ([]mail.Messag
 
 func TestUserOrderMessagesAreOwnerScopedAndPlatformIsolated(t *testing.T) {
 	base := store.New()
-	order, err := base.CreateOrder("user-001", "svc-openai", "order-messages")
+	order, err := base.CreateOrder("user-001", "svc-openai", "order-messages", []string{domain.MailboxProviderOutlook})
 	if err != nil {
 		t.Fatalf("创建订单失败：%v", err)
 	}

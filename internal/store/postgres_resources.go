@@ -306,7 +306,7 @@ func (s *PostgresStore) SaveService(actorID string, service domain.Service, ip s
 	if service.ID == "" {
 		service.ID = uuid.NewString()
 	}
-	row := sqlService{ID: service.ID, Code: strings.ToLower(service.Code), Name: service.Name, Description: service.Description, Enabled: service.Enabled, AllowedProviders: service.AllowedProviders, PriceCents: cents(service.Price), TTLSeconds: service.TTLSeconds, SenderDomains: service.SenderDomains, SubjectKeywords: service.SubjectKeywords, Regex: service.Regex}
+	row := sqlService{ID: service.ID, Code: strings.ToLower(service.Code), Name: service.Name, Description: service.Description, Enabled: service.Enabled, AllowedProviders: service.AllowedProviders, PriceCents: minimumProviderPriceCents(service.ProviderPrices), ProviderPricesCents: providerPricesCents(service.ProviderPrices), TTLSeconds: service.TTLSeconds, SenderDomains: service.SenderDomains, SubjectKeywords: service.SubjectKeywords, Regex: service.Regex}
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(&row).Error; err != nil {
 			return err

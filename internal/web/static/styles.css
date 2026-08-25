@@ -75,7 +75,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .card-body { padding: 20px; }
 .work-grid { display: grid; grid-template-columns: minmax(320px, .9fr) minmax(420px, 1.45fr) minmax(240px, .75fr); gap: 16px; align-items: start; }
 .service-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; }
-.service-card { position: relative; min-height: 116px; padding: 16px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: white; text-align: left; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+.service-card { position: relative; min-height: 142px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: white; text-align: left; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
 .service-card:hover, .service-card.selected { border-color: #74a9ff; box-shadow: 0 0 0 2px #e2edff; }
 .service-card.selected { transform: translateY(-1px); }
 .service-logo { display: grid; width: 34px; height: 34px; place-items: center; margin-bottom: 11px; border: 1px solid #d8e7ff; border-radius: 8px; color: #1769e8; background: #edf4ff; }
@@ -85,6 +85,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .service-card:nth-child(4) .service-logo { border-color: #f4dfbd; color: #b56b13; background: #fff8ec; }
 .service-name { display: block; font-size: 14px; font-weight: 700; }
 .service-desc { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+.service-price-range { display: block; margin-top: 10px; color: #1769e8; font-size: 12px; font-weight: 750; }
 .selected-mark { position: absolute; top: 12px; right: 12px; color: var(--blue); font-weight: 800; }
 .config-list { display: grid; gap: 0; margin: 0; }
 .config-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 0; border-bottom: 1px solid #eff2f6; font-size: 13px; }
@@ -177,10 +178,17 @@ textarea.field { resize: vertical; }
 .service-modal-body { overflow-y: auto; overscroll-behavior: contain; }
 .service-modal-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 20px; border-top: 1px solid var(--line); background: #fafbfd; }
 .service-modal-footer .primary-btn { min-width: 190px; }
-.provider-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0; padding: 0; border: 0; }
+.provider-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; padding: 0; border: 0; }
 .provider-options legend { grid-column: 1 / -1; margin-bottom: -3px; padding: 0; color: var(--muted); font-size: 12px; font-weight: 600; }
-.provider-options label { display: flex; min-height: 40px; flex: 1; grid-template-columns: none; align-items: center; gap: 9px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: #fafbfd; }
-.provider-options input { width: 16px; height: 16px; margin: 0; accent-color: var(--blue); }
+.provider-price-option { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) 118px; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: #fafbfd; }
+.provider-price-option.enabled { border-color: #9cc2fb; background: #f5f9ff; }
+.provider-price-option > label { display: flex; min-width: 0; grid-template-columns: none; align-items: center; gap: 8px; color: var(--ink); }
+.provider-price-option input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var(--blue); }
+.provider-price-option .provider-price-field { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px; color: var(--muted); font-size: 11px; }
+.provider-price-field .field { min-width: 0; height: 34px; padding: 6px 8px; text-align: right; }
+.provider-price-list { display: grid; min-width: 130px; gap: 5px; }
+.provider-price-list span { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 11px; }
+.provider-price-list b { color: var(--ink); font-weight: 650; }
 .service-config-section { display: grid; gap: 12px; padding: 0 0 18px; border-bottom: 1px solid var(--line); }
 .service-config-section:last-child { padding-bottom: 0; border-bottom: 0; }
 .service-config-section h3 { margin: 0; color: #20304a; font-size: 13px; }
@@ -412,6 +420,16 @@ body:has(.modal-backdrop), body:has(.detail-layer) { overflow: hidden; }
 .portal-balance { color: var(--green); font-size: 13px; font-weight: 700; }
 .portal-layout { display: grid; grid-template-columns: minmax(300px, .8fr) minmax(440px, 1.4fr); gap: 16px; margin-top: 20px; align-items: start; }
 .portal-order-tool .portal-submit { width: 100%; margin-top: 20px; }
+.order-provider-picker { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin: 0 0 16px; padding: 0 0 17px; border: 0; border-bottom: 1px solid var(--line); }
+.order-provider-picker legend { grid-column: 1 / -1; margin-bottom: 1px; color: var(--ink); font-size: 13px; font-weight: 750; }
+.order-provider-picker legend span { margin-left: 6px; color: var(--muted); font-size: 11px; font-weight: 500; }
+.order-provider-option { display: flex; min-width: 0; min-height: 55px; align-items: center; gap: 9px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: #fff; cursor: pointer; }
+.order-provider-option.selected { border-color: #74a9ff; background: #f2f7ff; box-shadow: 0 0 0 1px #d9e9ff; }
+.order-provider-option.unavailable { color: var(--muted); background: #f6f7f9; cursor: not-allowed; }
+.order-provider-option input { width: 16px; height: 16px; flex: 0 0 auto; margin: 0; accent-color: var(--blue); }
+.order-provider-option span { display: grid; min-width: 0; gap: 3px; }
+.order-provider-option strong { overflow-wrap: anywhere; font-size: 12px; }
+.order-provider-option small { color: var(--muted); font-size: 10px; }
 .portal-policy { margin: 13px 0 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
 .portal-empty-task { display: grid; min-height: 250px; place-items: center; align-content: center; gap: 10px; color: var(--muted); text-align: center; }
 .portal-empty-task .ui-icon { width: 30px; height: 30px; color: #9aa9bc; }
@@ -486,6 +504,8 @@ body:has(.modal-backdrop), body:has(.detail-layer) { overflow: hidden; }
   .service-modal-footer .primary-btn { width: 100%; min-width: 0; }
   .service-modal .form-columns { grid-template-columns: 1fr; }
   .provider-options { grid-template-columns: 1fr; }
+  .provider-price-option { grid-template-columns: minmax(0, 1fr) 112px; }
+  .order-provider-picker { grid-template-columns: 1fr; }
   .mailbox-platform-row { align-items: flex-start; flex-direction: column; }
   .mailbox-platform-row .compact-btn { width: 100%; }
   .card-body { padding: 15px; }

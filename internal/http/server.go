@@ -195,29 +195,36 @@ func (s *Server) services(c *gin.Context) {
 		serviceIDs = append(serviceIDs, service.ID)
 	}
 	availability := s.Store.ServiceAvailability(serviceIDs)
+	availabilityByProvider := s.Store.ServiceAvailabilityByProvider(serviceIDs)
 	items := make([]userServiceView, 0, len(services))
 	for _, service := range services {
-		items = append(items, newUserServiceView(service, availability[service.ID]))
+		items = append(items, newUserServiceView(service, availability[service.ID], availabilityByProvider[service.ID]))
 	}
 	writePage(c, items, page, pageSize, total)
 }
 
 type userServiceView struct {
 	publicServiceView
-	AvailableMailboxes int `json:"available_mailboxes"`
+	AvailableMailboxes  int            `json:"available_mailboxes"`
+	AvailableByProvider map[string]int `json:"available_by_provider"`
 }
 
-func newUserServiceView(service domain.Service, available int) userServiceView {
+func newUserServiceView(service domain.Service, available int, availableByProvider map[string]int) userServiceView {
+	providerAvailability := make(map[string]int, len(service.AllowedProviders))
+	for _, provider := range service.AllowedProviders {
+		providerAvailability[provider] = availableByProvider[provider]
+	}
 	return userServiceView{
 		publicServiceView: publicServiceView{
 			Code:             service.Code,
 			Name:             service.Name,
 			Description:      service.Description,
 			AllowedProviders: append([]string(nil), service.AllowedProviders...),
-			Price:            service.Price,
+			ProviderPrices:   copyProviderPrices(service.ProviderPrices),
 			TTLSeconds:       service.TTLSeconds,
 		},
-		AvailableMailboxes: available,
+		AvailableMailboxes:  available,
+		AvailableByProvider: providerAvailability,
 	}
 }
 
@@ -228,22 +235,41 @@ func (s *Server) serviceAvailability(c *gin.Context) {
 		return
 	}
 	available := s.Store.ServiceAvailability([]string{service.ID})[service.ID]
+	availableByProvider := s.Store.ServiceAvailabilityByProvider([]string{service.ID})[service.ID]
+	providerAvailability := make(map[string]int, len(service.AllowedProviders))
+	for _, provider := range service.AllowedProviders {
+		providerAvailability[provider] = availableByProvider[provider]
+	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"code":                service.Code,
-		"available_mailboxes": available,
+		"code":                  service.Code,
+		"available_mailboxes":   available,
+		"available_by_provider": providerAvailability,
 	}})
 }
 
 type createOrderRequest struct {
-	Service   string `json:"service" binding:"required"`
-	RequestID string `json:"request_id"`
+	Service          string   `json:"service" binding:"required"`
+	MailboxProviders []string `json:"mailbox_providers" binding:"required,min=1"`
+	RequestID        string   `json:"request_id"`
 }
 
 func (s *Server) createOrder(c *gin.Context) {
 	var request createOrderRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid_request", "service is required")
+		writeError(c, http.StatusBadRequest, "invalid_request", "service 和 mailbox_providers 必填")
 		return
+	}
+	request.MailboxProviders = normalizeServiceList(request.MailboxProviders)
+	request.Service = strings.ToLower(strings.TrimSpace(request.Service))
+	if len(request.MailboxProviders) == 0 {
+		writeError(c, http.StatusBadRequest, "invalid_mailbox_providers", "mailbox_providers 至少选择一个邮箱类型")
+		return
+	}
+	for _, provider := range request.MailboxProviders {
+		if !domain.IsSupportedMailboxProvider(provider) {
+			writeError(c, http.StatusBadRequest, "invalid_mailbox_providers", "mailbox_providers 包含不支持的邮箱类型")
+			return
+		}
 	}
 	serviceID := request.Service
 	for _, service := range s.Store.ListServices() {
@@ -252,7 +278,7 @@ func (s *Server) createOrder(c *gin.Context) {
 			break
 		}
 	}
-	order, err := s.Store.CreateOrder(demoUser(c), serviceID, request.RequestID)
+	order, err := s.Store.CreateOrder(demoUser(c), serviceID, request.RequestID, request.MailboxProviders)
 	if err != nil {
 		status, code := mapStoreError(err)
 		writeError(c, status, code, err.Error())
@@ -469,6 +495,8 @@ func mapStoreError(err error) (int, string) {
 		return http.StatusServiceUnavailable, "no_mailbox_available"
 	case errors.Is(err, store.ErrInsufficientBalance):
 		return http.StatusPaymentRequired, "insufficient_balance"
+	case errors.Is(err, store.ErrInvalidMailboxProviders):
+		return http.StatusBadRequest, "invalid_mailbox_providers"
 	case errors.Is(err, store.ErrDuplicateRequest):
 		return http.StatusConflict, "duplicate_request"
 	case errors.Is(err, store.ErrOrderNotFound):

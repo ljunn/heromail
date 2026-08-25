@@ -14,7 +14,8 @@ type Repository interface {
 	EnabledService(codeOrID string) (domain.Service, bool)
 	ServiceUsage(serviceIDs []string) map[string]ServiceUsage
 	ServiceAvailability(serviceIDs []string) map[string]int
-	CreateOrder(userID, serviceID, requestID string) (domain.Order, error)
+	ServiceAvailabilityByProvider(serviceIDs []string) map[string]map[string]int
+	CreateOrder(userID, serviceID, requestID string, mailboxProviders []string) (domain.Order, error)
 	GetOrder(id string) (domain.Order, bool)
 	ListOrders(userID string) []domain.Order
 	ListOrdersPage(userID string, page, pageSize int) ([]domain.Order, int64)

@@ -72,7 +72,56 @@ func (s *PostgresStore) migrate() error {
 	if err := s.db.AutoMigrate(&sqlUser{}, &sqlSession{}, &sqlAPIKey{}, &sqlService{}, &sqlSeedState{}, &sqlMailboxPool{}, &sqlMailbox{}, &sqlMailboxService{}, &sqlOrder{}, &sqlWalletLedger{}, &sqlPaymentProvider{}, &sqlPaymentOrder{}, &sqlMailEvent{}, &sqlWebhookEndpoint{}, &sqlWebhookDelivery{}, &sqlAuditLog{}); err != nil {
 		return fmt.Errorf("执行数据库迁移失败：%w", err)
 	}
-	return nil
+	return s.migrateProviderPricing()
+}
+
+func (s *PostgresStore) migrateProviderPricing() error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var services []sqlService
+		if err := tx.Find(&services).Error; err != nil {
+			return err
+		}
+		updatedServices := int64(0)
+		for index := range services {
+			if len(services[index].ProviderPricesCents) > 0 {
+				continue
+			}
+			prices := make(map[string]int64, len(services[index].AllowedProviders))
+			for _, provider := range services[index].AllowedProviders {
+				prices[provider] = services[index].PriceCents
+			}
+			encodedPrices, err := json.Marshal(prices)
+			if err != nil {
+				return err
+			}
+			if err := tx.Model(&services[index]).Update("provider_prices_cents", gorm.Expr("?::jsonb", string(encodedPrices))).Error; err != nil {
+				return err
+			}
+			updatedServices++
+		}
+		mailboxProvider := tx.Exec(`
+UPDATE registration_orders AS orders
+SET mailbox_provider = mailboxes.provider
+FROM mailboxes
+WHERE orders.mailbox_id = mailboxes.id
+  AND (orders.mailbox_provider IS NULL OR orders.mailbox_provider = '')`)
+		if mailboxProvider.Error != nil {
+			return mailboxProvider.Error
+		}
+		requestedProviders := tx.Exec(`
+UPDATE registration_orders
+SET requested_providers = jsonb_build_array(mailbox_provider)
+WHERE mailbox_provider <> ''
+  AND (requested_providers IS NULL OR requested_providers = 'null'::jsonb OR requested_providers = '[]'::jsonb)`)
+		if requestedProviders.Error != nil {
+			return requestedProviders.Error
+		}
+		if updatedServices == 0 && mailboxProvider.RowsAffected == 0 && requestedProviders.RowsAffected == 0 {
+			return nil
+		}
+		detail := fmt.Sprintf("迁移邮箱类型定价 %d 个平台，补齐订单邮箱类型 %d 条、请求类型 %d 条", updatedServices, mailboxProvider.RowsAffected, requestedProviders.RowsAffected)
+		return tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: "system", Action: "pricing.provider.migrate", ResourceType: "target_service", ResourceID: "all", Detail: detail}).Error
+	})
 }
 
 func (s *PostgresStore) seed(config PostgresConfig) error {
@@ -106,7 +155,7 @@ func (s *PostgresStore) seed(config PostgresConfig) error {
 	for _, service := range defaultServices() {
 		services = append(services, sqlService{
 			ID: service.ID, Code: service.Code, Name: service.Name, Description: service.Description,
-			Enabled: service.Enabled, AllowedProviders: service.AllowedProviders, PriceCents: int64(math.Round(service.Price * 100)),
+			Enabled: service.Enabled, AllowedProviders: service.AllowedProviders, PriceCents: minimumProviderPriceCents(service.ProviderPrices), ProviderPricesCents: providerPricesCents(service.ProviderPrices),
 			TTLSeconds: service.TTLSeconds, SenderDomains: service.SenderDomains, SubjectKeywords: service.SubjectKeywords, Regex: service.Regex,
 		})
 	}
@@ -335,13 +384,25 @@ func (s *PostgresStore) ServiceUsage(serviceIDs []string) map[string]ServiceUsag
 }
 
 func (s *PostgresStore) ServiceAvailability(serviceIDs []string) map[string]int {
-	type availabilityRow struct {
-		ServiceID string
-		Count     int
-	}
+	byProvider := s.ServiceAvailabilityByProvider(serviceIDs)
 	result := make(map[string]int, len(serviceIDs))
 	for _, serviceID := range serviceIDs {
-		result[serviceID] = 0
+		for _, count := range byProvider[serviceID] {
+			result[serviceID] += count
+		}
+	}
+	return result
+}
+
+func (s *PostgresStore) ServiceAvailabilityByProvider(serviceIDs []string) map[string]map[string]int {
+	type availabilityRow struct {
+		ServiceID string
+		Provider  string
+		Count     int
+	}
+	result := make(map[string]map[string]int, len(serviceIDs))
+	for _, serviceID := range serviceIDs {
+		result[serviceID] = map[string]int{}
 	}
 	if len(serviceIDs) == 0 {
 		return result
@@ -349,7 +410,7 @@ func (s *PostgresStore) ServiceAvailability(serviceIDs []string) map[string]int 
 
 	var rows []availabilityRow
 	s.db.Table("mailbox_service_states AS mss").
-		Select("mss.service_id, COUNT(*) AS count").
+		Select("mss.service_id, m.provider, COUNT(*) AS count").
 		Joins("JOIN target_services AS ts ON ts.id = mss.service_id").
 		Joins("JOIN mailboxes AS m ON m.id = mss.mailbox_id").
 		Joins("JOIN mailbox_pools AS mp ON mp.name = m.pool AND mp.enabled = ?", true).
@@ -360,15 +421,15 @@ func (s *PostgresStore) ServiceAvailability(serviceIDs []string) map[string]int 
 		Where("ts.allowed_providers @> jsonb_build_array(m.provider)").
 		Where("m.last_received_at IS NULL OR m.last_received_at <= NOW() - (mp.cooldown_seconds * INTERVAL '1 second')").
 		Where("mp.daily_limit <= 0 OR (SELECT COALESCE(SUM(CASE WHEN inner_m.last_received_at::date = CURRENT_DATE THEN inner_m.today_codes ELSE 0 END), 0) FROM mailboxes AS inner_m WHERE inner_m.pool = mp.name) < mp.daily_limit").
-		Group("mss.service_id").
+		Group("mss.service_id, m.provider").
 		Scan(&rows)
 	for _, row := range rows {
-		result[row.ServiceID] = row.Count
+		result[row.ServiceID][row.Provider] = row.Count
 	}
 	return result
 }
 
-func (s *PostgresStore) CreateOrder(userID, serviceID, requestID string) (domain.Order, error) {
+func (s *PostgresStore) CreateOrder(userID, serviceID, requestID string, mailboxProviders []string) (domain.Order, error) {
 	ctx := context.Background()
 	lockKey := "heromail:allocate:" + serviceID
 	lockValue := uuid.NewString()
@@ -390,6 +451,10 @@ func (s *PostgresStore) CreateOrder(userID, serviceID, requestID string) (domain
 		if !service.Enabled {
 			return ErrServiceDisabled
 		}
+		requestedProviders, maximumPrice, validationErr := validateOrderProviders(mapService(service), mailboxProviders)
+		if validationErr != nil {
+			return validationErr
+		}
 		if requestID != "" {
 			var existing sqlOrder
 			if err := tx.Where("user_id = ? AND request_id = ?", userID, requestID).First(&existing).Error; err == nil {
@@ -401,7 +466,7 @@ func (s *PostgresStore) CreateOrder(userID, serviceID, requestID string) (domain
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, "id = ? AND status = ?", userID, "active").Error; err != nil {
 			return errors.New("user not found")
 		}
-		if user.BalanceCents < service.PriceCents {
+		if user.BalanceCents < cents(maximumPrice) {
 			return ErrInsufficientBalance
 		}
 		var mailbox sqlMailbox
@@ -411,7 +476,7 @@ func (s *PostgresStore) CreateOrder(userID, serviceID, requestID string) (domain
 			Where("m.state = ? AND m.active_order_id = '' AND m.health_score >= ? AND m.verification_status = ?", domain.MailboxAvailable, 60, domain.MailboxVerificationVerified).
 			Where("(m.connection_method = ? OR m.oauth_valid_until > ?)", domain.MailboxConnectionIMAP, time.Now()).
 			Where("mss.state = ?", domain.ServiceAvailable).
-			Where("m.provider IN ?", service.AllowedProviders).
+			Where("m.provider IN ?", requestedProviders).
 			Where("m.last_received_at IS NULL OR m.last_received_at <= NOW() - (mp.cooldown_seconds * INTERVAL '1 second')").
 			Where("mp.daily_limit <= 0 OR (SELECT COALESCE(SUM(CASE WHEN inner_m.last_received_at::date = CURRENT_DATE THEN inner_m.today_codes ELSE 0 END), 0) FROM mailboxes AS inner_m WHERE inner_m.pool = mp.name) < mp.daily_limit").
 			Order("m.health_score DESC, m.id ASC").
@@ -420,10 +485,14 @@ func (s *PostgresStore) CreateOrder(userID, serviceID, requestID string) (domain
 		if query.Error != nil || mailbox.ID == "" {
 			return ErrNoMailboxAvailable
 		}
+		priceCents, priced := effectiveProviderPricesCents(service)[mailbox.Provider]
+		if !priced {
+			return ErrInvalidMailboxProviders
+		}
 		now := time.Now().UTC()
 		orderID := "ORD" + strings.ToUpper(strings.ReplaceAll(uuid.NewString(), "-", "")[:16])
-		order := sqlOrder{ID: orderID, UserID: user.ID, ServiceID: service.ID, ServiceCode: service.Code, ServiceName: service.Name, MailboxID: mailbox.ID, MailboxAddress: mailbox.Address, Status: string(domain.OrderWaitingCode), PriceCents: service.PriceCents, CreatedAt: now, AssignedAt: &now, SubmittedAt: &now, ExpiresAt: now.Add(time.Duration(effectiveOrderTTLSeconds(service.TTLSeconds)) * time.Second), RequestID: requestID}
-		user.BalanceCents -= service.PriceCents
+		order := sqlOrder{ID: orderID, UserID: user.ID, ServiceID: service.ID, ServiceCode: service.Code, ServiceName: service.Name, MailboxID: mailbox.ID, MailboxAddress: mailbox.Address, MailboxProvider: mailbox.Provider, RequestedProviders: requestedProviders, Status: string(domain.OrderWaitingCode), PriceCents: priceCents, CreatedAt: now, AssignedAt: &now, SubmittedAt: &now, ExpiresAt: now.Add(time.Duration(effectiveOrderTTLSeconds(service.TTLSeconds)) * time.Second), RequestID: requestID}
+		user.BalanceCents -= priceCents
 		if err := tx.Model(&user).Update("balance_cents", user.BalanceCents).Error; err != nil {
 			return err
 		}
@@ -436,7 +505,7 @@ func (s *PostgresStore) CreateOrder(userID, serviceID, requestID string) (domain
 		if err := tx.Model(&sqlMailboxService{}).Where("mailbox_id = ? AND service_id = ?", mailbox.ID, service.ID).Updates(map[string]any{"state": domain.ServiceLeased, "changed_at": now}).Error; err != nil {
 			return err
 		}
-		ledger := sqlWalletLedger{ID: uuid.NewString(), UserID: user.ID, OrderID: order.ID, Type: "order_charge", AmountCents: -service.PriceCents, BalanceAfterCents: user.BalanceCents, Description: "注册订单扣费"}
+		ledger := sqlWalletLedger{ID: uuid.NewString(), UserID: user.ID, OrderID: order.ID, Type: "order_charge", AmountCents: -priceCents, BalanceAfterCents: user.BalanceCents, Description: "注册订单扣费"}
 		if err := tx.Create(&ledger).Error; err != nil {
 			return err
 		}
@@ -847,7 +916,12 @@ func mapUser(row sqlUser) domain.User {
 }
 
 func mapService(row sqlService) domain.Service {
-	return domain.Service{ID: row.ID, Code: row.Code, Name: row.Name, Description: row.Description, Enabled: row.Enabled, AllowedProviders: append([]string(nil), row.AllowedProviders...), Price: float64(row.PriceCents) / 100, TTLSeconds: effectiveOrderTTLSeconds(row.TTLSeconds), SenderDomains: append([]string(nil), row.SenderDomains...), SubjectKeywords: append([]string(nil), row.SubjectKeywords...), Regex: row.Regex}
+	prices := effectiveProviderPricesCents(row)
+	providerPrices := make(map[string]float64, len(prices))
+	for provider, price := range prices {
+		providerPrices[provider] = float64(price) / 100
+	}
+	return domain.Service{ID: row.ID, Code: row.Code, Name: row.Name, Description: row.Description, Enabled: row.Enabled, AllowedProviders: append([]string(nil), row.AllowedProviders...), ProviderPrices: providerPrices, TTLSeconds: effectiveOrderTTLSeconds(row.TTLSeconds), SenderDomains: append([]string(nil), row.SenderDomains...), SubjectKeywords: append([]string(nil), row.SubjectKeywords...), Regex: row.Regex}
 }
 
 func mapMailbox(row sqlMailbox, states map[string]domain.MailboxService) domain.Mailbox {
@@ -862,7 +936,7 @@ func mapMailbox(row sqlMailbox, states map[string]domain.MailboxService) domain.
 }
 
 func mapOrder(row sqlOrder) domain.Order {
-	order := domain.Order{ID: row.ID, UserID: row.UserID, ServiceID: row.ServiceID, ServiceCode: row.ServiceCode, ServiceName: row.ServiceName, MailboxID: row.MailboxID, MailboxAddress: row.MailboxAddress, Status: domain.OrderStatus(row.Status), Code: row.Code, Price: float64(row.PriceCents) / 100, CreatedAt: row.CreatedAt, ExpiresAt: row.ExpiresAt, Refunded: row.Refunded, RequestID: row.RequestID, FailureReason: row.FailureReason}
+	order := domain.Order{ID: row.ID, UserID: row.UserID, ServiceID: row.ServiceID, ServiceCode: row.ServiceCode, ServiceName: row.ServiceName, MailboxID: row.MailboxID, MailboxAddress: row.MailboxAddress, MailboxProvider: row.MailboxProvider, RequestedProviders: append([]string(nil), row.RequestedProviders...), Status: domain.OrderStatus(row.Status), Code: row.Code, Price: float64(row.PriceCents) / 100, CreatedAt: row.CreatedAt, ExpiresAt: row.ExpiresAt, Refunded: row.Refunded, RequestID: row.RequestID, FailureReason: row.FailureReason}
 	if row.AssignedAt != nil {
 		order.AssignedAt = *row.AssignedAt
 	}
@@ -879,3 +953,34 @@ func mapOrder(row sqlOrder) domain.Order {
 }
 
 func cents(value float64) int64 { return int64(math.Round(value * 100)) }
+
+func providerPricesCents(prices map[string]float64) map[string]int64 {
+	result := make(map[string]int64, len(prices))
+	for provider, price := range prices {
+		result[provider] = cents(price)
+	}
+	return result
+}
+
+func effectiveProviderPricesCents(service sqlService) map[string]int64 {
+	if len(service.ProviderPricesCents) > 0 {
+		return service.ProviderPricesCents
+	}
+	result := make(map[string]int64, len(service.AllowedProviders))
+	for _, provider := range service.AllowedProviders {
+		result[provider] = service.PriceCents
+	}
+	return result
+}
+
+func minimumProviderPriceCents(prices map[string]float64) int64 {
+	minimum := int64(0)
+	first := true
+	for _, price := range prices {
+		value := cents(price)
+		if first || value < minimum {
+			minimum, first = value, false
+		}
+	}
+	return minimum
+}

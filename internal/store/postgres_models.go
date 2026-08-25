@@ -44,19 +44,20 @@ type sqlAPIKey struct {
 func (sqlAPIKey) TableName() string { return "api_keys" }
 
 type sqlService struct {
-	ID               string   `gorm:"primaryKey;size:64"`
-	Code             string   `gorm:"uniqueIndex;size:80;not null"`
-	Name             string   `gorm:"size:120;not null"`
-	Description      string   `gorm:"size:500"`
-	Enabled          bool     `gorm:"not null;index"`
-	AllowedProviders []string `gorm:"serializer:json;type:jsonb"`
-	PriceCents       int64    `gorm:"not null"`
-	TTLSeconds       int      `gorm:"not null"`
-	SenderDomains    []string `gorm:"serializer:json;type:jsonb"`
-	SubjectKeywords  []string `gorm:"serializer:json;type:jsonb"`
-	Regex            string   `gorm:"size:500"`
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID                  string           `gorm:"primaryKey;size:64"`
+	Code                string           `gorm:"uniqueIndex;size:80;not null"`
+	Name                string           `gorm:"size:120;not null"`
+	Description         string           `gorm:"size:500"`
+	Enabled             bool             `gorm:"not null;index"`
+	AllowedProviders    []string         `gorm:"serializer:json;type:jsonb"`
+	PriceCents          int64            `gorm:"not null"`
+	ProviderPricesCents map[string]int64 `gorm:"serializer:json;type:jsonb"`
+	TTLSeconds          int              `gorm:"not null"`
+	SenderDomains       []string         `gorm:"serializer:json;type:jsonb"`
+	SubjectKeywords     []string         `gorm:"serializer:json;type:jsonb"`
+	Regex               string           `gorm:"size:500"`
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 func (sqlService) TableName() string { return "target_services" }
@@ -102,26 +103,28 @@ type sqlMailboxService struct {
 func (sqlMailboxService) TableName() string { return "mailbox_service_states" }
 
 type sqlOrder struct {
-	ID             string `gorm:"primaryKey;size:64"`
-	UserID         string `gorm:"size:64;not null;index;uniqueIndex:idx_user_request"`
-	ServiceID      string `gorm:"size:64;not null;index"`
-	ServiceCode    string `gorm:"size:80;not null"`
-	ServiceName    string `gorm:"size:120;not null"`
-	MailboxID      string `gorm:"size:64;not null;index"`
-	MailboxAddress string `gorm:"size:320;not null"`
-	Status         string `gorm:"size:40;not null;index"`
-	Code           string `gorm:"size:32"`
-	PriceCents     int64  `gorm:"not null"`
-	CreatedAt      time.Time
-	AssignedAt     *time.Time
-	SubmittedAt    *time.Time
-	CodeReceivedAt *time.Time
-	CompletedAt    *time.Time
-	ExpiresAt      time.Time `gorm:"not null;index"`
-	Refunded       bool      `gorm:"not null;default:false"`
-	RequestID      string    `gorm:"size:160;index:idx_user_request"`
-	FailureReason  string    `gorm:"size:500"`
-	UpdatedAt      time.Time
+	ID                 string   `gorm:"primaryKey;size:64"`
+	UserID             string   `gorm:"size:64;not null;index;uniqueIndex:idx_user_request"`
+	ServiceID          string   `gorm:"size:64;not null;index"`
+	ServiceCode        string   `gorm:"size:80;not null"`
+	ServiceName        string   `gorm:"size:120;not null"`
+	MailboxID          string   `gorm:"size:64;not null;index"`
+	MailboxAddress     string   `gorm:"size:320;not null"`
+	MailboxProvider    string   `gorm:"size:40;index"`
+	RequestedProviders []string `gorm:"serializer:json;type:jsonb"`
+	Status             string   `gorm:"size:40;not null;index"`
+	Code               string   `gorm:"size:32"`
+	PriceCents         int64    `gorm:"not null"`
+	CreatedAt          time.Time
+	AssignedAt         *time.Time
+	SubmittedAt        *time.Time
+	CodeReceivedAt     *time.Time
+	CompletedAt        *time.Time
+	ExpiresAt          time.Time `gorm:"not null;index"`
+	Refunded           bool      `gorm:"not null;default:false"`
+	RequestID          string    `gorm:"size:160;index:idx_user_request"`
+	FailureReason      string    `gorm:"size:500"`
+	UpdatedAt          time.Time
 }
 
 func (sqlOrder) TableName() string { return "registration_orders" }
