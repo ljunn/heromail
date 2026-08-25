@@ -1,6 +1,7 @@
 const state = {
   token: localStorage.getItem("heromail_token") || "",
   user: null,
+  userLoadedAt: 0,
   role: "user",
   view: "apply",
   services: [],
@@ -15,6 +16,7 @@ const state = {
   apiKeys: [],
   ledgers: [],
   paymentMethods: [],
+  paymentMethodsLoadedAt: 0,
   paymentOrders: [],
   webhookEndpoints: [],
   webhookDeliveries: [],
@@ -640,15 +642,29 @@ function setPageUpdating(updating) {
 
 function rememberPage(key, body) { if (body.pagination) state.pagination[key] = body.pagination; return body.data || []; }
 function requestedPage(key) { return state.pagination[key]?.page || 1; }
-async function loadUser() {
+async function loadUser(forceUser = false) {
   const filteringOrders = state.view === "orders";
+  const needsServices = ["apply", "orders"].includes(state.view);
+  const needsOrders = ["apply", "current", "orders"].includes(state.view);
   const page = filteringOrders ? state.pagination.orders?.page || 1 : 1;
   const params = new URLSearchParams({ page: String(page), page_size: "20" });
   if (filteringOrders && state.userOrderFilters.status) params.set("status", state.userOrderFilters.status);
   if (filteringOrders && state.userOrderFilters.service) params.set("service", state.userOrderFilters.service);
   if (filteringOrders && state.userOrderFilters.query) params.set("query", state.userOrderFilters.query);
-  const [me, services, orders] = await Promise.all([api("/api/v1/me"), api("/api/v1/services?page=1&page_size=100"), api(`/api/v1/orders?${params}`)]);
-  state.user = me; state.services = services.data || []; state.orders = rememberPage("orders", orders); if (!state.services.some(service => service.code === state.selectedService) && state.services[0]) { state.selectedService = state.services[0].code; state.selectedProviders = []; }
+  const needsUser = forceUser || !state.user || Date.now() - state.userLoadedAt > 5000;
+  const requests = needsUser ? [api("/api/v1/me")] : [];
+  if (needsServices) requests.push(api("/api/v1/services?page=1&page_size=100"));
+  if (needsOrders) requests.push(api(`/api/v1/orders?${params}`));
+  const responses = await Promise.all(requests);
+  let responseIndex = 0;
+  if (needsUser) { state.user = responses[responseIndex++]; state.userLoadedAt = Date.now(); }
+  const services = needsServices ? responses[responseIndex++] : null;
+  const orders = needsOrders ? responses[responseIndex] : null;
+  if (needsServices) {
+    state.services = services.data || [];
+    if (!state.services.some(service => service.code === state.selectedService) && state.services[0]) { state.selectedService = state.services[0].code; state.selectedProviders = []; }
+  }
+  if (needsOrders) state.orders = rememberPage("orders", orders);
   const service = selectedService(); const selectableProviders = new Set(providerPriceEntries(service).map(([provider]) => provider));
   state.selectedProviders = state.selectedProviders.filter(provider => selectableProviders.has(provider) && Number(service.available_by_provider?.[provider] || 0) > 0);
   if (!state.currentOrder || !["assigned", "waiting_code", "code_received"].includes(state.currentOrder.status)) state.currentOrder = state.orders.find(order => ["assigned", "waiting_code", "code_received"].includes(order.status)) || null;
@@ -658,7 +674,12 @@ async function loadUser() {
 async function loadUserModule(view) {
   if (view === "keys") state.apiKeys = rememberPage("keys", await api(`/api/v1/api-keys?page=${requestedPage("keys")}&page_size=20`));
   if (view === "usage") state.ledgers = rememberPage("ledgers", await api(`/api/v1/wallet/ledgers?page=${requestedPage("ledgers")}&page_size=20`));
-  if (view === "balance") { state.paymentMethods = (await api("/api/v1/payment/methods")).data || []; state.paymentOrders = rememberPage("payments", await api(`/api/v1/payment/orders?page=${requestedPage("payments")}&page_size=20`)); }
+  if (view === "balance") {
+    const methodRequest = Date.now() - state.paymentMethodsLoadedAt > 30000 ? api("/api/v1/payment/methods") : Promise.resolve({ data: state.paymentMethods });
+    const [methods, paymentOrders] = await Promise.all([methodRequest, api(`/api/v1/payment/orders?page=${requestedPage("payments")}&page_size=20`)]);
+    if (methods) { state.paymentMethods = methods.data || []; state.paymentMethodsLoadedAt = Date.now(); }
+    state.paymentOrders = rememberPage("payments", paymentOrders);
+  }
   if (view === "webhooks") { state.webhookEndpoints = rememberPage("webhooks", await api(`/api/v1/webhooks?page=${requestedPage("webhooks")}&page_size=20`)); state.webhookDeliveries = rememberPage("webhook-deliveries", await api(`/api/v1/webhook-deliveries?page=${requestedPage("webhook-deliveries")}&page_size=20`)); }
 }
 async function loadAdmin() {
@@ -748,7 +769,7 @@ async function createOrder() {
   try {
     const result = await api("/api/v1/orders", { method: "POST", body: JSON.stringify({ service: service.code, mailbox_providers: selected.map(([provider]) => provider), request_id: `web-${Date.now()}` }) });
     state.currentOrder = result.data;
-    await loadUser();
+    await loadUser(true);
     toast("邮箱已分配，后台已开始收码");
   } catch (error) {
     state.orderError = /insufficient balance|余额|balance/i.test(error.message) ? "余额不足，请先充值。" : error.message;
@@ -1105,6 +1126,7 @@ async function boot() {
   if (!state.token) { redirectToLogin(); return; }
   try {
     state.user = await api("/api/v1/me");
+    state.userLoadedAt = Date.now();
     const wantsAdmin = location.pathname === "/admin" || location.pathname.startsWith("/admin/");
     if (wantsAdmin && state.user.role !== "admin") { location.replace("/app"); return; }
     state.role = wantsAdmin && state.user.role === "admin" ? "admin" : "user";
