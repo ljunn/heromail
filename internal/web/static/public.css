@@ -268,3 +268,43 @@ button { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* 公开页面的交互细节与工作台保持同一套反馈规则。 */
+button, a, input, select, textarea {
+  transition: color .16s ease, background-color .16s ease, border-color .16s ease,
+    box-shadow .16s ease, transform .16s ease, opacity .16s ease;
+}
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgba(23,105,232,.16);
+}
+.public-header {
+  background: rgba(255,255,255,.94);
+  box-shadow: 0 1px 0 rgba(29,56,84,.04), 0 6px 18px rgba(35,69,101,.035);
+  backdrop-filter: blur(12px);
+}
+.public-nav a { border-radius: 5px; }
+.public-nav a:hover { color: var(--blue); background: #f3f7fb; }
+.solid-action:hover, .auth-form button:hover {
+  background: #0c58c9;
+  box-shadow: 0 8px 18px rgba(23,105,232,.18);
+  transform: translateY(-1px);
+}
+.solid-action:active, .auth-form button:active { transform: translateY(0); box-shadow: none; }
+.outline-action:hover, .text-action:hover { border-color: #b9cbea; color: #24589d; background: #f6f9fd; }
+.price-item, .docs-nav, .auth-panel { box-shadow: 0 8px 24px rgba(35,69,101,.045); }
+.price-item { transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease; }
+.price-item:hover { border-color: #b5cbe0; box-shadow: 0 12px 28px rgba(35,69,101,.1); transform: translateY(-2px); }
+.docs-nav a:hover { color: var(--blue); background: #f2f7fc; }
+.public-toast { box-shadow: 0 14px 30px rgba(21,36,58,.2); }
+
+@media (max-width: 760px) {
+  .public-header { box-shadow: 0 1px 0 rgba(29,56,84,.05), 0 5px 16px rgba(35,69,101,.06); }
+  .public-nav { box-shadow: 0 14px 32px rgba(35,69,101,.14); }
+  .public-toast { right: 14px; bottom: calc(14px + env(safe-area-inset-bottom)); left: 14px; max-width: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
