@@ -85,7 +85,7 @@ const mobileUserNav = [["apply", "申请", "inbox"], ["current", "任务", "cloc
 
 const adminNav = [
   ["运行", [["admin-overview", "运行概览", "dashboard"]]],
-  ["资源管理", [["admin-mailboxes", "邮箱池", "database"]]],
+  ["资源管理", [["admin-mailboxes", "邮箱池", "database"], ["admin-channels", "接入渠道", "plug"]]],
   ["业务配置", [["admin-services", "目标平台", "globe"]]],
   ["业务运营", [["admin-orders", "注册订单", "receipt"], ["admin-users", "用户与余额", "users"], ["admin-payments", "支付管理", "creditCard"]]],
   ["系统运维", [["admin-operations", "运维中心", "activity"], ["admin-settings", "版本升级", "settings"]]]
