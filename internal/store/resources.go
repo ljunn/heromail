@@ -14,8 +14,9 @@ type MailboxCredential struct {
 }
 
 type OAuthState struct {
-	ActorID string `json:"actor_id"`
-	Pool    string `json:"pool"`
+	ActorID  string `json:"actor_id"`
+	Pool     string `json:"pool"`
+	Provider string `json:"provider,omitempty"`
 }
 
 type ResourceRepository interface {

@@ -13,6 +13,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/ljunn/heromail/internal/buildinfo"
 	"github.com/ljunn/heromail/internal/domain"
+	"github.com/ljunn/heromail/internal/mail"
 	"github.com/ljunn/heromail/internal/store"
 )
 
@@ -585,19 +587,39 @@ type resourceRepositoryStub struct {
 type mailboxImportRepositoryStub struct {
 	store.Repository
 	store.ResourceRepository
-	saved      []domain.Mailbox
-	queued     []string
-	enqueueErr error
+	saved       []domain.Mailbox
+	credentials []map[string]string
+	queued      []string
+	enqueueErr  error
+	oauthState  map[string]store.OAuthState
 }
 
 func (s *mailboxImportRepositoryStub) MailboxPoolByName(name string) (domain.MailboxPool, bool) {
 	return domain.MailboxPool{Name: name, Provider: "mixed", Enabled: name == domain.DefaultMailboxPoolName}, name == domain.DefaultMailboxPoolName
 }
 
-func (s *mailboxImportRepositoryStub) SaveMailbox(_ string, mailbox domain.Mailbox, _ map[string]string, _ string) (domain.Mailbox, error) {
+func (s *mailboxImportRepositoryStub) SaveMailbox(_ string, mailbox domain.Mailbox, credential map[string]string, _ string) (domain.Mailbox, error) {
 	mailbox.ID = "mailbox-" + mailbox.Address
 	s.saved = append(s.saved, mailbox)
+	s.credentials = append(s.credentials, credential)
 	return mailbox, nil
+}
+
+func (s *mailboxImportRepositoryStub) CreateOAuthState(state string, value store.OAuthState, _ time.Duration) error {
+	if s.oauthState == nil {
+		s.oauthState = make(map[string]store.OAuthState)
+	}
+	s.oauthState[state] = value
+	return nil
+}
+
+func (s *mailboxImportRepositoryStub) ConsumeOAuthState(state string) (store.OAuthState, error) {
+	value, ok := s.oauthState[state]
+	if !ok {
+		return store.OAuthState{}, errors.New("oauth state not found")
+	}
+	delete(s.oauthState, state)
+	return value, nil
 }
 
 func (s *mailboxImportRepositoryStub) EnqueueMailboxVerification(_ context.Context, mailboxID string) error {
@@ -629,6 +651,76 @@ func TestAdminImportKeepsSavedMailboxWhenQueueIsTemporarilyUnavailable(t *testin
 
 func (s *mailboxImportRepositoryStub) DequeueMailboxVerification(context.Context, time.Duration) (string, error) {
 	return "", nil
+}
+
+func TestGoogleOAuthSavesGmailMailboxAndQueuesVerification(t *testing.T) {
+	googleServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			if err := r.ParseForm(); err != nil || r.Form.Get("grant_type") != "authorization_code" {
+				http.Error(w, "invalid token request", http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "google-access", "refresh_token": "google-refresh", "expires_in": 3600})
+		case "/userinfo":
+			if r.Header.Get("Authorization") != "Bearer google-access" {
+				http.Error(w, "missing token", http.StatusUnauthorized)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"email": "oauth-test@gmail.com", "email_verified": true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer googleServer.Close()
+
+	repository := &mailboxImportRepositoryStub{Repository: store.New(), oauthState: make(map[string]store.OAuthState)}
+	server := NewServer(repository)
+	server.PublicURL = "https://heromail.cc"
+	server.Google = mail.NewGoogleClient(mail.GoogleConfig{
+		ClientID:         "client-id",
+		ClientSecret:     "client-secret",
+		RedirectURI:      "https://heromail.cc/api/v1/oauth/google/callback",
+		AuthorizationURL: googleServer.URL + "/authorize",
+		TokenURL:         googleServer.URL + "/token",
+		UserInfoURL:      googleServer.URL + "/userinfo",
+	})
+
+	startRequest := httptest.NewRequest(http.MethodPost, "/api/v1/admin/mailboxes/oauth/google", strings.NewReader(`{}`))
+	startRequest.Header.Set("Content-Type", "application/json")
+	startRequest.Header.Set("X-HeroMail-Role", "admin")
+	startRequest.Header.Set("X-HeroMail-User", "admin-001")
+	startResponse := httptest.NewRecorder()
+	server.Router.ServeHTTP(startResponse, startRequest)
+	if startResponse.Code != http.StatusOK {
+		t.Fatalf("Google OAuth 启动返回 %d：%s", startResponse.Code, startResponse.Body.String())
+	}
+	var startPayload struct {
+		Data struct {
+			AuthorizationURL string `json:"authorization_url"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(startResponse.Body.Bytes(), &startPayload); err != nil {
+		t.Fatalf("解析 Google OAuth 启动响应失败：%v", err)
+	}
+	authURL, err := url.Parse(startPayload.Data.AuthorizationURL)
+	if err != nil || authURL.Query().Get("state") == "" || len(repository.oauthState) != 1 {
+		t.Fatalf("Google OAuth 授权地址或状态错误：url=%q states=%d err=%v", startPayload.Data.AuthorizationURL, len(repository.oauthState), err)
+	}
+	state := authURL.Query().Get("state")
+	if repository.oauthState[state].Provider != "google" {
+		t.Fatalf("OAuth 状态提供商错误：%+v", repository.oauthState[state])
+	}
+
+	callbackRequest := httptest.NewRequest(http.MethodGet, "/api/v1/oauth/google/callback?state="+url.QueryEscape(state)+"&code=test-code", nil)
+	callbackResponse := httptest.NewRecorder()
+	server.Router.ServeHTTP(callbackResponse, callbackRequest)
+	if callbackResponse.Code != http.StatusFound || len(repository.saved) != 1 || len(repository.queued) != 1 {
+		t.Fatalf("Google OAuth 回调未保存并排队：status=%d saved=%d queued=%d body=%s", callbackResponse.Code, len(repository.saved), len(repository.queued), callbackResponse.Body.String())
+	}
+	if repository.saved[0].Address != "oauth-test@gmail.com" || repository.credentials[0]["refresh_token"] != "google-refresh" {
+		t.Fatalf("Google OAuth 邮箱或凭证错误：mailbox=%+v credential=%v", repository.saved[0], repository.credentials[0])
+	}
 }
 
 func TestAdminImportsMailboxFileAndQueuesVerification(t *testing.T) {

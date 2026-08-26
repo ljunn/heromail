@@ -2,6 +2,31 @@
 
 本项目的所有正式版本变更都记录在此文件。版本号遵循语义化版本，发布日期使用 UTC。
 
+## [1.10.15] - 2026-08-26
+
+### 新增
+
+- 管理员可通过 Google OAuth 在官方页面完成 Gmail 登录和 2FA，授权后的 Gmail 自动加入邮箱池并排队验证。
+- Gmail OAuth Token 过期时自动刷新，验证和收件任务继续使用 Gmail IMAP XOAUTH2。
+
+### 修复
+
+- Google OAuth 回调增加一次性状态和邮箱归属校验，避免跨授权流程复用状态或接入非 Gmail 地址。
+
+### 安全
+
+- Google Client Secret、Access Token 和 Refresh Token 仅通过服务端环境变量和加密存储使用，不进入前端响应、日志或审计详情。
+- OAuth 授权在 Google 官方页面完成，HeroMail 不接收 Google 密码或 2FA 地址。
+
+### 兼容性
+
+- 保留 Microsoft Graph OAuth 和 Gmail/iCloud/Mail.com IMAP 应用专用密码接入；原有邮箱导入格式不变。
+
+### 部署注意事项
+
+- 在 Google Cloud 将 `https://heromail.cc/api/v1/oauth/google/callback` 配置为授权重定向 URI，并在服务环境配置 `GOOGLE_CLIENT_ID`、`GOOGLE_CLIENT_SECRET`、`GOOGLE_REDIRECT_URI`。
+- Gmail OAuth 全量邮件权限为 `https://mail.google.com/`；公开应用须按 Google 要求配置测试用户并完成必要审核。
+
 ## [1.10.14] - 2026-08-26
 
 ### 新增
@@ -20,11 +45,11 @@
 
 ### 兼容性
 
-- 保留现有 TXT、CSV、JSON Lines 和分隔符导入格式；Gmail IMAP 收件仍需应用专用密码或 OAuth，2FA 地址不替代 IMAP 凭证。
+- 保留现有 TXT、CSV、JSON Lines 和分隔符导入格式；Gmail 收件支持应用专用密码或 OAuth，普通 Google 密码和 2FA 地址不替代 IMAP 凭证。
 
 ### 部署注意事项
 
-- 升级后打开管理员“邮箱池”即可使用粘贴导入；大批量粘贴仍由服务端按行读取，不会一次性加载整批记录。
+- 升级后在“接入渠道”配置 Google OAuth 并在“邮箱池”使用粘贴导入；大批量粘贴仍由服务端按行读取，不会一次性加载整批记录。
 
 ## [1.10.13] - 2026-08-25
 

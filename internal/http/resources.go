@@ -370,7 +370,7 @@ func (s *Server) microsoftOAuthStart(c *gin.Context) {
 		return
 	}
 	state := base64.RawURLEncoding.EncodeToString(buffer)
-	if err := repository.CreateOAuthState(state, store.OAuthState{ActorID: demoUser(c), Pool: request.Pool}, 10*time.Minute); err != nil {
+	if err := repository.CreateOAuthState(state, store.OAuthState{ActorID: demoUser(c), Pool: request.Pool, Provider: "microsoft"}, 10*time.Minute); err != nil {
 		writeError(c, http.StatusInternalServerError, "oauth_state_failed", err.Error())
 		return
 	}
@@ -385,7 +385,7 @@ func (s *Server) microsoftOAuthCallback(c *gin.Context) {
 		return
 	}
 	state, err := repository.ConsumeOAuthState(c.Query("state"))
-	if err != nil || c.Query("code") == "" {
+	if err != nil || c.Query("code") == "" || (state.Provider != "" && state.Provider != "microsoft") {
 		writeError(c, http.StatusBadRequest, "invalid_oauth_state", "OAuth 状态无效或已过期")
 		return
 	}
@@ -422,6 +422,82 @@ func (s *Server) microsoftOAuthCallback(c *gin.Context) {
 	redirect := "/?oauth=microsoft&status=success"
 	if s.PublicURL != "" {
 		redirect = strings.TrimRight(s.PublicURL, "/") + "/?oauth=microsoft&status=success&address=" + url.QueryEscape(profile.Address)
+	}
+	c.Redirect(http.StatusFound, redirect)
+}
+
+func (s *Server) googleOAuthStart(c *gin.Context) {
+	repository, ok := s.Store.(store.ResourceRepository)
+	if !ok || s.Google == nil || !s.Google.Enabled() {
+		writeError(c, http.StatusServiceUnavailable, "google_oauth_unavailable", "Google OAuth 尚未配置")
+		return
+	}
+	var request struct {
+		Pool string `json:"pool"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_request", "请求格式无效")
+		return
+	}
+	request.Pool = domain.DefaultMailboxPoolName
+	buffer := make([]byte, 32)
+	if _, err := rand.Read(buffer); err != nil {
+		writeError(c, http.StatusInternalServerError, "oauth_state_failed", "无法创建 OAuth 状态")
+		return
+	}
+	state := base64.RawURLEncoding.EncodeToString(buffer)
+	if err := repository.CreateOAuthState(state, store.OAuthState{ActorID: demoUser(c), Pool: request.Pool, Provider: "google"}, 10*time.Minute); err != nil {
+		writeError(c, http.StatusInternalServerError, "oauth_state_failed", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"authorization_url": s.Google.AuthURL(state)}})
+}
+
+func (s *Server) googleOAuthCallback(c *gin.Context) {
+	repository, ok := s.Store.(store.ResourceRepository)
+	queue, queueOK := s.Store.(store.MailboxVerificationQueue)
+	if !ok || !queueOK || s.Google == nil || !s.Google.Enabled() {
+		writeError(c, http.StatusServiceUnavailable, "google_oauth_unavailable", "Google OAuth 尚未配置")
+		return
+	}
+	state, err := repository.ConsumeOAuthState(c.Query("state"))
+	if err != nil || c.Query("code") == "" || (state.Provider != "" && state.Provider != "google") {
+		writeError(c, http.StatusBadRequest, "invalid_oauth_state", "OAuth 状态无效或已过期")
+		return
+	}
+	credential, validUntil, err := s.Google.Exchange(c.Request.Context(), c.Query("code"))
+	if err != nil {
+		writeError(c, http.StatusBadGateway, "oauth_exchange_failed", err.Error())
+		return
+	}
+	profile, err := s.Google.Profile(c.Request.Context(), credential["access_token"])
+	if err != nil {
+		writeError(c, http.StatusBadGateway, "oauth_profile_failed", err.Error())
+		return
+	}
+	provider, supported := domain.DetectMailboxProvider(profile.Address)
+	if !supported || provider != domain.MailboxProviderGmail {
+		writeError(c, http.StatusBadRequest, "unsupported_mailbox_provider", "Google OAuth 只支持 Gmail")
+		return
+	}
+	mailbox, err := repository.SaveMailbox(state.ActorID, domain.Mailbox{
+		Address:             profile.Address,
+		Provider:            provider,
+		Pool:                domain.DefaultMailboxPoolName,
+		State:               domain.MailboxPending,
+		OAuthValidUntil:     validUntil,
+		ConnectionMethod:    domain.MailboxConnectionAuto,
+		VerificationStatus:  domain.MailboxVerificationPending,
+		RegisteredPlatforms: []string{},
+	}, credential, c.ClientIP())
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "mailbox_save_failed", err.Error())
+		return
+	}
+	_ = queue.EnqueueMailboxVerification(c.Request.Context(), mailbox.ID)
+	redirect := "/?oauth=google&status=success"
+	if s.PublicURL != "" {
+		redirect = strings.TrimRight(s.PublicURL, "/") + "/?oauth=google&status=success&address=" + url.QueryEscape(profile.Address)
 	}
 	c.Redirect(http.StatusFound, redirect)
 }

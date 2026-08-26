@@ -26,6 +26,7 @@ type Server struct {
 	UpgradeBackup      upgradeBackupFunc
 	Payment            *payment.Service
 	Microsoft          *mail.MicrosoftClient
+	Google             *mail.GoogleClient
 	MailboxVerifier    *mail.MailboxVerifier
 	PublicURL          string
 	WorkerToken        string
@@ -54,8 +55,13 @@ func NewServer(st store.Repository) *Server {
 		redirectURI = strings.TrimRight(s.PublicURL, "/") + "/api/v1/oauth/microsoft/callback"
 	}
 	s.Microsoft = mail.NewMicrosoftClient(mail.MicrosoftConfig{ClientID: os.Getenv("MICROSOFT_CLIENT_ID"), ClientSecret: os.Getenv("MICROSOFT_CLIENT_SECRET"), Tenant: os.Getenv("MICROSOFT_TENANT"), RedirectURI: redirectURI})
+	googleRedirectURI := os.Getenv("GOOGLE_REDIRECT_URI")
+	if googleRedirectURI == "" && s.PublicURL != "" {
+		googleRedirectURI = strings.TrimRight(s.PublicURL, "/") + "/api/v1/oauth/google/callback"
+	}
+	s.Google = mail.NewGoogleClient(mail.GoogleConfig{ClientID: os.Getenv("GOOGLE_CLIENT_ID"), ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"), RedirectURI: googleRedirectURI})
 	if repository, ok := st.(store.ResourceRepository); ok {
-		s.MailboxVerifier = mail.NewMailboxVerifier(repository, s.Microsoft, mail.NewMicrosoftIMAPConnector())
+		s.MailboxVerifier = mail.NewMailboxVerifier(repository, s.Microsoft, mail.NewMicrosoftIMAPConnector(), s.Google)
 	}
 	if repository, ok := st.(store.PaymentRepository); ok {
 		s.Payment = payment.New(repository, os.Getenv("HEROMAIL_PUBLIC_URL"))
@@ -113,6 +119,7 @@ func (s *Server) routes() {
 	api.GET("/public/status", s.publicStatus)
 	api.POST("/internal/mail-events", s.receiveMailEvent)
 	api.GET("/oauth/microsoft/callback", s.microsoftOAuthCallback)
+	api.GET("/oauth/google/callback", s.googleOAuthCallback)
 	api.GET("/payment/webhook/:type", s.paymentWebhook)
 	api.POST("/payment/webhook/:type", s.paymentWebhook)
 
@@ -153,6 +160,7 @@ func (s *Server) routes() {
 	admin.GET("/mailboxes/:id/messages", s.adminMailboxMessages)
 	admin.GET("/mailbox-pools", s.adminMailboxPools)
 	admin.POST("/mailboxes/oauth/microsoft", s.microsoftOAuthStart)
+	admin.POST("/mailboxes/oauth/google", s.googleOAuthStart)
 	admin.GET("/services", s.adminServices)
 	admin.POST("/services", s.adminSaveService)
 	admin.DELETE("/services/:id", s.adminDeleteService)

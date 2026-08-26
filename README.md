@@ -36,7 +36,7 @@ curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh
   HEROMAIL_PUBLIC_URL=https://mail.example.com bash
 ```
 
-部署完成后，使用 `/opt/heromail/.env` 中的 `HEROMAIL_ADMIN_EMAIL` 和 `HEROMAIL_ADMIN_PASSWORD` 登录。管理员可在“管理员账户”中修改登录密码，修改后旧会话会全部失效。请在反向代理中配置 HTTPS，并确保 `HEROMAIL_PUBLIC_URL` 是外部可访问的绝对地址，否则支付回调和 Microsoft OAuth 无法正常工作。
+部署完成后，使用 `/opt/heromail/.env` 中的 `HEROMAIL_ADMIN_EMAIL` 和 `HEROMAIL_ADMIN_PASSWORD` 登录。管理员可在“管理员账户”中修改登录密码，修改后旧会话会全部失效。请在反向代理中配置 HTTPS，并确保 `HEROMAIL_PUBLIC_URL` 是外部可访问的绝对地址，否则支付回调和 OAuth 无法正常工作。
 
 ## 业务流程
 
@@ -58,7 +58,16 @@ curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh
 1. 在 Microsoft Entra 中创建 Web 应用，并配置委托权限 `User.Read`、`Mail.Read` 和 `offline_access`。
 2. 将回调地址设为 `https://你的域名/api/v1/admin/mailboxes/oauth/microsoft/callback`。
 3. 在 `.env` 填写 `MICROSOFT_CLIENT_ID`、`MICROSOFT_CLIENT_SECRET`、`MICROSOFT_TENANT` 和 `MICROSOFT_REDIRECT_URI`。
-4. 重启 HeroMail，先创建邮箱池，再在“接入渠道”中连接 Microsoft 邮箱。
+
+### Google Gmail OAuth
+
+管理员在“接入渠道”点击“连接 Google 邮箱”后，会跳转到 Google 官方登录页完成登录和 2FA，授权成功后 HeroMail 使用 Gmail IMAP XOAUTH2 读取邮件。Google 密码和 `2fa.live` 地址不会被用于模拟网页登录。
+
+1. 在 Google Cloud 创建“Web 应用” OAuth 客户端。
+2. 将 `https://heromail.cc/api/v1/oauth/google/callback` 添加为已获授权的重定向 URI；本地开发可另加对应的 `http://localhost` 地址。
+3. 在 `.env` 填写 `GOOGLE_CLIENT_ID`、`GOOGLE_CLIENT_SECRET` 和 `GOOGLE_REDIRECT_URI`。
+4. OAuth 同意屏幕至少申请 `openid`、`email`、`profile` 和 `https://mail.google.com/` 权限。公开应用使用 Gmail 全量邮件权限时，按 Google 要求完成测试用户和应用审核。
+5. 重启 HeroMail，在“接入渠道”中点击“连接 Google 邮箱”。授权成功后邮箱会自动进入验证队列。
 
 ### 易支付
 

@@ -98,6 +98,32 @@ type graphConnectorStub struct {
 	allCalls    int
 }
 
+type oauthRefresherStub struct {
+	refreshes int
+}
+
+func (s *oauthRefresherStub) RefreshCredential(context.Context, map[string]string) (map[string]string, time.Time, error) {
+	s.refreshes++
+	validUntil := time.Now().Add(time.Hour)
+	return map[string]string{"access_token": "refreshed-google-access", "expires_at": validUntil.Format(time.RFC3339)}, validUntil, nil
+}
+
+func TestMailboxVerifierRefreshesExpiredGmailOAuthBeforeIMAP(t *testing.T) {
+	repository := &verificationRepositoryStub{credential: store.MailboxCredential{
+		Mailbox: domain.Mailbox{ID: "gmail-mailbox", Address: "user@gmail.com", Provider: domain.MailboxProviderGmail},
+		Config:  map[string]string{"access_token": "expired-google-access", "refresh_token": "google-refresh", "expires_at": time.Now().Add(-time.Hour).Format(time.RFC3339)},
+	}}
+	refresher := &oauthRefresherStub{}
+	imap := &imapConnectorStub{}
+	result, err := NewMailboxVerifier(repository, nil, imap, refresher).Verify(context.Background(), "system", "gmail-mailbox", "")
+	if err != nil || result.Method != domain.MailboxConnectionIMAP || refresher.refreshes != 1 || imap.calls != 1 {
+		t.Fatalf("Gmail OAuth 过期后未刷新并验证：result=%+v err=%v refreshes=%d imap=%d", result, err, refresher.refreshes, imap.calls)
+	}
+	if imap.credentials[0]["access_token"] != "refreshed-google-access" || repository.updates != 1 {
+		t.Fatalf("刷新后的 Gmail Token 未用于 IMAP：credential=%v updates=%d", imap.credentials[0], repository.updates)
+	}
+}
+
 func (s *graphConnectorStub) RefreshCredential(context.Context, map[string]string) (map[string]string, time.Time, error) {
 	s.refreshes++
 	if s.refreshErr != nil {
