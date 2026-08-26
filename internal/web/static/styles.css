@@ -208,6 +208,11 @@ textarea.field { resize: vertical; }
 .cap-dot.purple { background: #7b68ee; }
 .cap-dot.green { background: #1aa873; }
 .mailbox-dropzone { display: grid; min-height: 188px; place-items: center; align-content: center; gap: 9px; padding: 22px; border: 1.5px dashed #8ab4f5; border-radius: 12px; color: #5f7088; background: rgba(255,255,255,.72); text-align: center; cursor: pointer; transition: .18s ease; }
+.mailbox-import-sources { display: grid; gap: 12px; }
+.mailbox-paste { display: grid; gap: 7px; }
+.mailbox-paste > span { display: grid; gap: 2px; color: #23324a; font-size: 13px; }
+.mailbox-paste small { color: var(--muted); font-size: 11px; font-weight: 400; }
+.mailbox-paste textarea { min-height: 108px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.6; }
 .mailbox-dropzone:hover { border-color: var(--blue); background: #fff; box-shadow: 0 0 0 4px rgba(23,105,232,.08); }
 .mailbox-dropzone input { display: none; }
 .drop-icon { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 12px; color: var(--blue); background: #e5efff; font-size: 23px; font-weight: 800; }

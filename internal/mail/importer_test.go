@@ -16,6 +16,7 @@ func TestMailboxLineParserSupportsConfiguredProviderFormats(t *testing.T) {
 		password     string
 		clientID     string
 		refreshToken string
+		totpURL      string
 	}{
 		{name: "冒号", line: "alpha@outlook.com:secret", address: "alpha@outlook.com", provider: "outlook", password: "secret"},
 		{name: "德国 Outlook", line: "alpha@outlook.de:secret", address: "alpha@outlook.de", provider: "outlook_de", password: "secret"},
@@ -25,6 +26,7 @@ func TestMailboxLineParserSupportsConfiguredProviderFormats(t *testing.T) {
 		{name: "交换字段顺序", line: fmt.Sprintf("echo@outlook.com----secret----refresh-value----%s", clientID), address: "echo@outlook.com", provider: "outlook", password: "secret", clientID: clientID, refreshToken: "refresh-value"},
 		{name: "JSON Lines", line: fmt.Sprintf(`{"email":"foxtrot@hotmail.com","password":"secret","client_id":"%s","refresh_token":"refresh-value"}`, clientID), address: "foxtrot@hotmail.com", provider: "hotmail", password: "secret", clientID: clientID, refreshToken: "refresh-value"},
 		{name: "Gmail 应用密码", line: "gmail@gmail.com:app-password", address: "gmail@gmail.com", provider: "gmail", password: "app-password"},
+		{name: "Gmail 账号密码和 2FA", line: "twofactor-test@gmail.com----test-password----https://2fa.live/tok/test-token", address: "twofactor-test@gmail.com", provider: "gmail", password: "test-password", totpURL: "https://2fa.live/tok/test-token"},
 		{name: "iCloud 应用密码", line: "apple@icloud.com----app-password", address: "apple@icloud.com", provider: "icloud", password: "app-password"},
 		{name: "Mail.com 应用密码", line: "mailbox@mail.com|app-password", address: "mailbox@mail.com", provider: "mailcom", password: "app-password"},
 	}
@@ -39,7 +41,7 @@ func TestMailboxLineParserSupportsConfiguredProviderFormats(t *testing.T) {
 				t.Fatalf("邮箱识别错误：%+v", record)
 			}
 			credential := record.Credential()
-			if credential["password"] != test.password || credential["client_id"] != test.clientID || credential["refresh_token"] != test.refreshToken {
+			if credential["password"] != test.password || credential["client_id"] != test.clientID || credential["refresh_token"] != test.refreshToken || credential["totp_url"] != test.totpURL {
 				t.Fatalf("凭证字段识别错误：%+v", credential)
 			}
 		})

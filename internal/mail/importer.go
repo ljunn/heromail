@@ -24,6 +24,7 @@ type MailboxImportRecord struct {
 	Address      string
 	Provider     string
 	Password     string
+	TOTPURL      string
 	ClientID     string
 	ClientSecret string
 	AccessToken  string
@@ -33,6 +34,7 @@ type MailboxImportRecord struct {
 func (r MailboxImportRecord) Credential() map[string]string {
 	values := map[string]string{
 		"password":      r.Password,
+		"totp_url":      r.TOTPURL,
 		"client_id":     r.ClientID,
 		"client_secret": r.ClientSecret,
 		"access_token":  r.AccessToken,
@@ -81,6 +83,7 @@ func parseMailboxJSONLine(line string) (MailboxImportRecord, error) {
 	record := MailboxImportRecord{
 		Address:      firstImportValue(values, "email", "address", "username"),
 		Password:     firstImportValue(values, "password", "pass"),
+		TOTPURL:      firstImportValue(values, "totp_url", "totp", "otp_url", "two_factor_url", "2fa_url"),
 		ClientID:     firstImportValue(values, "client_id", "clientid"),
 		ClientSecret: firstImportValue(values, "client_secret", "clientsecret"),
 		AccessToken:  firstImportValue(values, "access_token", "accesstoken"),
@@ -145,12 +148,16 @@ func mailboxRecordFromFields(fields []string) (MailboxImportRecord, error) {
 				record.AccessToken = fieldValue
 			case "refresh_token", "refreshtoken":
 				record.RefreshToken = fieldValue
+			case "totp_url", "totp", "otp_url", "two_factor_url", "2fa_url":
+				record.TOTPURL = fieldValue
 			}
 			continue
 		}
 		switch {
 		case microsoftClientIDPattern.MatchString(value):
 			record.ClientID = value
+		case isTOTPURL(value):
+			record.TOTPURL = value
 		case record.RefreshToken == "":
 			record.RefreshToken = value
 		case record.AccessToken == "":
@@ -158,6 +165,11 @@ func mailboxRecordFromFields(fields []string) (MailboxImportRecord, error) {
 		}
 	}
 	return normalizeMailboxImportRecord(record)
+}
+
+func isTOTPURL(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(strings.ToLower(value), "https://2fa.live/")
 }
 
 func normalizeMailboxImportRecord(record MailboxImportRecord) (MailboxImportRecord, error) {
