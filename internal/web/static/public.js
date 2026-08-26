@@ -71,10 +71,43 @@ function renderOpenSource() {
   publicContent.innerHTML = pageShell("页面已下线", "部署说明暂未公开", "当前公开页面提供产品介绍、价格和 API 文档。账户注册与任务申请请从工作台开始。", `<div class="docs-content"><section><h2>继续使用 HeroMail</h2><p>你可以查看公开价格、阅读 API 文档，或直接登录工作台管理注册收码任务。</p><div class="hero-actions"><a class="solid-action" href="/register">创建账户 <span aria-hidden="true">↗</span></a><a class="outline-action" href="/pricing">查看公开价格</a></div></section></div>`);
 }
 
+function renderLegal(kind) {
+  const privacy = kind === "privacy";
+  const title = privacy ? "隐私政策" : "服务条款";
+  document.title = title + " - HeroMail";
+  const kicker = privacy ? "数据说明 / 公开版" : "使用规则 / 公开版";
+  const description = privacy
+    ? "本政策说明 HeroMail 如何处理账户、邮箱连接和注册收码任务中的数据。它只覆盖 HeroMail 服务本身，不替代第三方平台的隐私政策。"
+    : "使用 HeroMail 前请阅读这些规则。它们说明账户、订单、付款、邮箱资产和可接受的使用范围。";
+  const sections = privacy ? [
+    ["1. 我们处理哪些数据", "<p>创建账户时，我们处理邮箱地址、显示名称和经过加密保护的密码摘要。使用工作台时，我们还会记录订单、余额流水、支付状态、Webhook 投递记录和必要的审计信息。</p><p>当管理员接入邮箱时，系统可能保存邮箱地址、连接方式、授权凭证或应用专用密码。凭证使用服务端密钥加密保存，不会返回给用户，也不会写入日志。</p>"],
+    ["2. 邮箱和邮件的使用边界", "<p>HeroMail 只为完成目标平台注册收码任务读取必要的邮件。用户端只能查看自己订单租约期间、命中该目标平台规则的相关邮件和验证码，不能查看其他平台邮件、完整收件箱、密码或 OAuth Token。</p><p>邮件匹配结果会用于推进订单、结算、超时退款和邮箱平台占用状态；不用于出售或构建个人画像。</p>"],
+    ["3. OAuth 授权", "<p>使用 Google Gmail 或 Microsoft OAuth 时，登录和授权发生在对应平台的官方页面。HeroMail 不接收第三方账户密码或 2FA 地址，只保存完成收件所需的授权结果，并在连接失效时提示重新授权或切换支持的收件方式。</p>"],
+    ["4. 数据保留与删除", "<p>订单、余额和审计记录会在满足结算、风控和合规需要的期限内保留。匹配邮件正文只在完成任务和处理争议所需的期限内保留，之后按系统保留策略清理。</p><p>你可以停止使用账户并向服务运营方申请删除仍可删除的数据。法律要求保留的交易或审计记录可能无法立即删除。</p>"],
+    ["5. 安全措施", "<p>HeroMail 使用访问控制、加密存储、服务端分页和审计日志保护账户与邮箱资产。没有任何网络服务可以保证绝对安全；如果发现疑似未授权访问，请尽快通过服务运营方提供的支持渠道联系。</p>"],
+    ["6. 第三方服务", "<p>Google、Microsoft、支付服务商和目标平台注册服务由各自的运营方提供。你使用这些服务时，还需要遵守它们各自的条款和隐私政策；HeroMail 不控制第三方的处理方式或可用性。</p>"],
+    ["7. 政策更新", "<p>当数据处理方式或服务能力发生实质变化时，我们会在本页更新版本日期和说明。继续使用服务表示你已看到更新后的政策。</p>"]
+  ] : [
+    ["1. 服务范围", "<p>HeroMail 提供邮箱资源分配、目标平台注册收码、验证码提取、订单查询和相关 API。邮箱是平台资产，用户只能选择目标平台和可接受的邮箱类型，不能指定或长期占有某个具体邮箱。</p>"],
+    ["2. 账户与安全", "<p>你应提供真实、可控制的账户邮箱，并妥善保管登录凭据和 API Key。API Key 只在创建时完整展示；如怀疑泄露，应立即吊销并重新创建。</p><p>一个账户的操作由账户持有人负责。不得共享账户、绕过权限或尝试访问其他用户的订单、邮件和余额。</p>"],
+    ["3. 订单、计费与退款", "<p>创建订单会按最终分配的邮箱类型扣费并开始收码。收到验证码后订单进入后台结算流程，用户不能主动取消；超过订单有效期仍未收到匹配验证码时，系统按规则自动回收邮箱并退款。</p><p>公开价格、可选邮箱类型和订单有效期以创建订单时页面或 API 返回为准。支付渠道的到账时间可能受第三方影响。</p>"],
+    ["4. 允许的使用方式", "<p>HeroMail 仅用于你有权进行的注册、集成和测试。你不得将服务用于撞库、冒用身份、绕过第三方风控、批量滥用、发送垃圾邮件、违法活动或侵犯他人权益的行为。</p><p>你还必须遵守目标平台的服务条款、开发者政策和适用法律。</p>"],
+    ["5. 邮箱和邮件访问", "<p>分配邮箱仅限对应订单的注册收码任务使用。你不得尝试获取邮箱密码、OAuth Token、其他平台邮件或未授权数据，也不得通过 API、浏览器或其他方式绕过平台隔离。</p>"],
+    ["6. 服务可用性与处置", "<p>邮箱连接失效、第三方接口故障、网络中断或维护可能导致任务延迟。我们会按产品规则处理超时、退款和失败状态，但不承诺第三方服务持续可用。</p><p>如果账户违反本条款、危及系统安全或产生异常风险，服务运营方可以限制功能、暂停订单或终止账户，并保留必要的审计记录。</p>"],
+    ["7. 内容与知识产权", "<p>HeroMail 的软件、界面、文档和品牌由其权利人拥有。你提交的账户信息、订单参数和合法业务数据仍归你或相应权利人所有；你授予我们处理这些数据以提供服务的必要权限。</p>"],
+    ["8. 条款更新与联系", "<p>我们会在本页发布条款更新。继续使用服务表示接受更新后的条款。若你对账户、订单或数据有疑问，请通过服务运营方提供的支持渠道联系。</p>"]
+  ];
+  const nav = sections.map(section => "<a href=\"#legal-" + section[0].split(".")[0] + "\">" + escPublic(section[0]) + "</a>").join("");
+  const content = sections.map(section => "<section id=\"legal-" + section[0].split(".")[0] + "\"><h2>" + escPublic(section[0]) + "</h2>" + section[1] + "</section>").join("");
+  const body = "<div class=\"legal-layout\"><aside class=\"legal-nav\"><span>本页内容</span>" + nav + "</aside><div class=\"docs-content legal-content\"><div class=\"legal-meta\"><span>生效日期</span><strong>2026 年 8 月 26 日</strong><span>适用于</span><strong>HeroMail 网页、API 和收码服务</strong></div>" + content + "</div></div>";
+  publicContent.innerHTML = pageShell(kicker, title, description, body);
+}
+
 function renderAuth(register) {
   const title = register ? "创建 HeroMail 账户" : "登录 HeroMail";
   publicContent.innerHTML = `<section class="auth-page"><div class="auth-box"><a class="public-brand" href="/"><img src="/brand-mark.svg" alt=""><strong>HeroMail</strong></a><h1>${title}</h1><p>${register ? "注册后即可申请邮箱，并按需创建 API Key 与 Webhook。" : "登录后申请邮箱、查看收码任务并管理账户余额。"}</p><form id="public-auth-form" class="auth-form"><label>邮箱<input name="email" type="email" autocomplete="email" required></label>${register ? `<label>显示名称<input name="display_name" autocomplete="name"></label>` : ""}<label>密码<input name="password" type="password" minlength="10" autocomplete="${register ? "new-password" : "current-password"}" required></label><button type="submit">${register ? "注册并进入门户" : "登录"}</button></form><div class="auth-switch">${register ? `已有账户？<a href="/login">返回登录</a>` : `还没有账户？<a href="/register">创建账户</a>`}</div></div></section>`;
   document.querySelector("#public-auth-form").addEventListener("submit", event => submitAuth(event, register));
+  if (register) document.querySelector(".auth-box").insertAdjacentHTML("beforeend", '<p class="auth-legal">注册前请阅读 <a href="/privacy">隐私政策</a> 和 <a href="/terms">服务条款</a>。</p>');
 }
 
 async function submitAuth(event, register) {
@@ -204,6 +237,8 @@ const path = location.pathname;
 if (path === "/pricing") renderPricing();
 else if (path === "/docs" || path.startsWith("/docs/")) renderDocs();
 else if (path === "/open-source") renderOpenSource();
+else if (path === "/privacy") renderLegal("privacy");
+else if (path === "/terms") renderLegal("terms");
 else if (path === "/login") renderAuth(false);
 else if (path === "/register") renderAuth(true);
 else if (path === "/") initHomeAnimations();

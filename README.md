@@ -69,6 +69,11 @@ curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh
 4. OAuth 同意屏幕至少申请 `openid`、`email`、`profile` 和 `https://mail.google.com/` 权限。公开应用使用 Gmail 全量邮件权限时，按 Google 要求完成测试用户和应用审核。
 5. 在“接入渠道”中点击“连接 Google 邮箱”。授权成功后邮箱会自动进入验证队列。
 
+Google OAuth 同意屏幕需要填写公开的应用隐私权政策和服务条款链接：
+
+- 隐私政策：https://heromail.cc/privacy
+- 服务条款：https://heromail.cc/terms
+
 ### 易支付
 
 在“支付管理”新建易支付服务商，填写提交 API 地址、PID、商户密钥和可选的支付宝通道 ID。HeroMail 使用 MD5 生成支付参数签名，并对异步回调的 PID、签名、交易状态和金额同时校验。

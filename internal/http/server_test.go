@@ -464,7 +464,7 @@ func TestServiceAvailabilityByCode(t *testing.T) {
 
 func TestPublicAndAdminPagesUseSeparateEntries(t *testing.T) {
 	server := NewServer(store.New())
-	for _, path := range []string{"/pricing", "/docs/api", "/open-source", "/login", "/register"} {
+	for _, path := range []string{"/pricing", "/docs/api", "/open-source", "/privacy", "/terms", "/login", "/register"} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		response := httptest.NewRecorder()
 		server.Router.ServeHTTP(response, request)
