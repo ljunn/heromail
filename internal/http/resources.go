@@ -453,6 +453,99 @@ func (s *Server) googleOAuthStart(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"authorization_url": s.Google.AuthURL(state)}})
 }
 
+const googleOAuthConfigKey = "oauth.google"
+
+func (s *Server) adminGoogleOAuthConfig(c *gin.Context) {
+	repository, ok := s.Store.(store.SystemConfigRepository)
+	if !ok {
+		writeError(c, http.StatusServiceUnavailable, "system_config_unavailable", "系统配置存储不可用")
+		return
+	}
+	saved, exists, err := repository.GetSystemConfig(googleOAuthConfigKey)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "system_config_read_failed", "读取 Google OAuth 配置失败")
+		return
+	}
+	clientID, redirectURI, configured := s.Google.ConfigSummary()
+	if exists {
+		clientID = saved["client_id"]
+		redirectURI = saved["redirect_uri"]
+		configured = strings.TrimSpace(saved["client_id"]) != "" && strings.TrimSpace(saved["client_secret"]) != "" && strings.TrimSpace(saved["redirect_uri"]) != ""
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"configured":       configured,
+		"client_id_masked": maskOAuthClientID(clientID),
+		"redirect_uri":     redirectURI,
+	}})
+}
+
+func (s *Server) adminSaveGoogleOAuthConfig(c *gin.Context) {
+	repository, ok := s.Store.(store.SystemConfigRepository)
+	if !ok {
+		writeError(c, http.StatusServiceUnavailable, "system_config_unavailable", "系统配置存储不可用")
+		return
+	}
+	var request struct {
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+		RedirectURI  string `json:"redirect_uri"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_request", "请求格式无效")
+		return
+	}
+	request.ClientID = strings.TrimSpace(request.ClientID)
+	request.ClientSecret = strings.TrimSpace(request.ClientSecret)
+	request.RedirectURI = strings.TrimSpace(request.RedirectURI)
+	existing, exists, err := repository.GetSystemConfig(googleOAuthConfigKey)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "system_config_read_failed", "读取现有 Google OAuth 配置失败")
+		return
+	}
+	if request.ClientSecret == "" && exists {
+		request.ClientSecret = strings.TrimSpace(existing["client_secret"])
+	}
+	if request.ClientID == "" && exists {
+		request.ClientID = strings.TrimSpace(existing["client_id"])
+	}
+	if request.RedirectURI == "" {
+		request.RedirectURI = strings.TrimRight(s.PublicURL, "/") + "/api/v1/oauth/google/callback"
+	}
+	if request.ClientID == "" || request.ClientSecret == "" || request.RedirectURI == "" {
+		writeError(c, http.StatusBadRequest, "invalid_google_oauth_config", "客户端 ID、客户端密钥和回调地址都不能为空")
+		return
+	}
+	parsed, err := url.Parse(request.RedirectURI)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || (strings.ToLower(parsed.Scheme) != "http" && strings.ToLower(parsed.Scheme) != "https") {
+		writeError(c, http.StatusBadRequest, "invalid_google_oauth_redirect", "回调地址必须是完整的 HTTP 或 HTTPS 地址")
+		return
+	}
+	if err := repository.SaveSystemConfig(googleOAuthConfigKey, map[string]string{"client_id": request.ClientID, "client_secret": request.ClientSecret, "redirect_uri": request.RedirectURI}); err != nil {
+		writeError(c, http.StatusInternalServerError, "system_config_save_failed", "保存 Google OAuth 配置失败")
+		return
+	}
+	s.Google.Configure(mail.GoogleConfig{ClientID: request.ClientID, ClientSecret: request.ClientSecret, RedirectURI: request.RedirectURI})
+	if audit, ok := s.Store.(store.AuditRepository); ok {
+		_ = audit.WriteAudit(demoUser(c), "system_config.google_oauth.save", "system_config", googleOAuthConfigKey, "更新 Google OAuth 配置", c.ClientIP())
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"configured":       true,
+		"client_id_masked": maskOAuthClientID(request.ClientID),
+		"redirect_uri":     request.RedirectURI,
+	}})
+}
+
+func maskOAuthClientID(clientID string) string {
+	clientID = strings.TrimSpace(clientID)
+	if len(clientID) <= 12 {
+		if clientID == "" {
+			return ""
+		}
+		return "已配置"
+	}
+	return clientID[:8] + "…" + clientID[len(clientID)-8:]
+}
+
 func (s *Server) googleOAuthCallback(c *gin.Context) {
 	repository, ok := s.Store.(store.ResourceRepository)
 	queue, queueOK := s.Store.(store.MailboxVerificationQueue)

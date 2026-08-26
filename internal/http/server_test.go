@@ -723,6 +723,34 @@ func TestGoogleOAuthSavesGmailMailboxAndQueuesVerification(t *testing.T) {
 	}
 }
 
+func TestAdminCanConfigureGoogleOAuth(t *testing.T) {
+	repository := store.New()
+	server := NewServer(repository)
+	saveRequest := httptest.NewRequest(http.MethodPost, "/api/v1/admin/settings/google-oauth", strings.NewReader("{\"client_id\":\"client-id.apps.googleusercontent.com\",\"client_secret\":\"client-secret\",\"redirect_uri\":\"https://heromail.cc/api/v1/oauth/google/callback\"}"))
+	saveRequest.Header.Set("Content-Type", "application/json")
+	saveRequest.Header.Set("X-HeroMail-Role", "admin")
+	saveRequest.Header.Set("X-HeroMail-User", "admin-001")
+	saveResponse := httptest.NewRecorder()
+	server.Router.ServeHTTP(saveResponse, saveRequest)
+	if saveResponse.Code != http.StatusOK {
+		t.Fatalf("保存 Google OAuth 配置返回 %d：%s", saveResponse.Code, saveResponse.Body.String())
+	}
+	if !server.Google.Enabled() {
+		t.Fatal("保存配置后 Google OAuth 应立即可用")
+	}
+	getRequest := httptest.NewRequest(http.MethodGet, "/api/v1/admin/settings/google-oauth", nil)
+	getRequest.Header.Set("X-HeroMail-Role", "admin")
+	getRequest.Header.Set("X-HeroMail-User", "admin-001")
+	getResponse := httptest.NewRecorder()
+	server.Router.ServeHTTP(getResponse, getRequest)
+	if getResponse.Code != http.StatusOK || strings.Contains(getResponse.Body.String(), "client-secret") {
+		t.Fatalf("读取 Google OAuth 配置响应不安全或失败：%d %s", getResponse.Code, getResponse.Body.String())
+	}
+	if !strings.Contains(getResponse.Body.String(), "client-i") || !strings.Contains(getResponse.Body.String(), "configured") {
+		t.Fatalf("读取 Google OAuth 配置摘要错误：%s", getResponse.Body.String())
+	}
+}
+
 func TestAdminImportsMailboxFileAndQueuesVerification(t *testing.T) {
 	repository := &mailboxImportRepositoryStub{Repository: store.New()}
 	server := NewServer(repository)

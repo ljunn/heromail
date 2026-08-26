@@ -60,6 +60,11 @@ func NewServer(st store.Repository) *Server {
 		googleRedirectURI = strings.TrimRight(s.PublicURL, "/") + "/api/v1/oauth/google/callback"
 	}
 	s.Google = mail.NewGoogleClient(mail.GoogleConfig{ClientID: os.Getenv("GOOGLE_CLIENT_ID"), ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"), RedirectURI: googleRedirectURI})
+	if configRepository, ok := st.(store.SystemConfigRepository); ok {
+		if saved, exists, loadErr := configRepository.GetSystemConfig("oauth.google"); loadErr == nil && exists {
+			s.Google.Configure(mail.GoogleConfig{ClientID: saved["client_id"], ClientSecret: saved["client_secret"], RedirectURI: saved["redirect_uri"]})
+		}
+	}
 	if repository, ok := st.(store.ResourceRepository); ok {
 		s.MailboxVerifier = mail.NewMailboxVerifier(repository, s.Microsoft, mail.NewMicrosoftIMAPConnector(), s.Google)
 	}
@@ -161,6 +166,8 @@ func (s *Server) routes() {
 	admin.GET("/mailbox-pools", s.adminMailboxPools)
 	admin.POST("/mailboxes/oauth/microsoft", s.microsoftOAuthStart)
 	admin.POST("/mailboxes/oauth/google", s.googleOAuthStart)
+	admin.GET("/settings/google-oauth", s.adminGoogleOAuthConfig)
+	admin.POST("/settings/google-oauth", s.adminSaveGoogleOAuthConfig)
 	admin.GET("/services", s.adminServices)
 	admin.POST("/services", s.adminSaveService)
 	admin.DELETE("/services/:id", s.adminDeleteService)

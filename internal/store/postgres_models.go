@@ -70,6 +70,15 @@ type sqlSeedState struct {
 
 func (sqlSeedState) TableName() string { return "seed_states" }
 
+type sqlSystemConfig struct {
+	Key            string `gorm:"primaryKey;size:120"`
+	EncryptedValue string `gorm:"type:text;not null"`
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+func (sqlSystemConfig) TableName() string { return "system_configs" }
+
 type sqlMailbox struct {
 	ID                  string    `gorm:"primaryKey;size:64"`
 	Address             string    `gorm:"uniqueIndex;size:320;not null"`

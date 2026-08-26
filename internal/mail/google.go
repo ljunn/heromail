@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,6 +25,7 @@ type GoogleConfig struct {
 
 // GoogleClient 负责 Google OAuth 授权和 Gmail IMAP OAuth Token 管理。
 type GoogleClient struct {
+	mu     sync.RWMutex
 	config GoogleConfig
 	http   *http.Client
 }
@@ -42,13 +44,18 @@ func NewGoogleClient(config GoogleConfig) *GoogleClient {
 }
 
 func (c *GoogleClient) Enabled() bool {
-	return c != nil && c.config.ClientID != "" && c.config.ClientSecret != "" && c.config.RedirectURI != ""
+	if c == nil {
+		return false
+	}
+	config := c.configSnapshot()
+	return config.ClientID != "" && config.ClientSecret != "" && config.RedirectURI != ""
 }
 
 func (c *GoogleClient) AuthURL(state string) string {
+	config := c.configSnapshot()
 	values := url.Values{
-		"client_id":              {c.config.ClientID},
-		"redirect_uri":           {c.config.RedirectURI},
+		"client_id":              {config.ClientID},
+		"redirect_uri":           {config.RedirectURI},
 		"response_type":          {"code"},
 		"scope":                  {"openid email profile https://mail.google.com/"},
 		"access_type":            {"offline"},
@@ -56,28 +63,33 @@ func (c *GoogleClient) AuthURL(state string) string {
 		"include_granted_scopes": {"true"},
 		"state":                  {state},
 	}
-	return c.config.AuthorizationURL + "?" + values.Encode()
+	return config.AuthorizationURL + "?" + values.Encode()
 }
 
 func (c *GoogleClient) Exchange(ctx context.Context, code string) (map[string]string, time.Time, error) {
+	config := c.configSnapshot()
 	return c.token(ctx, url.Values{
-		"client_id":     {c.config.ClientID},
-		"client_secret": {c.config.ClientSecret},
+		"client_id":     {config.ClientID},
+		"client_secret": {config.ClientSecret},
 		"code":          {code},
 		"grant_type":    {"authorization_code"},
-		"redirect_uri":  {c.config.RedirectURI},
+		"redirect_uri":  {config.RedirectURI},
 	})
 }
 
 // RefreshCredential 实现 Gmail IMAP OAuth Token 的自动刷新。
 func (c *GoogleClient) RefreshCredential(ctx context.Context, credential map[string]string) (map[string]string, time.Time, error) {
 	refreshToken := strings.TrimSpace(credential["refresh_token"])
-	if c == nil || c.config.ClientID == "" || c.config.ClientSecret == "" || refreshToken == "" {
+	if c == nil || strings.TrimSpace(refreshToken) == "" {
 		return nil, time.Time{}, errors.New("缺少 Google OAuth refresh token")
 	}
+	config := c.configSnapshot()
+	if config.ClientID == "" || config.ClientSecret == "" {
+		return nil, time.Time{}, errors.New("Google OAuth 尚未配置")
+	}
 	return c.token(ctx, url.Values{
-		"client_id":     {c.config.ClientID},
-		"client_secret": {c.config.ClientSecret},
+		"client_id":     {config.ClientID},
+		"client_secret": {config.ClientSecret},
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
 	})
@@ -87,7 +99,8 @@ func (c *GoogleClient) Profile(ctx context.Context, accessToken string) (Profile
 	if strings.TrimSpace(accessToken) == "" {
 		return Profile{}, errors.New("缺少 Google access token")
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.config.UserInfoURL, nil)
+	config := c.configSnapshot()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, config.UserInfoURL, nil)
 	if err != nil {
 		return Profile{}, err
 	}
@@ -115,7 +128,11 @@ func (c *GoogleClient) Profile(ctx context.Context, accessToken string) (Profile
 }
 
 func (c *GoogleClient) token(ctx context.Context, values url.Values) (map[string]string, time.Time, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.config.TokenURL, strings.NewReader(values.Encode()))
+	config := c.configSnapshot()
+	if config.TokenURL == "" {
+		return nil, time.Time{}, errors.New("Google OAuth 尚未配置")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, config.TokenURL, strings.NewReader(values.Encode()))
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -146,4 +163,41 @@ func (c *GoogleClient) token(ctx context.Context, values url.Values) (map[string
 		credential["refresh_token"] = payload.RefreshToken
 	}
 	return credential, validUntil, nil
+}
+
+// Configure 在服务运行期间更新 OAuth 客户端配置，避免修改配置后重启服务。
+func (c *GoogleClient) Configure(config GoogleConfig) {
+	if c == nil {
+		return
+	}
+	if config.AuthorizationURL == "" {
+		config.AuthorizationURL = "https://accounts.google.com/o/oauth2/v2/auth"
+	}
+	if config.TokenURL == "" {
+		config.TokenURL = "https://oauth2.googleapis.com/token"
+	}
+	if config.UserInfoURL == "" {
+		config.UserInfoURL = "https://openidconnect.googleapis.com/v1/userinfo"
+	}
+	c.mu.Lock()
+	c.config = config
+	c.mu.Unlock()
+}
+
+// ConfigSummary 返回不包含客户端密钥的配置摘要。
+func (c *GoogleClient) ConfigSummary() (clientID, redirectURI string, configured bool) {
+	if c == nil {
+		return "", "", false
+	}
+	config := c.configSnapshot()
+	return config.ClientID, config.RedirectURI, config.ClientID != "" && config.ClientSecret != "" && config.RedirectURI != ""
+}
+
+func (c *GoogleClient) configSnapshot() GoogleConfig {
+	if c == nil {
+		return GoogleConfig{}
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.config
 }

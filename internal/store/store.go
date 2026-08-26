@@ -27,22 +27,48 @@ var (
 )
 
 type Store struct {
-	mu        sync.RWMutex
-	users     map[string]*domain.User
-	services  map[string]*domain.Service
-	mailboxes map[string]*domain.Mailbox
-	orders    map[string]*domain.Order
-	seq       int64
+	mu            sync.RWMutex
+	users         map[string]*domain.User
+	services      map[string]*domain.Service
+	mailboxes     map[string]*domain.Mailbox
+	orders        map[string]*domain.Order
+	systemConfigs map[string]map[string]string
+	seq           int64
 }
 
 func New() *Store {
 	s := &Store{
 		users: make(map[string]*domain.User), services: make(map[string]*domain.Service),
-		mailboxes: make(map[string]*domain.Mailbox), orders: make(map[string]*domain.Order),
+		mailboxes: make(map[string]*domain.Mailbox), orders: make(map[string]*domain.Order), systemConfigs: make(map[string]map[string]string),
 		seq: 1000,
 	}
 	s.seed()
 	return s
+}
+
+func (s *Store) GetSystemConfig(key string) (map[string]string, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	value, ok := s.systemConfigs[key]
+	if !ok {
+		return nil, false, nil
+	}
+	return cloneStringMap(value), true, nil
+}
+
+func (s *Store) SaveSystemConfig(key string, value map[string]string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.systemConfigs[key] = cloneStringMap(value)
+	return nil
+}
+
+func cloneStringMap(value map[string]string) map[string]string {
+	cloned := make(map[string]string, len(value))
+	for key, item := range value {
+		cloned[key] = item
+	}
+	return cloned
 }
 
 func (s *Store) seed() {

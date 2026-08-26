@@ -65,9 +65,9 @@ curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh
 
 1. 在 Google Cloud 创建“Web 应用” OAuth 客户端。
 2. 将 `https://heromail.cc/api/v1/oauth/google/callback` 添加为已获授权的重定向 URI；本地开发可另加对应的 `http://localhost` 地址。
-3. 在 `.env` 填写 `GOOGLE_CLIENT_ID`、`GOOGLE_CLIENT_SECRET` 和 `GOOGLE_REDIRECT_URI`。
+3. 登录管理员后台，在“接入渠道”的 Google Gmail OAuth2 卡片填写并保存 Google OAuth 三项配置；也兼容在服务环境变量中预配置。
 4. OAuth 同意屏幕至少申请 `openid`、`email`、`profile` 和 `https://mail.google.com/` 权限。公开应用使用 Gmail 全量邮件权限时，按 Google 要求完成测试用户和应用审核。
-5. 重启 HeroMail，在“接入渠道”中点击“连接 Google 邮箱”。授权成功后邮箱会自动进入验证队列。
+5. 在“接入渠道”中点击“连接 Google 邮箱”。授权成功后邮箱会自动进入验证队列。
 
 ### 易支付
 

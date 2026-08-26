@@ -38,6 +38,12 @@ type ResourceRepository interface {
 	MarkMailEvent(mailboxID, messageID, sender, subject string, receivedAt time.Time) (bool, error)
 }
 
+// SystemConfigRepository 保存管理员配置。敏感值由具体存储实现负责加密。
+type SystemConfigRepository interface {
+	GetSystemConfig(key string) (map[string]string, bool, error)
+	SaveSystemConfig(key string, value map[string]string) error
+}
+
 // MailboxServiceStateRepository 用于收件扫描将历史命中平台写入邮箱×平台状态。
 // 单独定义可选接口，避免影响只实现邮箱资源的测试适配器。
 type MailboxServiceStateRepository interface {

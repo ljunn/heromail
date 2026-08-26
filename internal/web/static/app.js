@@ -28,6 +28,7 @@ const state = {
   users: [],
   auditLogs: [],
   paymentProviders: [],
+  googleOAuth: { configured: false, client_id_masked: "", redirect_uri: "" },
   version: null,
   health: null,
   adminTabs: { users: "accounts", payments: "orders", operations: "alerts" },
@@ -642,6 +643,14 @@ function renderAdminOperations() {
 }
 
 
+function renderGoogleOAuthConfigCard(oauth) {
+  oauth = oauth || {};
+  const redirect = oauth.redirect_uri || "https://heromail.cc/api/v1/oauth/google/callback";
+  const status = oauth.configured ? '<span class="chip green">已配置</span>' : '<span class="chip orange">待配置</span>';
+  const client = oauth.configured ? "当前客户端：" + esc(oauth.client_id_masked) + "。" : "请先保存 Google Cloud 创建的 Web 应用客户端信息。";
+  return '<section class="card google-oauth-config-card"><div class="card-head"><div><h2>Google Gmail OAuth2</h2><span class="muted">管理员配置</span></div>' + status + '</div><div class="card-body form-grid"><label>客户端 ID<input id="google-client-id" class="field" placeholder="' + esc(oauth.client_id_masked || "粘贴 Google OAuth 客户端 ID") + '" autocomplete="off"></label><label>客户端密钥<input id="google-client-secret" class="field" type="password" placeholder="' + (oauth.configured ? "已配置，留空则保留" : "粘贴 Google OAuth 客户端密钥") + '" autocomplete="new-password"></label><label>回调地址<input id="google-redirect-uri" class="field" value="' + esc(redirect) + '" placeholder="https://heromail.cc/api/v1/oauth/google/callback"></label><div class="form-actions"><button class="primary-btn" data-action="save-google-oauth">保存 Google 配置</button><button class="ghost-btn" data-action="google-oauth">连接 Google 邮箱</button></div><div class="notice">' + client + ' 回调地址必须与 Google Cloud 中完全一致。系统只保存加密配置，不接收 Google 密码。</div></div></section>';
+}
+
 function render() {
   if (!state.user) { redirectToLogin(); return Promise.resolve(); }
   document.body.classList.toggle("admin-shell", state.role === "admin");
@@ -651,7 +660,9 @@ function render() {
   const views = { apply: renderApply, current: renderCurrent, orders: () => renderOrders() + renderPager("orders"), docs: renderDocs, keys: renderAPIKeys, webhooks: renderWebhooks, usage: renderUsage, balance: renderBalance, settings: renderSettings, "admin-overview": renderAdminOverview, "admin-mailboxes": renderAdminMailboxes, "admin-channels": renderAdminChannels, "admin-services": renderAdminServices, "admin-orders": renderAdminOrders, "admin-users": renderAdminUsers, "admin-payments": renderAdminPayments, "admin-operations": renderAdminOperations, "admin-settings": renderAdminSettings, "admin-account": renderAdminAccount };
   const content = state.loading ? `<div class="portal-loading" role="status" aria-live="polite">${icon("activity")}<strong>正在加载${state.role === "admin" ? "运营数据" : "工作台"}…</strong><span>数据更新后会自动显示</span></div>` : (views[state.view] || views.apply)();
   const error = state.pageError ? `<div class="page-error" role="alert"><div>${icon("activity")}<span><strong>当前页面加载失败</strong>${esc(state.pageError)}</span></div><button class="ghost-btn" data-action="refresh">重新加载</button></div>` : "";
-  document.querySelector("#content").innerHTML = error + content;
+  const pageContent = state.view === "admin-channels" && !state.loading ? renderGoogleOAuthConfigCard(state.googleOAuth) + content : content;
+  document.querySelector("#content").innerHTML = error + pageContent;
+  document.querySelector("#content").classList.toggle("admin-channels-page", state.view === "admin-channels");
   setPageUpdating(false);
   updateAccountChrome();
   return Promise.resolve();
@@ -767,6 +778,7 @@ async function loadAdmin() {
     state.mailboxes = rememberPage("mailboxes", mailboxes);
     state.services = services.data || [];
   }
+  if (state.view === "admin-channels") state.googleOAuth = (await api("/api/v1/admin/settings/google-oauth")).data;
   if (state.view === "admin-overview") state.orders = rememberPage("admin-orders", await api("/api/v1/admin/orders?page=1&page_size=6"));
   if (state.view === "admin-orders") {
     const params = new URLSearchParams({ page: requestedPage("admin-orders"), page_size: 20 });
@@ -1042,6 +1054,24 @@ async function startGoogleOAuth() {
     if (button) { button.disabled = false; button.textContent = originalLabel; }
   }
 }
+async function saveGoogleOAuth() {
+  const button = document.querySelector('[data-action="save-google-oauth"]');
+  const clientID = document.querySelector("#google-client-id")?.value.trim() || "";
+  const clientSecret = document.querySelector("#google-client-secret")?.value.trim() || "";
+  const redirectURI = document.querySelector("#google-redirect-uri")?.value.trim() || "";
+  if (!clientID && !state.googleOAuth?.configured) return toast("请输入 Google OAuth 客户端 ID");
+  if (!clientSecret && !state.googleOAuth?.configured) return toast("请输入 Google OAuth 客户端密钥");
+  if (button?.disabled) return;
+  if (button) { button.disabled = true; button.textContent = "正在保存…"; }
+  try {
+    state.googleOAuth = (await api("/api/v1/admin/settings/google-oauth", { method: "POST", body: JSON.stringify({ client_id: clientID, client_secret: clientSecret, redirect_uri: redirectURI }) })).data;
+    await render();
+    toast("Google OAuth 配置已保存");
+  } catch (error) {
+    toast(error?.message || "Google OAuth 配置保存失败");
+    if (button) { button.disabled = false; button.textContent = "保存 Google 配置"; }
+  }
+}
 async function checkUpdates() {
   state.version = (await api("/api/v1/admin/system/version")).data;
   await render();
@@ -1169,6 +1199,7 @@ document.addEventListener("click", async event => {
   if (action === "save-payment-provider") { await savePaymentProvider(); return; }
   if (action === "delete-payment-provider") { await deletePaymentProvider(target); return; }
   if (action === "microsoft-oauth") { await startMicrosoftOAuth(); return; }
+  if (action === "save-google-oauth") { await saveGoogleOAuth(); return; }
   if (action === "google-oauth") { await startGoogleOAuth(); return; }
   if (action === "check-updates") { await checkUpdates(); return; }
   if (action === "upgrade") { showUpgradeConfirmation(); return; }

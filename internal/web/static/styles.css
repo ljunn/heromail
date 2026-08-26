@@ -135,6 +135,8 @@ tr.selected td { background: #f0f6ff; }
 .search { min-width: 230px; }
 .admin-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(300px, .7fr); gap: 16px; }
 .admin-grid + .admin-grid { margin-top: 16px; }
+.admin-channels-page > .admin-grid:first-of-type > .card:nth-child(2) { display: none; }
+.google-oauth-config-card { margin-bottom: 16px; }
 .bar-list { display: grid; gap: 13px; }
 .bar-row { display: grid; grid-template-columns: 86px 1fr 54px; align-items: center; gap: 10px; font-size: 12px; }
 .bar-track { overflow: hidden; height: 8px; border-radius: 99px; background: #edf1f6; }
