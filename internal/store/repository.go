@@ -27,6 +27,12 @@ type Repository interface {
 	MailboxesPage(page, pageSize int) ([]domain.Mailbox, int64)
 }
 
+// InvalidMailboxOrderRepository 用于回收已经绑定到未验证邮箱的存量订单。
+// 这是可选接口，避免影响只实现基础订单能力的测试适配器。
+type InvalidMailboxOrderRepository interface {
+	ReconcileInvalidMailboxOrders() int
+}
+
 // MailboxFilter 是管理员邮箱资源列表的服务端筛选条件。
 type MailboxFilter struct {
 	Query string

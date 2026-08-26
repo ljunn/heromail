@@ -709,6 +709,52 @@ func (s *PostgresStore) ReapExpired() int {
 	return count
 }
 
+// ReconcileInvalidMailboxOrders 回收已绑定到未验证邮箱的存量订单。
+// 部署修复版本后立即运行一次，之后由主循环定期运行，覆盖升级前已经产生的坏租约。
+func (s *PostgresStore) ReconcileInvalidMailboxOrders() int {
+	var ids []string
+	s.db.Model(&sqlOrder{}).
+		Joins("JOIN mailboxes AS m ON m.id = registration_orders.mailbox_id").
+		Where("registration_orders.status IN ? AND COALESCE(m.verification_status, '') <> ?", []string{string(domain.OrderAssigned), string(domain.OrderWaitingCode)}, domain.MailboxVerificationVerified).
+		Pluck("registration_orders.id", &ids)
+	count := 0
+	for _, id := range ids {
+		err := s.db.Transaction(func(tx *gorm.DB) error {
+			var orderRef sqlOrder
+			if err := tx.Select("id", "mailbox_id").First(&orderRef, "id = ?", id).Error; err != nil {
+				return err
+			}
+			var mailbox sqlMailbox
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&mailbox, "id = ?", orderRef.MailboxID).Error; err != nil {
+				return err
+			}
+			if mailbox.VerificationStatus == domain.MailboxVerificationVerified {
+				return nil
+			}
+			var order sqlOrder
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ?", id).Error; err != nil {
+				return err
+			}
+			if domain.OrderStatus(order.Status) != domain.OrderAssigned && domain.OrderStatus(order.Status) != domain.OrderWaitingCode {
+				return nil
+			}
+			order.FailureReason = "邮箱未通过连接验证，订单已自动退款"
+			if err := s.refundOrder(tx, &order, domain.OrderExpiredRefunded); err != nil {
+				return err
+			}
+			updates := map[string]any{"active_order_id": "", "state": string(domain.MailboxError), "health_score": 0}
+			if mailbox.State == string(domain.MailboxBlocked) {
+				delete(updates, "state")
+			}
+			return tx.Model(&sqlMailbox{}).Where("id = ?", mailbox.ID).Updates(updates).Error
+		})
+		if err == nil {
+			count++
+		}
+	}
+	return count
+}
+
 func (s *PostgresStore) Overview() domain.Overview {
 	var result domain.Overview
 	var total, outlook, outlookDE, hotmail, gmail, icloud, mailcom, pending, verified, available, leased, authErrors, blocked int64
@@ -913,13 +959,20 @@ func (s *PostgresStore) refundOrder(tx *gorm.DB, order *sqlOrder, status domain.
 	description := "管理员取消订单退款"
 	if status == domain.OrderExpiredRefunded {
 		description = "30 分钟未收到验证码自动退款"
+		if strings.TrimSpace(order.FailureReason) != "" {
+			description = order.FailureReason
+		}
 	}
 	ledger := sqlWalletLedger{ID: uuid.NewString(), UserID: user.ID, OrderID: order.ID, Type: "order_refund", AmountCents: order.PriceCents, BalanceAfterCents: user.BalanceCents, Description: description}
 	if err := tx.Create(&ledger).Error; err != nil {
 		return err
 	}
 	if status == domain.OrderExpiredRefunded {
-		if err := tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: "system", Action: "order.timeout_refund", ResourceType: "registration_order", ResourceID: order.ID, Detail: description}).Error; err != nil {
+		action := "order.timeout_refund"
+		if strings.TrimSpace(order.FailureReason) != "" {
+			action = "order.mailbox_verification_refund"
+		}
+		if err := tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: "system", Action: action, ResourceType: "registration_order", ResourceID: order.ID, Detail: description}).Error; err != nil {
 			return err
 		}
 	}

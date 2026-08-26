@@ -45,6 +45,11 @@ func main() {
 		repository = postgresStore
 	}
 	server := httpapi.NewServer(repository)
+	if invalidOrders, ok := repository.(store.InvalidMailboxOrderRepository); ok {
+		if count := invalidOrders.ReconcileInvalidMailboxOrders(); count > 0 {
+			log.Printf("已回收 %d 个绑定未验证邮箱的订单", count)
+		}
+	}
 	if resources, ok := repository.(store.ResourceRepository); ok && server.MailboxVerifier != nil {
 		if queue, queueOK := repository.(store.MailboxVerificationQueue); queueOK {
 			go mail.NewVerificationWorkerWithConcurrency(resources, queue, server.MailboxVerifier, positiveEnvInt("HEROMAIL_VERIFICATION_CONCURRENCY", 64), positiveEnvInt("HEROMAIL_HISTORY_SCAN_CONCURRENCY", 8)).Run(ctx)
@@ -67,6 +72,9 @@ func main() {
 				return
 			case <-ticker.C:
 				repository.ReapExpired()
+				if invalidOrders, ok := repository.(store.InvalidMailboxOrderRepository); ok {
+					invalidOrders.ReconcileInvalidMailboxOrders()
+				}
 				if payments, ok := repository.(store.PaymentRepository); ok {
 					payments.ReapExpiredPaymentOrders()
 				}

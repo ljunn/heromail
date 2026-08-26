@@ -99,6 +99,33 @@ func TestCancelRefundsAndReleasesLease(t *testing.T) {
 	}
 }
 
+func TestReconcileRefundsOrderBoundToUnverifiedMailbox(t *testing.T) {
+	s := New()
+	before, _ := s.User("user-001")
+	order, err := s.CreateOrder("user-001", "svc-openai", "unverified-mailbox", testOrderProviders)
+	if err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	s.mailboxes[order.MailboxID].VerificationStatus = domain.MailboxVerificationFailed
+	s.mailboxes[order.MailboxID].VerificationError = "Graph：授权已失效"
+
+	if got := s.ReconcileInvalidMailboxOrders(); got != 1 {
+		t.Fatalf("reconciled orders = %d, want 1", got)
+	}
+	refunded, ok := s.GetOrder(order.ID)
+	if !ok || refunded.Status != domain.OrderExpiredRefunded || !refunded.Refunded {
+		t.Fatalf("order after reconciliation = %+v, want refunded", refunded)
+	}
+	after, _ := s.User("user-001")
+	if math.Abs(after.Balance-before.Balance) > 0.000001 {
+		t.Fatalf("balance after reconciliation = %.2f, want %.2f", after.Balance, before.Balance)
+	}
+	mailbox, ok := findMailbox(s.Mailboxes(), order.MailboxAddress)
+	if !ok || mailbox.ActiveOrderID != "" || mailbox.State != domain.MailboxError || mailbox.HealthScore != 0 {
+		t.Fatalf("mailbox after reconciliation = %+v, want unavailable and released", mailbox)
+	}
+}
+
 func TestCreateOrderStartsListeningForAtLeastThirtyMinutes(t *testing.T) {
 	s := New()
 	before, _ := s.User("user-001")

@@ -452,6 +452,30 @@ func (s *Store) ReapExpired() int {
 	return count
 }
 
+// ReconcileInvalidMailboxOrders 回收已绑定到未验证邮箱的存量订单。
+func (s *Store) ReconcileInvalidMailboxOrders() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, order := range s.orders {
+		if order.Status != domain.OrderAssigned && order.Status != domain.OrderWaitingCode {
+			continue
+		}
+		mailbox := s.mailboxes[order.MailboxID]
+		if mailbox == nil || mailbox.VerificationStatus == domain.MailboxVerificationVerified {
+			continue
+		}
+		order.Status = domain.OrderExpiredRefunded
+		order.Refunded = true
+		order.FailureReason = "邮箱未通过连接验证，订单已自动退款"
+		s.refundAndReleaseLocked(order, true)
+		mailbox.State = domain.MailboxError
+		mailbox.HealthScore = 0
+		count++
+	}
+	return count
+}
+
 func (s *Store) Overview() domain.Overview {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

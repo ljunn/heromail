@@ -235,6 +235,21 @@ func (s *PostgresStore) UpdateMailboxVerification(actorID, mailboxID, method, st
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&mailbox, "id = ?", mailboxID).Error; err != nil {
 			return ErrMailboxNotFound
 		}
+		// 验证失败后不能让已经分配的邮箱继续占用订单。订单退款和邮箱释放
+		// 必须与验证状态写入在同一个事务里，避免出现“失败邮箱仍在收码”的中间状态。
+		if status == domain.MailboxVerificationFailed && mailbox.ActiveOrderID != "" {
+			var order sqlOrder
+			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ?", mailbox.ActiveOrderID).Error
+			if err == nil && (domain.OrderStatus(order.Status) == domain.OrderAssigned || domain.OrderStatus(order.Status) == domain.OrderWaitingCode) {
+				order.FailureReason = "邮箱连接验证失败，订单已自动退款"
+				if err := s.refundOrder(tx, &order, domain.OrderExpiredRefunded); err != nil {
+					return err
+				}
+			} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			mailbox.ActiveOrderID = ""
+		}
 		mailbox.ConnectionMethod = method
 		mailbox.VerificationStatus = status
 		mailbox.VerificationError = verificationError
@@ -246,7 +261,7 @@ func (s *PostgresStore) UpdateMailboxVerification(actorID, mailboxID, method, st
 			if (mailbox.State == string(domain.MailboxError) || mailbox.State == string(domain.MailboxPending)) && mailbox.ActiveOrderID == "" {
 				mailbox.State = string(domain.MailboxAvailable)
 			}
-		} else if status == domain.MailboxVerificationFailed && mailbox.ActiveOrderID == "" && mailbox.State != string(domain.MailboxBlocked) {
+		} else if status == domain.MailboxVerificationFailed && mailbox.State != string(domain.MailboxBlocked) {
 			mailbox.State = string(domain.MailboxError)
 			mailbox.HealthScore = 0
 		}
@@ -411,7 +426,9 @@ func (s *PostgresStore) ConsumeOAuthState(state string) (OAuthState, error) {
 
 func (s *PostgresStore) WaitingOrdersForMailbox(mailboxID string) []domain.Order {
 	var rows []sqlOrder
-	s.db.Where("mailbox_id = ? AND status IN ? AND expires_at > ?", mailboxID, []domain.OrderStatus{domain.OrderAssigned, domain.OrderWaitingCode}, time.Now()).Order("created_at ASC").Find(&rows)
+	s.db.Where("mailbox_id = ? AND status IN ? AND expires_at > ?", mailboxID, []domain.OrderStatus{domain.OrderAssigned, domain.OrderWaitingCode}, time.Now()).
+		Where("EXISTS (SELECT 1 FROM mailboxes WHERE mailboxes.id = registration_orders.mailbox_id AND mailboxes.verification_status = ?)", domain.MailboxVerificationVerified).
+		Order("created_at ASC").Find(&rows)
 	items := make([]domain.Order, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, mapOrder(row))
