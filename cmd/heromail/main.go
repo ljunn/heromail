@@ -47,7 +47,7 @@ func main() {
 	server := httpapi.NewServer(repository)
 	if resources, ok := repository.(store.ResourceRepository); ok && server.MailboxVerifier != nil {
 		if queue, queueOK := repository.(store.MailboxVerificationQueue); queueOK {
-			go mail.NewVerificationWorkerWithConcurrency(resources, queue, server.MailboxVerifier, positiveEnvInt("HEROMAIL_VERIFICATION_CONCURRENCY", 32), positiveEnvInt("HEROMAIL_HISTORY_SCAN_CONCURRENCY", 4)).Run(ctx)
+			go mail.NewVerificationWorkerWithConcurrency(resources, queue, server.MailboxVerifier, positiveEnvInt("HEROMAIL_VERIFICATION_CONCURRENCY", 64), positiveEnvInt("HEROMAIL_HISTORY_SCAN_CONCURRENCY", 8)).Run(ctx)
 		}
 	}
 	if resources, ok := repository.(store.ResourceRepository); ok && server.Microsoft != nil {

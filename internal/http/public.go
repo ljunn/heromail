@@ -43,14 +43,17 @@ func copyProviderPrices(prices map[string]float64) map[string]float64 {
 
 func (s *Server) publicStatus(c *gin.Context) {
 	status := "operational"
-	if response := s.Store.Overview(); response.AuthErrors > 0 {
+	overview := s.Store.Overview()
+	mailWorkerStatus := "operational"
+	if overview.AuthErrors > 0 || overview.PendingMailboxes > 0 {
 		status = "degraded"
+		mailWorkerStatus = "degraded"
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
 		"status":      status,
 		"api":         "operational",
 		"allocation":  "operational",
-		"mail_worker": "operational",
+		"mail_worker": mailWorkerStatus,
 		"updated_at":  time.Now().UTC(),
 	}})
 }

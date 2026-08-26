@@ -239,7 +239,7 @@ func (s *Store) CreateOrder(userID, serviceID, requestID string, mailboxProvider
 	now := time.Now()
 	var selected *domain.Mailbox
 	for _, mailbox := range s.mailboxes {
-		if mailbox.State != domain.MailboxAvailable || mailbox.ActiveOrderID != "" || mailbox.HealthScore < 60 || !mailboxConnectionValid(mailbox, now) {
+		if mailbox.VerificationStatus != domain.MailboxVerificationVerified || mailbox.State != domain.MailboxAvailable || mailbox.ActiveOrderID != "" || mailbox.HealthScore < 60 || !mailboxConnectionValid(mailbox, now) {
 			continue
 		}
 		if !contains(requestedProviders, mailbox.Provider) {

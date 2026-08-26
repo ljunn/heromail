@@ -14,9 +14,10 @@ type MailboxCredential struct {
 }
 
 type OAuthState struct {
-	ActorID  string `json:"actor_id"`
-	Pool     string `json:"pool"`
-	Provider string `json:"provider,omitempty"`
+	ActorID   string `json:"actor_id"`
+	Pool      string `json:"pool"`
+	Provider  string `json:"provider,omitempty"`
+	MailboxID string `json:"mailbox_id,omitempty"`
 }
 
 type ResourceRepository interface {
@@ -57,6 +58,11 @@ type MailboxServiceAdminRepository interface {
 type MailboxVerificationQueue interface {
 	EnqueueMailboxVerification(ctx context.Context, mailboxID string) error
 	DequeueMailboxVerification(ctx context.Context, timeout time.Duration) (string, error)
+}
+
+type MailboxHistoryScanQueue interface {
+	EnqueueMailboxHistoryScan(ctx context.Context, mailboxID string) error
+	DequeueMailboxHistoryScan(ctx context.Context, timeout time.Duration) (string, error)
 }
 
 var (

@@ -262,12 +262,35 @@ func (s *PostgresStore) PendingMailboxVerificationIDs(limit int) ([]string, erro
 		limit = 1000
 	}
 	var ids []string
+	cutoff := time.Now().Add(-5 * time.Minute)
 	err := s.db.Model(&sqlMailbox{}).
-		Where("verification_status = ? OR (verification_status = ? AND connection_method IN ? AND oauth_valid_until <= ?)",
+		Where(`
+			verification_status = ?
+			OR (
+				verification_status = ?
+				AND updated_at <= ?
+				AND (
+					LOWER(verification_error) LIKE '%timeout%'
+					OR LOWER(verification_error) LIKE '%deadline%'
+					OR LOWER(verification_error) LIKE '%connection%'
+					OR LOWER(verification_error) LIKE '%network%'
+					OR LOWER(verification_error) LIKE '%连接%'
+					OR LOWER(verification_error) LIKE '%超时%'
+					OR verification_error LIKE '% 500%'
+					OR verification_error LIKE '% 502%'
+					OR verification_error LIKE '% 503%'
+					OR verification_error LIKE '% 504%'
+				)
+			)
+			OR (
+				verification_status = ?
+				AND connection_method IN ?
+				AND oauth_valid_until <= ?
+			)`,
 			domain.MailboxVerificationPending,
+			domain.MailboxVerificationFailed, cutoff,
 			domain.MailboxVerificationVerified,
-			[]string{domain.MailboxConnectionMicrosoftGraph, domain.MailboxConnectionMicrosoftOAuth},
-			time.Now()).
+			[]string{domain.MailboxConnectionMicrosoftGraph, domain.MailboxConnectionMicrosoftOAuth}, time.Now()).
 		Order("updated_at ASC").Limit(limit).Pluck("id", &ids).Error
 	return ids, err
 }
@@ -275,19 +298,37 @@ func (s *PostgresStore) PendingMailboxVerificationIDs(limit int) ([]string, erro
 const (
 	mailboxVerificationQueueKey = "heromail:mailbox:verification:queue"
 	mailboxVerificationSetKey   = "heromail:mailbox:verification:queued"
+	mailboxHistoryQueueKey      = "heromail:mailbox:history:queue"
+	mailboxHistorySetKey        = "heromail:mailbox:history:queued"
 )
 
 func (s *PostgresStore) EnqueueMailboxVerification(ctx context.Context, mailboxID string) error {
+	return s.enqueueMailboxJob(ctx, mailboxID, mailboxVerificationQueueKey, mailboxVerificationSetKey)
+}
+
+func (s *PostgresStore) DequeueMailboxVerification(ctx context.Context, timeout time.Duration) (string, error) {
+	return s.dequeueMailboxJob(ctx, timeout, mailboxVerificationQueueKey, mailboxVerificationSetKey)
+}
+
+func (s *PostgresStore) EnqueueMailboxHistoryScan(ctx context.Context, mailboxID string) error {
+	return s.enqueueMailboxJob(ctx, mailboxID, mailboxHistoryQueueKey, mailboxHistorySetKey)
+}
+
+func (s *PostgresStore) DequeueMailboxHistoryScan(ctx context.Context, timeout time.Duration) (string, error) {
+	return s.dequeueMailboxJob(ctx, timeout, mailboxHistoryQueueKey, mailboxHistorySetKey)
+}
+
+func (s *PostgresStore) enqueueMailboxJob(ctx context.Context, mailboxID, queueKey, setKey string) error {
 	script := redis.NewScript(`
 if redis.call("SADD", KEYS[1], ARGV[1]) == 1 then
   redis.call("LPUSH", KEYS[2], ARGV[1])
 end
 return 1`)
-	return script.Run(ctx, s.redis, []string{mailboxVerificationSetKey, mailboxVerificationQueueKey}, mailboxID).Err()
+	return script.Run(ctx, s.redis, []string{setKey, queueKey}, mailboxID).Err()
 }
 
-func (s *PostgresStore) DequeueMailboxVerification(ctx context.Context, timeout time.Duration) (string, error) {
-	values, err := s.redis.BRPop(ctx, timeout, mailboxVerificationQueueKey).Result()
+func (s *PostgresStore) dequeueMailboxJob(ctx context.Context, timeout time.Duration, queueKey, setKey string) (string, error) {
+	values, err := s.redis.BRPop(ctx, timeout, queueKey).Result()
 	if errors.Is(err, redis.Nil) {
 		return "", nil
 	}
@@ -298,7 +339,7 @@ func (s *PostgresStore) DequeueMailboxVerification(ctx context.Context, timeout 
 		return "", nil
 	}
 	mailboxID := values[1]
-	if err := s.redis.SRem(ctx, mailboxVerificationSetKey, mailboxID).Err(); err != nil {
+	if err := s.redis.SRem(ctx, setKey, mailboxID).Err(); err != nil {
 		return "", err
 	}
 	return mailboxID, nil

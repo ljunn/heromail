@@ -569,7 +569,7 @@ function renderAdminMailboxes() {
   const importBusy = state.busyAction === "mailbox-import";
   const total = state.pagination.mailboxes?.total || 0;
   const mailboxQuery = state.mailboxFilters.query;
-  const rows = state.mailboxes.map(mailbox => `<tr><td>${esc(mailbox.address)}</td><td>${esc(providerLabel(mailbox.provider))}</td><td>${esc(connectionLabel(mailbox.connection_method))}</td><td>${statusChip(mailbox.verification_status || mailbox.state)}${mailbox.verification_error ? `<div class="muted">${esc(mailbox.verification_error)}</div>` : ""}</td><td>${esc((mailbox.registered_platforms || []).join(", ") || "—")}</td><td>${mailbox.health_score}/100</td><td>${time(mailbox.last_verified_at)}</td><td><div class="table-actions"><button class="link-btn" data-action="mailbox-messages" data-id="${esc(mailbox.id)}" data-address="${esc(mailbox.address)}">收件</button><button class="link-btn" data-action="mailbox-registration" data-id="${esc(mailbox.id)}">平台注册</button><button class="link-btn" data-action="verify-mailbox" data-id="${esc(mailbox.id)}">验证</button><button class="link-btn danger-text" data-action="delete-mailbox" data-id="${esc(mailbox.id)}">删除</button></div></td></tr>`).join("");
+  const rows = state.mailboxes.map(mailbox => { const failedMicrosoft = ["outlook", "outlook_de", "hotmail"].includes(mailbox.provider) && ["failed", "auth_error"].includes(mailbox.verification_status || mailbox.state); return `<tr><td>${esc(mailbox.address)}</td><td>${esc(providerLabel(mailbox.provider))}</td><td>${esc(connectionLabel(mailbox.connection_method))}</td><td>${statusChip(mailbox.verification_status || mailbox.state)}${mailbox.verification_error ? `<div class="muted">${esc(mailbox.verification_error)}</div>` : ""}</td><td>${esc((mailbox.registered_platforms || []).join(", ") || "—")}</td><td>${mailbox.health_score}/100</td><td>${time(mailbox.last_verified_at)}</td><td><div class="table-actions"><button class="link-btn" data-action="mailbox-messages" data-id="${esc(mailbox.id)}" data-address="${esc(mailbox.address)}">收件</button><button class="link-btn" data-action="mailbox-registration" data-id="${esc(mailbox.id)}">平台注册</button><button class="link-btn" data-action="verify-mailbox" data-id="${esc(mailbox.id)}">验证</button>${failedMicrosoft ? `<button class="link-btn" data-action="reauthorize-mailbox" data-id="${esc(mailbox.id)}">重新授权</button>` : ""}<button class="link-btn danger-text" data-action="delete-mailbox" data-id="${esc(mailbox.id)}">删除</button></div></td></tr>`; }).join("");
   const pendingCount = state.overview?.pending_mailboxes ?? 0;
   const verifiedCount = state.overview?.verified_mailboxes ?? 0;
   const providerMetrics = mailboxProviders.map(([code, label]) => `<div><span>${label}</span><strong>${state.overview?.[`${code}_mailboxes`] ?? 0}</strong><small>邮箱类型</small></div>`).join("");
@@ -1037,7 +1037,7 @@ async function deletePaymentProvider(target) {
   await api(`/api/v1/admin/payment/providers/${target.dataset.id}`, { method: "DELETE" });
   await refresh(); toast("支付服务商已删除");
 }
-async function startMicrosoftOAuth() { const result = await api("/api/v1/admin/mailboxes/oauth/microsoft", { method: "POST", body: JSON.stringify({}) }); location.href = result.data.authorization_url; }
+async function startMicrosoftOAuth(mailboxID = "") { const result = await api("/api/v1/admin/mailboxes/oauth/microsoft", { method: "POST", body: JSON.stringify(mailboxID ? { mailbox_id: mailboxID } : {}) }); location.href = result.data.authorization_url; }
 async function startGoogleOAuth() {
   const button = document.querySelector('[data-action="google-oauth"]');
   if (button?.disabled) return;
@@ -1188,6 +1188,7 @@ document.addEventListener("click", async event => {
   }
   if (action === "delete-mailbox") { await deleteMailbox(target.dataset.id); return; }
   if (action === "verify-mailbox") { await verifyMailbox(target.dataset.id); return; }
+  if (action === "reauthorize-mailbox") { await startMicrosoftOAuth(target.dataset.id); return; }
   if (action === "edit-service") { showServiceEditor(target.dataset.id || ""); return; }
   if (action === "save-service") { await saveService(); return; }
   if (action === "delete-service") { await deleteService(target.dataset.id); return; }

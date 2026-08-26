@@ -365,7 +365,11 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 	var messageErr error
 	imapCredential := credentialForIMAPFallback(credential, graphErr)
 	if useIMAP {
-		messages, messageErr = w.imap.Messages(ctx, mailbox.Mailbox.Address, imapCredential)
+		if microsoftMailbox && graphErr != nil && credential["password"] == "" {
+			messageErr = graphErr
+		} else {
+			messages, messageErr = w.imap.Messages(ctx, mailbox.Mailbox.Address, imapCredential)
+		}
 	} else if graphErr != nil {
 		messageErr = graphErr
 	} else {

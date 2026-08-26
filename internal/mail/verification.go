@@ -140,7 +140,7 @@ func (v *MailboxVerifier) Verify(ctx context.Context, actorID, mailboxID, ip str
 	}
 
 	imapErr := errors.New("缺少 IMAP 凭证")
-	if v.imap != nil && hasIMAPCredential(credential.Mailbox, config) {
+	if v.imap != nil && hasIMAPFallbackCredential(credential.Mailbox, config, graphErr) {
 		imapCredential := credentialForIMAPFallback(config, graphErr)
 		if refreshed, refreshErr := v.refreshGoogleCredential(ctx, actorID, credential.Mailbox, imapCredential, false, ip); refreshErr != nil {
 			imapErr = refreshErr
@@ -205,7 +205,7 @@ func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, 
 			}
 		}
 	}
-	if v.imap != nil && hasIMAPCredential(credential.Mailbox, config) {
+	if v.imap != nil && hasIMAPFallbackCredential(credential.Mailbox, config, graphErr) {
 		imapCredential := credentialForIMAPFallback(config, graphErr)
 		imapCredential, refreshErr := v.refreshGoogleCredential(ctx, actorID, credential.Mailbox, imapCredential, false, ip)
 		if refreshErr != nil {
@@ -308,9 +308,9 @@ func mergeCredential(existing, refreshed map[string]string) map[string]string {
 }
 
 // credentialForIMAPFallback 避免 Graph 失效时拿同一个失效 access_token 再去尝试 IMAP。
-// 只要存在密码，就优先使用密码或应用专用密码登录 IMAP；没有密码时保留 OAuth Token，支持 IMAP OAuth。
-func credentialForIMAPFallback(config map[string]string, graphErr error) map[string]string {
-	if graphErr == nil || strings.TrimSpace(config["password"]) == "" {
+// Microsoft Graph 失败时只有独立密码凭证才是有效的替代通道；不能把 Graph token 当成“另一个 OAuth 路径”。
+func credentialForIMAPFallback(config map[string]string, _ error) map[string]string {
+	if strings.TrimSpace(config["password"]) == "" {
 		return config
 	}
 	result := cloneCredential(config)
@@ -364,6 +364,13 @@ func hasIMAPCredential(mailbox domain.Mailbox, config map[string]string) bool {
 		return true
 	}
 	return isGmailMailbox(mailbox) && strings.TrimSpace(config["refresh_token"]) != ""
+}
+
+func hasIMAPFallbackCredential(mailbox domain.Mailbox, config map[string]string, graphErr error) bool {
+	if supportsMicrosoftGraph(mailbox) && graphErr != nil && strings.TrimSpace(config["password"]) == "" {
+		return false
+	}
+	return hasIMAPCredential(mailbox, config)
 }
 
 func isGmailMailbox(mailbox domain.Mailbox) bool {

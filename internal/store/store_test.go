@@ -255,6 +255,21 @@ func TestUnverifiedMailboxIsExcludedFromServiceInventory(t *testing.T) {
 	}
 }
 
+func TestCreateOrderDoesNotAllocateUnverifiedMailbox(t *testing.T) {
+	s := New()
+	for _, mailbox := range s.mailboxes {
+		if mailbox.ID == "mb-001" {
+			mailbox.VerificationStatus = domain.MailboxVerificationPending
+			continue
+		}
+		mailbox.State = domain.MailboxBlocked
+	}
+
+	if _, err := s.CreateOrder("user-001", "svc-adobe", "unverified-mailbox", testOrderProviders); !errors.Is(err, ErrNoMailboxAvailable) {
+		t.Fatalf("待验证邮箱仍可被分配：%v", err)
+	}
+}
+
 func TestCreateOrderChargesAllocatedMailboxProviderPrice(t *testing.T) {
 	s := New()
 	s.services["svc-adobe"].ProviderPrices[domain.MailboxProviderOutlook] = 0.37

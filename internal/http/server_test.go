@@ -592,6 +592,7 @@ type mailboxImportRepositoryStub struct {
 	queued      []string
 	enqueueErr  error
 	oauthState  map[string]store.OAuthState
+	target      store.MailboxCredential
 }
 
 func (s *mailboxImportRepositoryStub) MailboxPoolByName(name string) (domain.MailboxPool, bool) {
@@ -599,10 +600,19 @@ func (s *mailboxImportRepositoryStub) MailboxPoolByName(name string) (domain.Mai
 }
 
 func (s *mailboxImportRepositoryStub) SaveMailbox(_ string, mailbox domain.Mailbox, credential map[string]string, _ string) (domain.Mailbox, error) {
-	mailbox.ID = "mailbox-" + mailbox.Address
+	if mailbox.ID == "" {
+		mailbox.ID = "mailbox-" + mailbox.Address
+	}
 	s.saved = append(s.saved, mailbox)
 	s.credentials = append(s.credentials, credential)
 	return mailbox, nil
+}
+
+func (s *mailboxImportRepositoryStub) GetMailboxCredential(mailboxID string) (store.MailboxCredential, error) {
+	if s.target.Mailbox.ID == mailboxID {
+		return s.target, nil
+	}
+	return store.MailboxCredential{}, store.ErrMailboxNotFound
 }
 
 func (s *mailboxImportRepositoryStub) CreateOAuthState(state string, value store.OAuthState, _ time.Duration) error {
@@ -720,6 +730,42 @@ func TestGoogleOAuthSavesGmailMailboxAndQueuesVerification(t *testing.T) {
 	}
 	if repository.saved[0].Address != "oauth-test@gmail.com" || repository.credentials[0]["refresh_token"] != "google-refresh" {
 		t.Fatalf("Google OAuth 邮箱或凭证错误：mailbox=%+v credential=%v", repository.saved[0], repository.credentials[0])
+	}
+}
+
+func TestMicrosoftOAuthReauthorizationBindsTargetMailbox(t *testing.T) {
+	repository := &mailboxImportRepositoryStub{
+		Repository: store.New(),
+		target:     store.MailboxCredential{Mailbox: domain.Mailbox{ID: "mb-target", Address: "failed@outlook.com", Provider: domain.MailboxProviderOutlook}},
+	}
+	server := NewServer(repository)
+	server.Microsoft = mail.NewMicrosoftClient(mail.MicrosoftConfig{
+		ClientID: "client-id", ClientSecret: "client-secret", RedirectURI: "https://heromail.cc/api/v1/oauth/microsoft/callback",
+	})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/mailboxes/oauth/microsoft", strings.NewReader(`{"mailbox_id":"mb-target"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-HeroMail-Role", "admin")
+	request.Header.Set("X-HeroMail-User", "admin-001")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("Microsoft OAuth 重新授权启动失败：status=%d body=%s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			AuthorizationURL string `json:"authorization_url"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("解析 Microsoft OAuth 响应失败：%v", err)
+	}
+	authURL, err := url.Parse(payload.Data.AuthorizationURL)
+	if err != nil {
+		t.Fatalf("解析 Microsoft OAuth 地址失败：%v", err)
+	}
+	state := authURL.Query().Get("state")
+	if state == "" || repository.oauthState[state].MailboxID != "mb-target" {
+		t.Fatalf("OAuth 状态没有绑定目标邮箱：state=%q value=%+v", state, repository.oauthState[state])
 	}
 }
 

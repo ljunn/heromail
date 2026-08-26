@@ -357,20 +357,32 @@ func (s *Server) microsoftOAuthStart(c *gin.Context) {
 		return
 	}
 	var request struct {
-		Pool string `json:"pool"`
+		Pool      string `json:"pool"`
+		MailboxID string `json:"mailbox_id"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		writeError(c, http.StatusBadRequest, "invalid_request", "请求格式无效")
 		return
 	}
 	request.Pool = domain.DefaultMailboxPoolName
+	if request.MailboxID != "" {
+		credential, err := repository.GetMailboxCredential(request.MailboxID)
+		if err != nil {
+			writeError(c, http.StatusNotFound, "mailbox_not_found", "目标邮箱不存在")
+			return
+		}
+		if !domain.IsMicrosoftMailboxProvider(credential.Mailbox.Provider) {
+			writeError(c, http.StatusBadRequest, "unsupported_mailbox_provider", "只有 Outlook、Outlook.de 和 Hotmail 支持 Microsoft OAuth 重新授权")
+			return
+		}
+	}
 	buffer := make([]byte, 32)
 	if _, err := rand.Read(buffer); err != nil {
 		writeError(c, http.StatusInternalServerError, "oauth_state_failed", "无法创建 OAuth 状态")
 		return
 	}
 	state := base64.RawURLEncoding.EncodeToString(buffer)
-	if err := repository.CreateOAuthState(state, store.OAuthState{ActorID: demoUser(c), Pool: request.Pool, Provider: "microsoft"}, 10*time.Minute); err != nil {
+	if err := repository.CreateOAuthState(state, store.OAuthState{ActorID: demoUser(c), Pool: request.Pool, Provider: "microsoft", MailboxID: request.MailboxID}, 10*time.Minute); err != nil {
 		writeError(c, http.StatusInternalServerError, "oauth_state_failed", err.Error())
 		return
 	}
@@ -404,7 +416,20 @@ func (s *Server) microsoftOAuthCallback(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "unsupported_mailbox_provider", "Microsoft OAuth 只支持 Outlook、Outlook.de 和 Hotmail")
 		return
 	}
+	mailboxID := state.MailboxID
+	if mailboxID != "" {
+		target, targetErr := repository.GetMailboxCredential(mailboxID)
+		if targetErr != nil {
+			writeError(c, http.StatusNotFound, "mailbox_not_found", "目标邮箱不存在")
+			return
+		}
+		if !strings.EqualFold(target.Mailbox.Address, profile.Address) {
+			writeError(c, http.StatusBadRequest, "oauth_mailbox_mismatch", "OAuth 授权账号与目标邮箱不一致")
+			return
+		}
+	}
 	mailbox, err := repository.SaveMailbox(state.ActorID, domain.Mailbox{
+		ID:                  mailboxID,
 		Address:             profile.Address,
 		Provider:            provider,
 		Pool:                domain.DefaultMailboxPoolName,

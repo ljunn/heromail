@@ -15,6 +15,7 @@ type pendingVerificationRepository interface {
 type VerificationWorker struct {
 	repository         pendingVerificationRepository
 	queue              store.MailboxVerificationQueue
+	historyQueue       store.MailboxHistoryScanQueue
 	verifier           *MailboxVerifier
 	concurrency        int
 	historyConcurrency int
@@ -38,20 +39,28 @@ func NewVerificationWorkerWithConcurrency(repository pendingVerificationReposito
 	if historyConcurrency > 32 {
 		historyConcurrency = 32
 	}
-	return &VerificationWorker{repository: repository, queue: queue, verifier: verifier, concurrency: concurrency, historyConcurrency: historyConcurrency}
+	historyQueue, _ := queue.(store.MailboxHistoryScanQueue)
+	return &VerificationWorker{repository: repository, queue: queue, historyQueue: historyQueue, verifier: verifier, concurrency: concurrency, historyConcurrency: historyConcurrency}
 }
 
 func (w *VerificationWorker) Run(ctx context.Context) {
 	if w.verifier == nil || w.queue == nil {
 		return
 	}
-	historyJobs := make(chan string, w.historyConcurrency*2)
+	var historyJobs chan string
+	if w.historyQueue == nil {
+		historyJobs = make(chan string, w.historyConcurrency*2)
+	}
 	var verifyGroup sync.WaitGroup
 	var historyGroup sync.WaitGroup
 	for index := 0; index < w.historyConcurrency; index++ {
 		historyGroup.Add(1)
 		go func() {
 			defer historyGroup.Done()
+			if w.historyQueue != nil {
+				w.consumeHistory(ctx)
+				return
+			}
 			for {
 				select {
 				case <-ctx.Done():
@@ -75,13 +84,15 @@ func (w *VerificationWorker) Run(ctx context.Context) {
 		}()
 	}
 	w.reconcile(ctx)
-	reconcileTicker := time.NewTicker(30 * time.Second)
+	reconcileTicker := time.NewTicker(5 * time.Second)
 	defer reconcileTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			verifyGroup.Wait()
-			close(historyJobs)
+			if historyJobs != nil {
+				close(historyJobs)
+			}
 			historyGroup.Wait()
 			return
 		case <-reconcileTicker.C:
@@ -109,6 +120,10 @@ func (w *VerificationWorker) consume(ctx context.Context, historyJobs chan<- str
 		if verifyErr != nil {
 			continue
 		}
+		if w.historyQueue != nil {
+			_ = w.historyQueue.EnqueueMailboxHistoryScan(ctx, mailboxID)
+			continue
+		}
 		select {
 		case historyJobs <- mailboxID:
 		case <-ctx.Done():
@@ -117,8 +132,23 @@ func (w *VerificationWorker) consume(ctx context.Context, historyJobs chan<- str
 	}
 }
 
+func (w *VerificationWorker) consumeHistory(ctx context.Context) {
+	for {
+		mailboxID, err := w.historyQueue.DequeueMailboxHistoryScan(ctx, 5*time.Second)
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil || mailboxID == "" {
+			continue
+		}
+		historyContext, cancel := context.WithTimeout(ctx, 60*time.Second)
+		_, _ = w.verifier.ScanMailboxHistory(historyContext, "system", mailboxID, "")
+		cancel()
+	}
+}
+
 func (w *VerificationWorker) reconcile(ctx context.Context) {
-	ids, err := w.repository.PendingMailboxVerificationIDs(1000)
+	ids, err := w.repository.PendingMailboxVerificationIDs(5000)
 	if err != nil {
 		return
 	}
