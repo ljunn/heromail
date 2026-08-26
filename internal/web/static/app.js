@@ -1026,7 +1026,22 @@ async function deletePaymentProvider(target) {
   await refresh(); toast("支付服务商已删除");
 }
 async function startMicrosoftOAuth() { const result = await api("/api/v1/admin/mailboxes/oauth/microsoft", { method: "POST", body: JSON.stringify({}) }); location.href = result.data.authorization_url; }
-async function startGoogleOAuth() { const result = await api("/api/v1/admin/mailboxes/oauth/google", { method: "POST", body: JSON.stringify({}) }); location.href = result.data.authorization_url; }
+async function startGoogleOAuth() {
+  const button = document.querySelector('[data-action="google-oauth"]');
+  if (button?.disabled) return;
+  const originalLabel = button?.textContent || "连接 Google 邮箱";
+  if (button) { button.disabled = true; button.textContent = "正在准备授权…"; }
+  try {
+    const result = await api("/api/v1/admin/mailboxes/oauth/google", { method: "POST", body: JSON.stringify({}) });
+    const authorizationURL = result?.data?.authorization_url;
+    if (!authorizationURL) throw new Error("Google OAuth 授权地址为空，请检查服务端配置");
+    location.href = authorizationURL;
+  } catch (error) {
+    const message = error?.message || "Google OAuth 启动失败，请稍后重试";
+    toast(message);
+    if (button) { button.disabled = false; button.textContent = originalLabel; }
+  }
+}
 async function checkUpdates() {
   state.version = (await api("/api/v1/admin/system/version")).data;
   await render();
