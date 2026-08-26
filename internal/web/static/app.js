@@ -660,7 +660,7 @@ function render() {
   const views = { apply: renderApply, current: renderCurrent, orders: () => renderOrders() + renderPager("orders"), docs: renderDocs, keys: renderAPIKeys, webhooks: renderWebhooks, usage: renderUsage, balance: renderBalance, settings: renderSettings, "admin-overview": renderAdminOverview, "admin-mailboxes": renderAdminMailboxes, "admin-channels": renderAdminChannels, "admin-services": renderAdminServices, "admin-orders": renderAdminOrders, "admin-users": renderAdminUsers, "admin-payments": renderAdminPayments, "admin-operations": renderAdminOperations, "admin-settings": renderAdminSettings, "admin-account": renderAdminAccount };
   const content = state.loading ? `<div class="portal-loading" role="status" aria-live="polite">${icon("activity")}<strong>正在加载${state.role === "admin" ? "运营数据" : "工作台"}…</strong><span>数据更新后会自动显示</span></div>` : (views[state.view] || views.apply)();
   const error = state.pageError ? `<div class="page-error" role="alert"><div>${icon("activity")}<span><strong>当前页面加载失败</strong>${esc(state.pageError)}</span></div><button class="ghost-btn" data-action="refresh">重新加载</button></div>` : "";
-  const pageContent = state.view === "admin-channels" && !state.loading ? renderGoogleOAuthConfigCard(state.googleOAuth) + content : content;
+  const pageContent = state.view === "admin-channels" && !state.loading ? content.replace('<div class="admin-grid">', renderGoogleOAuthConfigCard(state.googleOAuth) + '<div class="admin-grid">') : content;
   document.querySelector("#content").innerHTML = error + pageContent;
   document.querySelector("#content").classList.toggle("admin-channels-page", state.view === "admin-channels");
   setPageUpdating(false);
