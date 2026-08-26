@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -411,19 +412,29 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 		if len(messageOrders) == 0 {
 			continue
 		}
-		fresh, markErr := w.repository.MarkMailEvent(mailbox.Mailbox.ID, message.ID, message.Sender, message.Subject, message.ReceivedAt)
-		if markErr != nil || !fresh {
-			continue
-		}
+		matched := false
+		received := false
 		for _, order := range messageOrders {
 			service, ok := w.repository.ServiceByID(order.ServiceID)
 			if !ok {
 				continue
 			}
-			code, matched := matchCode(service, message)
-			if matched {
-				_, _ = w.receiver.ReceiveCodeValue(order.ID, code)
+			code, ruleMatched := matchCode(service, message)
+			if ruleMatched {
+				matched = true
+				if _, receiveErr := w.receiver.ReceiveCodeValue(order.ID, code); receiveErr != nil {
+					// 收码失败时不能先写去重记录，否则瞬时数据库错误会永久丢失验证码。
+					log.Printf("收码失败 order=%s mailbox=%s: %v", order.ID, mailbox.Mailbox.ID, receiveErr)
+					continue
+				}
+				received = true
 				break
+			}
+		}
+		// 未命中平台规则的邮件可以去重；命中但落库失败的邮件必须留给下一轮重试。
+		if received || !matched {
+			if _, markErr := w.repository.MarkMailEvent(mailbox.Mailbox.ID, message.ID, message.Sender, message.Subject, message.ReceivedAt); markErr != nil {
+				log.Printf("记录邮件去重状态失败 mailbox=%s message=%s: %v", mailbox.Mailbox.ID, message.ID, markErr)
 			}
 		}
 	}

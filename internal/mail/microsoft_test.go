@@ -191,6 +191,18 @@ func (s *recordingCodeReceiver) ReceiveCodeValue(orderID, code string) (domain.O
 	return domain.Order{ID: orderID, Code: code, Status: domain.OrderCodeReceived}, nil
 }
 
+type retryingCodeReceiver struct {
+	attempts int
+}
+
+func (s *retryingCodeReceiver) ReceiveCodeValue(orderID, code string) (domain.Order, error) {
+	s.attempts++
+	if s.attempts == 1 {
+		return domain.Order{}, fmt.Errorf("测试用瞬时数据库错误")
+	}
+	return domain.Order{ID: orderID, Code: code, Status: domain.OrderCodeReceived}, nil
+}
+
 func TestWorkerScansMailboxCredentialsPastFirstPage(t *testing.T) {
 	repository := &pagingWorkerRepository{mailboxes: make([]store.MailboxCredential, 205)}
 	for index := range repository.mailboxes {
@@ -250,6 +262,43 @@ func TestWorkerReceivesMailSentBeforeUserConfirmation(t *testing.T) {
 	}
 	if receiver.orderID != repository.order.ID || receiver.code != "628419" {
 		t.Fatalf("用户确认前已到达的验证码未写入订单：order=%q code=%q", receiver.orderID, receiver.code)
+	}
+}
+
+func TestWorkerRetriesMailWhenReceivingCodeFails(t *testing.T) {
+	now := time.Now().UTC()
+	repository := &earlyMailRepository{
+		order: domain.Order{
+			ID:          "order-retry-mail",
+			ServiceID:   "service-openai",
+			Status:      domain.OrderWaitingCode,
+			AssignedAt:  now.Add(-time.Minute),
+			SubmittedAt: now.Add(-time.Minute),
+			ExpiresAt:   now.Add(5 * time.Minute),
+		},
+		service: domain.Service{ID: "service-openai", SenderDomains: []string{"openai.com"}, SubjectKeywords: []string{"verification"}, Regex: `\b(\d{6})\b`},
+	}
+	receiver := &retryingCodeReceiver{}
+	worker := NewWorker(repository, receiver, NewMicrosoftClient(MicrosoftConfig{}), time.Minute)
+	worker.imap = &messageConnectorStub{messages: []Message{{
+		ID:          "message-retry",
+		Sender:      "noreply@openai.com",
+		Subject:     "Verification code",
+		BodyPreview: "Your code is 628419",
+		ReceivedAt:  now,
+	}}}
+	mailbox := store.MailboxCredential{
+		Mailbox: domain.Mailbox{ID: "mailbox-retry", Address: "user@outlook.com", ConnectionMethod: domain.MailboxConnectionIMAP},
+		Config:  map[string]string{"password": "test-only"},
+	}
+
+	worker.pollMailbox(context.Background(), mailbox)
+	if repository.marked {
+		t.Fatal("收码失败的邮件不应提前写入去重记录")
+	}
+	worker.pollMailbox(context.Background(), mailbox)
+	if !repository.marked || receiver.attempts != 2 {
+		t.Fatalf("收码失败后没有在下一轮重试：marked=%v attempts=%d", repository.marked, receiver.attempts)
 	}
 }
 
