@@ -56,7 +56,7 @@ curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh
 ### Microsoft Graph
 
 1. 在 Microsoft Entra 中创建 Web 应用，并配置委托权限 `User.Read`、`Mail.Read` 和 `offline_access`。
-2. 将回调地址设为 `https://你的域名/api/v1/admin/mailboxes/oauth/microsoft/callback`。
+2. 将回调地址设为 `https://你的域名/api/v1/oauth/microsoft/callback`。
 3. 在 `.env` 填写 `MICROSOFT_CLIENT_ID`、`MICROSOFT_CLIENT_SECRET`、`MICROSOFT_TENANT` 和 `MICROSOFT_REDIRECT_URI`。
 
 ### Google Gmail OAuth
