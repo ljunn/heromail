@@ -26,7 +26,7 @@ HeroMail 是一个可自托管的邮箱资源池与平台注册验证码管理�
 curl -fsSL https://github.com/ljunn/heromail/releases/latest/download/install.sh | sudo bash
 ```
 
-脚本会检查 Git、Docker 和 Docker Compose，自动定位 GitHub 最新正式 Release，将对应标签安装到 `/opt/heromail`，生成数据库密码、管理员密码、加密主密钥和 Worker 令牌，然后启动 HeroMail、PostgreSQL、Redis 和升级执行器。已安装的环境不允许通过重跑脚本升级，必须在 GitHub 发布新版本后使用管理后台的在线升级按钮。
+脚本会检查 Git、Docker 和 Docker Compose，自动定位 GitHub 最新正式 Release，将对应标签安装到 `/opt/heromail`，生成数据库密码、管理员密码、加密主密钥和 Worker 令牌，然后启动 HeroMail、PostgreSQL、Redis 和升级执行器。已安装的环境不允许通过重跑脚本升级，必须由 GitHub Release 工作流通过 SSH 调用升级脚本。
 
 自定义安装目录、端口和公网地址：
 
@@ -84,7 +84,9 @@ Google OAuth 同意屏幕需要填写公开的应用隐私权政策和服务条�
 
 ## 在线升级
 
-一键部署会启动独立升级执行器。只有创建 `v*` GitHub Release 时，工作流才会更新 `ghcr.io/ljunn/heromail:latest`。已登录管理员可在“系统设置”检查最新正式版本、阅读完整更新日志并确认在线升级。服务会先创建并校验 PostgreSQL 压缩备份，备份失败则不会写入升级任务；升级器随后校验固定官方镜像并仅重建 HeroMail 容器，PostgreSQL 和 Redis 数据卷不会被删除；不支持从网页或环境变量切换任意镜像。
+一键部署会启动独立升级执行器。只有创建 `v*` GitHub Release 时，工作流才会更新 `ghcr.io/ljunn/heromail:latest`，随后自动通过 SSH 调用服务器上的 `scripts/upgrade.sh <版本标签>`。升级脚本会先创建并校验 PostgreSQL 压缩备份，再拉取带版本号的官方 GHCR 镜像并切换 HeroMail 容器；健康检查或版本标签校验失败会自动恢复上一镜像，PostgreSQL 和 Redis 数据卷不会被删除。升级请求、失败和成功都会写入审计日志。
+
+自动升级需要在 GitHub 仓库 Secrets 中配置 `SERVER_HOST`、`SERVER_USER`，并配置 `SERVER_SSH_KEY` 或 `SERVER_PASSWORD` 其中一种认证方式；可选 `SERVER_PORT`（默认 `22`）和 `SERVER_APP_HOME`（默认 `/opt/heromail`）。SSH 用户必须是 root，或具备无需交互输入密码的 `sudo` 权限。
 
 每个正式版本都必须先在 [`CHANGELOG.md`](CHANGELOG.md) 增加同版本章节。发布工作流会使用该章节作为 GitHub Release 正文，缺少对应更新日志时会直接阻止发布。
 

@@ -71,7 +71,7 @@ select_docker_command() {
 
 fetch_project() {
   if [ -d "${install_dir}/.git" ]; then
-    die "HeroMail 已安装在 ${install_dir}，后续版本必须先在 GitHub 发布，再使用管理后台的在线升级按钮。"
+    die "HeroMail 已安装在 ${install_dir}，后续版本必须先在 GitHub 发布，再由 Release Action 自动升级。"
   fi
 
   if [ -e "${install_dir}" ] && [ -n "$(ls -A "${install_dir}" 2>/dev/null)" ]; then
@@ -157,7 +157,7 @@ show_result() {
     "管理员密码：请在 ${install_dir}/.env 中查看 HEROMAIL_ADMIN_PASSWORD" \
     "查看状态：cd ${install_dir} && ${docker_cmd[*]} compose ps" \
     "查看日志：cd ${install_dir} && ${docker_cmd[*]} compose logs -f heromail" \
-    "更新版本：GitHub 发布新版本后，使用管理后台的在线升级按钮" \
+    "更新版本：GitHub 发布正式版本后，Release Action 会自动通过 SSH 升级线上" \
     "停止服务：cd ${install_dir} && ${docker_cmd[*]} compose down"
 }
 

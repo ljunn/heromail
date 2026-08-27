@@ -2,6 +2,32 @@
 
 本项目的所有正式版本变更都记录在此文件。版本号遵循语义化版本，发布日期使用 UTC。
 
+## [1.10.25] - 2026-08-27
+
+### 新增
+
+- 正式 Release 完成后由 GitHub Actions 通过 SSH 自动调用线上升级脚本，无需管理员打开网页手动触发。
+- Release 附带带校验和的 `upgrade.sh`，支持 PostgreSQL 备份、官方 GHCR 版本镜像切换和失败回滚。
+
+### 修复
+
+- 修复发布完成后线上仍停留在旧镜像、必须依赖后台按钮才能升级的问题。
+- 修复 Docker 升级没有确认目标版本和健康状态的问题。
+
+### 安全
+
+- Action 只下载正式 Release 的升级脚本并校验 SHA-256，升级脚本只接受 `v*.*.*` 版本和官方 GHCR 镜像。
+- SSH 密钥仅通过 GitHub Secrets 注入；备份文件权限限制为管理员可读，日志不输出环境变量或数据库凭据。
+
+### 兼容性
+
+- 保留管理员后台在线升级接口；已有 Docker Compose、PostgreSQL、Redis 和升级执行器部署可直接使用 Action 自动升级。
+
+### 部署注意事项
+
+- 在仓库 Secrets 配置 `SERVER_HOST`、`SERVER_USER`，以及 `SERVER_SSH_KEY` 或 `SERVER_PASSWORD`；可选配置 `SERVER_PORT` 和 `SERVER_APP_HOME`。
+- Release 工作流会在正式版本创建完成后自动备份 PostgreSQL、切换镜像并检查 `/readyz`；失败时自动恢复上一镜像。
+
 ## [1.10.24] - 2026-08-27
 
 ### 新增

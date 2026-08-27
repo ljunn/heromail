@@ -140,12 +140,14 @@ jobs:
               -ldflags="-s -w -X github.com/ljunn/heromail/internal/buildinfo.Version=${version} -X github.com/ljunn/heromail/internal/buildinfo.Commit=${GITHUB_SHA} -X github.com/ljunn/heromail/internal/buildinfo.BuildTime=${build_time}" \
               -o "${stage}/heromail" ./cmd/heromail
             cp README.md LICENSE docker-compose.yml .env.example "${stage}/"
-            cp scripts/install.sh "${stage}/scripts/"
+            cp scripts/install.sh scripts/upgrade.sh "${stage}/scripts/"
             tar -C "${stage}" -czf "release-assets/heromail-linux-${arch}.tar.gz" .
             sha256sum "release-assets/heromail-linux-${arch}.tar.gz" > "release-assets/heromail-linux-${arch}.tar.gz.sha256"
             rm -rf "${stage}"
           done
           cp scripts/install.sh release-assets/install.sh
+          cp scripts/upgrade.sh release-assets/upgrade.sh
+          (cd release-assets && sha256sum upgrade.sh > upgrade.sh.sha256)
       - name: 校验并提取版本日志
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -174,3 +176,37 @@ jobs:
           fi
           retry gh release upload "${GITHUB_REF_NAME}" release-assets/* --clobber
           retry gh release edit "${GITHUB_REF_NAME}" --draft=false
+      - name: 发布后通过 SSH 自动升级线上
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          DEPLOY_TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+          APP_HOME: ${{ secrets.SERVER_APP_HOME || '/opt/heromail' }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          envs: DEPLOY_TAG,REPOSITORY,APP_HOME
+          command_timeout: 30m
+          script_stop: true
+          script: |
+            set -Eeuo pipefail
+            test -n "${DEPLOY_TAG}"
+            test -n "${REPOSITORY}"
+            temp_dir="$(mktemp -d)"
+            trap 'rm -rf "${temp_dir}"' EXIT
+            asset_base="https://github.com/${REPOSITORY}/releases/download/${DEPLOY_TAG}"
+            curl --fail --silent --show-error --location --retry 5 --retry-delay 2 \
+              "${asset_base}/upgrade.sh" -o "${temp_dir}/upgrade.sh"
+            curl --fail --silent --show-error --location --retry 5 --retry-delay 2 \
+              "${asset_base}/upgrade.sh.sha256" -o "${temp_dir}/upgrade.sh.sha256"
+            (cd "${temp_dir}" && sha256sum -c upgrade.sh.sha256)
+            chmod 0750 "${temp_dir}/upgrade.sh"
+            if [[ "$(id -u)" == "0" ]]; then
+              APP_HOME="${APP_HOME}" "${temp_dir}/upgrade.sh" "${DEPLOY_TAG}"
+            else
+              sudo -n env APP_HOME="${APP_HOME}" "${temp_dir}/upgrade.sh" "${DEPLOY_TAG}"
+            fi
+            echo "线上版本 ${DEPLOY_TAG} 已通过数据库备份、镜像校验和健康检查。"
