@@ -203,10 +203,11 @@ jobs:
             curl --fail --silent --show-error --location --retry 5 --retry-delay 2 \
               "${asset_base}/upgrade.sh.sha256" -o "${temp_dir}/upgrade.sh.sha256"
             (cd "${temp_dir}" && sha256sum -c upgrade.sh.sha256)
-            chmod 0750 "${temp_dir}/upgrade.sh"
+            install -d -m 0750 "${APP_HOME}/scripts"
+            install -m 0750 "${temp_dir}/upgrade.sh" "${APP_HOME}/scripts/upgrade.sh"
             if [[ "$(id -u)" == "0" ]]; then
-              APP_HOME="${APP_HOME}" "${temp_dir}/upgrade.sh" "${DEPLOY_TAG}"
+              APP_HOME="${APP_HOME}" "${APP_HOME}/scripts/upgrade.sh" "${DEPLOY_TAG}"
             else
-              sudo -n env APP_HOME="${APP_HOME}" "${temp_dir}/upgrade.sh" "${DEPLOY_TAG}"
+              sudo -n env APP_HOME="${APP_HOME}" "${APP_HOME}/scripts/upgrade.sh" "${DEPLOY_TAG}"
             fi
             echo "线上版本 ${DEPLOY_TAG} 已通过数据库备份、镜像校验和健康检查。"
