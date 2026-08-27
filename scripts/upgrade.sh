@@ -61,7 +61,7 @@ wait_for_health() {
   local attempts=0
   local container_id=""
   local container_state=""
-  while (( attempts < 60 )); do
+  while (( attempts < 300 )); do
     container_id="$("${compose[@]}" ps -q heromail 2>/dev/null || true)"
     if [[ -n "${container_id}" ]]; then
       container_state="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container_id}" 2>/dev/null || true)"
