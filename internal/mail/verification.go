@@ -550,8 +550,11 @@ func (c *MicrosoftIMAPConnector) Verify(ctx context.Context, address string, cre
 		return err
 	}
 	defer done()
-	if err := client.Noop().Wait(); err != nil {
-		return fmt.Errorf("健康检查失败：%w", err)
+	// Microsoft IMAP 在 XOAUTH2 认证后直接 NOOP 可能返回
+	// "User is authenticated but not connected"。源项目登录后直接打开收件箱，
+	// 以选择目录作为连接验证，也能确认后续读取路径可用。
+	if _, err := client.Select("INBOX", &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
+		return fmt.Errorf("打开收件箱失败：%w", err)
 	}
 	return nil
 }

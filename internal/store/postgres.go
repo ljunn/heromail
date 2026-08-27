@@ -40,6 +40,8 @@ const defaultServicesSeedKey = "target-services-v1"
 
 const historicalMicrosoftIMAPReverifyKey = "microsoft-imap-oauth-reverify-v1"
 
+const microsoftIMAPNoopReverifyKey = "microsoft-imap-noop-reverify-v1"
+
 func shouldSeedDefaultServices(serviceCount int64, markerExists bool) bool {
 	return !markerExists && serviceCount == 0
 }
@@ -80,7 +82,10 @@ func (s *PostgresStore) migrate() error {
 	if err := s.migrateLegacyMicrosoftIMAPOAuth(); err != nil {
 		return err
 	}
-	return s.migrateHistoricalMicrosoftIMAPOAuth()
+	if err := s.migrateHistoricalMicrosoftIMAPOAuth(); err != nil {
+		return err
+	}
+	return s.migrateMicrosoftIMAPNoopFailures()
 }
 
 // migrateLegacyMicrosoftIMAPOAuth 修复旧版本把源系统 IMAP OAuth 当成 Graph
@@ -222,6 +227,46 @@ func microsoftIMAPOAuthCredential(credential map[string]string) bool {
 	return strings.TrimSpace(credential["client_id"]) != "" &&
 		strings.TrimSpace(credential["refresh_token"]) != "" &&
 		(protocol == "imap" || protocol == "imap_oauth" || protocol == "microsoft_imap" || protocol == "microsoft_imap_oauth")
+}
+
+// migrateMicrosoftIMAPNoopFailures 重新排队旧版 NOOP 健康检查产生的假失败。
+// 仅匹配明确的 Microsoft IMAP 会话错误，避免覆盖真实授权失效记录。
+func (s *PostgresStore) migrateMicrosoftIMAPNoopFailures() error {
+	var marker sqlSeedState
+	markerErr := s.db.First(&marker, "key = ?", microsoftIMAPNoopReverifyKey).Error
+	if markerErr == nil {
+		return nil
+	}
+	if !errors.Is(markerErr, gorm.ErrRecordNotFound) {
+		return markerErr
+	}
+	result := s.db.Model(&sqlMailbox{}).
+		Where("provider IN ? AND verification_status = ? AND verification_error ILIKE ?", []string{domain.MailboxProviderOutlook, domain.MailboxProviderOutlookDE, domain.MailboxProviderHotmail}, domain.MailboxVerificationFailed, "%User is authenticated but not connected%").
+		Updates(map[string]any{
+			"verification_status": domain.MailboxVerificationPending,
+			"verification_error":  "",
+			"state":               gorm.Expr("CASE WHEN active_order_id = '' THEN ? ELSE state END", domain.MailboxPending),
+			"updated_at":          time.Now().UTC(),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("重新验证 Microsoft IMAP NOOP 假失败邮箱失败：%w", result.Error)
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&sqlSeedState{Key: microsoftIMAPNoopReverifyKey, CreatedAt: time.Now().UTC()}).Error; err != nil {
+			return err
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		return tx.Create(&sqlAuditLog{
+			ID:           uuid.NewString(),
+			ActorID:      "system",
+			Action:       "mailbox.oauth.reverify",
+			ResourceType: "mailbox",
+			ResourceID:   "all",
+			Detail:       fmt.Sprintf("重新验证旧版 Microsoft IMAP NOOP 假失败邮箱 %d 条", result.RowsAffected),
+		}).Error
+	})
 }
 
 func (s *PostgresStore) migrateProviderPricing() error {
