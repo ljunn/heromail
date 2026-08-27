@@ -64,6 +64,18 @@ func TestMailboxLineParserMarksLegacyMicrosoftOAuthAsIMAP(t *testing.T) {
 	}
 }
 
+func TestMailboxLineParserSupportsAdobeRegisterJSONFields(t *testing.T) {
+	line := `{"email":"source@outlook.com","password":"secret","clientId":"00000000-0000-0000-0000-000000000001","refreshToken":"refresh-value","imapUser":"source-login@outlook.com"}`
+	record, err := NewMailboxLineParser().Parse(line)
+	if err != nil {
+		t.Fatalf("解析源项目 JSON 记录失败：%v", err)
+	}
+	credential := record.Credential()
+	if credential["client_id"] == "" || credential["refresh_token"] != "refresh-value" || credential["imap_user"] != "source-login@outlook.com" {
+		t.Fatalf("源项目驼峰字段没有正确转换：%v", credential)
+	}
+}
+
 func TestMailboxLineParserRejectsUnsupportedProviderWithoutLeakingLine(t *testing.T) {
 	line := "someone@example.com:very-secret-password"
 	_, err := NewMailboxLineParser().Parse(line)

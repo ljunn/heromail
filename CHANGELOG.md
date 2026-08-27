@@ -2,6 +2,30 @@
 
 本项目的所有正式版本变更都记录在此文件。版本号遵循语义化版本，发布日期使用 UTC。
 
+## [1.10.29] - 2026-08-27
+
+### 新增
+
+- 兼容源项目的 `clientId`、`refreshToken`、`accessToken` 和 `imapUser` 导入字段。
+- 对历史误判为失败的 Microsoft IMAP OAuth 邮箱执行一次性重新验证。
+
+### 修复
+
+- Microsoft IMAP OAuth 凭证直接使用 IMAP XOAUTH2，不再先用 IMAP Token 请求 Graph。
+- IMAP 登录优先使用导入记录中的用户名，兼容源项目的实际邮箱登录方式。
+
+### 安全
+
+- 历史重验证只针对包含 Microsoft IMAP OAuth 凭证的邮箱，凭证仍加密存储且不写入日志。
+
+### 兼容性
+
+- 保留现有 Graph OAuth、密码 IMAP 和邮箱分配规则；无效凭证仍会标记为异常。
+
+### 部署注意事项
+
+- 发布 `v1.10.29` 后，服务启动时只执行一次历史 Microsoft IMAP OAuth 重新验证排队。
+
 ## [1.10.28] - 2026-08-27
 
 ### 新增

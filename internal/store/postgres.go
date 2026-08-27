@@ -38,6 +38,8 @@ type PostgresStore struct {
 
 const defaultServicesSeedKey = "target-services-v1"
 
+const historicalMicrosoftIMAPReverifyKey = "microsoft-imap-oauth-reverify-v1"
+
 func shouldSeedDefaultServices(serviceCount int64, markerExists bool) bool {
 	return !markerExists && serviceCount == 0
 }
@@ -75,7 +77,10 @@ func (s *PostgresStore) migrate() error {
 	if err := s.migrateProviderPricing(); err != nil {
 		return err
 	}
-	return s.migrateLegacyMicrosoftIMAPOAuth()
+	if err := s.migrateLegacyMicrosoftIMAPOAuth(); err != nil {
+		return err
+	}
+	return s.migrateHistoricalMicrosoftIMAPOAuth()
 }
 
 // migrateLegacyMicrosoftIMAPOAuth 修复旧版本把源系统 IMAP OAuth 当成 Graph
@@ -141,6 +146,82 @@ func legacyMicrosoftIMAPOAuthCredential(credential map[string]string) bool {
 	return strings.TrimSpace(credential["oauth_protocol"]) == "" &&
 		strings.TrimSpace(credential["client_id"]) != "" &&
 		strings.TrimSpace(credential["refresh_token"]) != ""
+}
+
+// migrateHistoricalMicrosoftIMAPOAuth 重新验证旧版本误走 Graph/Basic Auth 的
+// Microsoft IMAP OAuth 记录。只执行一次，避免每次重启都重复触发大量 Token 请求。
+func (s *PostgresStore) migrateHistoricalMicrosoftIMAPOAuth() error {
+	var marker sqlSeedState
+	markerErr := s.db.First(&marker, "key = ?", historicalMicrosoftIMAPReverifyKey).Error
+	if markerErr == nil {
+		return nil
+	}
+	if !errors.Is(markerErr, gorm.ErrRecordNotFound) {
+		return markerErr
+	}
+
+	var requeued int64
+	var rows []sqlMailbox
+	providers := []string{domain.MailboxProviderOutlook, domain.MailboxProviderOutlookDE, domain.MailboxProviderHotmail}
+	result := s.db.Where("provider IN ? AND verification_status = ? AND encrypted_credential <> ''", providers, domain.MailboxVerificationFailed).FindInBatches(&rows, 500, func(tx *gorm.DB, _ int) error {
+		for index := range rows {
+			var credential map[string]string
+			if err := s.decryptJSON(rows[index].EncryptedCredential, &credential); err != nil {
+				continue
+			}
+			if !legacyMicrosoftIMAPOAuthCredential(credential) && !microsoftIMAPOAuthCredential(credential) {
+				continue
+			}
+			updates := map[string]any{
+				"verification_status": domain.MailboxVerificationPending,
+				"verification_error":  "",
+				"updated_at":          time.Now().UTC(),
+			}
+			if legacyMicrosoftIMAPOAuthCredential(credential) {
+				credential["oauth_protocol"] = "imap"
+				encrypted, err := s.encryptJSON(credential)
+				if err != nil {
+					return err
+				}
+				updates["encrypted_credential"] = encrypted
+			}
+			if rows[index].ActiveOrderID == "" {
+				updates["state"] = domain.MailboxPending
+			}
+			updated := tx.Model(&sqlMailbox{}).Where("id = ? AND verification_status = ?", rows[index].ID, domain.MailboxVerificationFailed).Updates(updates)
+			if updated.Error != nil {
+				return updated.Error
+			}
+			requeued += updated.RowsAffected
+		}
+		return nil
+	})
+	if result.Error != nil {
+		return fmt.Errorf("重新验证历史 Microsoft IMAP OAuth 邮箱失败：%w", result.Error)
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&sqlSeedState{Key: historicalMicrosoftIMAPReverifyKey, CreatedAt: time.Now().UTC()}).Error; err != nil {
+			return err
+		}
+		if requeued == 0 {
+			return nil
+		}
+		return tx.Create(&sqlAuditLog{
+			ID:           uuid.NewString(),
+			ActorID:      "system",
+			Action:       "mailbox.oauth.reverify",
+			ResourceType: "mailbox",
+			ResourceID:   "all",
+			Detail:       fmt.Sprintf("重新验证历史 Microsoft IMAP OAuth 邮箱 %d 条", requeued),
+		}).Error
+	})
+}
+
+func microsoftIMAPOAuthCredential(credential map[string]string) bool {
+	protocol := strings.ToLower(strings.TrimSpace(credential["oauth_protocol"]))
+	return strings.TrimSpace(credential["client_id"]) != "" &&
+		strings.TrimSpace(credential["refresh_token"]) != "" &&
+		(protocol == "imap" || protocol == "imap_oauth" || protocol == "microsoft_imap" || protocol == "microsoft_imap_oauth")
 }
 
 func (s *PostgresStore) migrateProviderPricing() error {

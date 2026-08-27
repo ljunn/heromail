@@ -192,7 +192,7 @@ func TestMailboxVerifierDoesNotReuseGraphTokenAsIMAPFallback(t *testing.T) {
 	}
 }
 
-func TestMailboxVerifierProbesGraphThenImportedMicrosoftIMAPOAuth(t *testing.T) {
+func TestMailboxVerifierUsesIMAPForImportedMicrosoftIMAPOAuth(t *testing.T) {
 	repository := &verificationRepositoryStub{credential: store.MailboxCredential{
 		Mailbox: domain.Mailbox{ID: "mailbox-imported-imap", Address: "user@outlook.com"},
 		Config:  map[string]string{"client_id": "source-client", "refresh_token": "source-refresh"},
@@ -200,8 +200,8 @@ func TestMailboxVerifierProbesGraphThenImportedMicrosoftIMAPOAuth(t *testing.T) 
 	graph := &microsoftIMAPGraphConnectorStub{}
 	imap := &imapConnectorStub{}
 	result, err := NewMailboxVerifier(repository, graph, imap).Verify(context.Background(), "system", repository.credential.Mailbox.ID, "")
-	if err != nil || result.Method != domain.MailboxConnectionIMAP || graph.imapRefreshes != 1 || graph.refreshes != 1 || imap.calls != 1 {
-		t.Fatalf("导入的 Microsoft OAuth 未完成 Graph/IMAP 探测：result=%+v err=%v imap_refreshes=%d graph_refreshes=%d imap=%d", result, err, graph.imapRefreshes, graph.refreshes, imap.calls)
+	if err != nil || result.Method != domain.MailboxConnectionIMAP || graph.imapRefreshes != 1 || graph.refreshes != 0 || imap.calls != 1 {
+		t.Fatalf("导入的 Microsoft OAuth 未直接使用 IMAP：result=%+v err=%v imap_refreshes=%d graph_refreshes=%d imap=%d", result, err, graph.imapRefreshes, graph.refreshes, imap.calls)
 	}
 	if imap.credentials[0]["access_token"] != "imap-access" {
 		t.Fatalf("刷新后的 IMAP Token 未传给连接器：%v", imap.credentials[0])
@@ -329,6 +329,20 @@ func TestIMAPServerConfigForSupportedProviders(t *testing.T) {
 		if err != nil || config.Address != test.server {
 			t.Fatalf("邮箱 %s 的 IMAP 配置 = %+v, %v，期望 %s", test.address, config, err, test.server)
 		}
+	}
+}
+
+func TestIMAPUsernameUsesImportedSourceValue(t *testing.T) {
+	if got := imapUsername("source@outlook.com", map[string]string{"imap_user": "login@outlook.com"}); got != "login@outlook.com" {
+		t.Fatalf("未使用导入的 IMAP 用户名：%q", got)
+	}
+	if got := imapUsername("source@outlook.com", nil); got != "source@outlook.com" {
+		t.Fatalf("缺少 IMAP 用户名时应回退邮箱地址：%q", got)
+	}
+	client := newXOAuth2Client(imapUsername("source@outlook.com", map[string]string{"imap_user": "login@outlook.com"}), "access-token")
+	mechanism, response, err := client.Start()
+	if err != nil || mechanism != "XOAUTH2" || string(response) != "user=login@outlook.com\x01auth=Bearer access-token\x01\x01" {
+		t.Fatalf("XOAUTH2 未使用源项目的 IMAP 用户名：mechanism=%q response=%q err=%v", mechanism, response, err)
 	}
 }
 

@@ -29,6 +29,7 @@ type MailboxImportRecord struct {
 	ClientSecret string
 	AccessToken  string
 	RefreshToken string
+	IMAPUser     string
 	// ConnectionMethod 记录导入凭据实际使用的收件协议。
 	ConnectionMethod string
 	OAuthProtocol    string
@@ -43,6 +44,7 @@ func (r MailboxImportRecord) Credential() map[string]string {
 		"access_token":   r.AccessToken,
 		"refresh_token":  r.RefreshToken,
 		"oauth_protocol": r.OAuthProtocol,
+		"imap_user":      r.IMAPUser,
 	}
 	result := make(map[string]string, len(values))
 	for key, value := range values {
@@ -88,10 +90,11 @@ func parseMailboxJSONLine(line string) (MailboxImportRecord, error) {
 		Address:          firstImportValue(values, "email", "address", "username"),
 		Password:         firstImportValue(values, "password", "pass"),
 		TOTPURL:          firstImportValue(values, "totp_url", "totp", "otp_url", "two_factor_url", "2fa_url"),
-		ClientID:         firstImportValue(values, "client_id", "clientid"),
-		ClientSecret:     firstImportValue(values, "client_secret", "clientsecret"),
-		AccessToken:      firstImportValue(values, "access_token", "accesstoken"),
-		RefreshToken:     firstImportValue(values, "refresh_token", "refreshtoken"),
+		ClientID:         firstImportValue(values, "client_id", "clientid", "clientId"),
+		ClientSecret:     firstImportValue(values, "client_secret", "clientsecret", "clientSecret"),
+		AccessToken:      firstImportValue(values, "access_token", "accesstoken", "accessToken"),
+		RefreshToken:     firstImportValue(values, "refresh_token", "refreshtoken", "refreshToken"),
+		IMAPUser:         firstImportValue(values, "imap_user", "imapuser", "imapUser"),
 		ConnectionMethod: firstImportValue(values, "connection_method", "connection"),
 		OAuthProtocol:    firstImportValue(values, "oauth_protocol", "oauth_type", "protocol", "auth_type"),
 	}
@@ -160,6 +163,8 @@ func mailboxRecordFromFields(fields []string) (MailboxImportRecord, error) {
 				record.ConnectionMethod = fieldValue
 			case "oauth_protocol", "oauth_type", "protocol", "auth_type":
 				record.OAuthProtocol = fieldValue
+			case "imap_user", "imapuser":
+				record.IMAPUser = fieldValue
 			}
 			continue
 		}

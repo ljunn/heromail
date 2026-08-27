@@ -386,7 +386,9 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 	microsoftMailbox := supportsMicrosoftGraph(mailbox.Mailbox)
 	microsoftIMAPOAuth := isMicrosoftIMAPOAuth(mailbox.Mailbox, credential)
 	imapOnly := mailbox.Mailbox.ConnectionMethod == domain.MailboxConnectionIMAP
-	useIMAP := !microsoftMailbox || imapOnly
+	// 源项目导入的 Microsoft OAuth 只有 IMAP scope，直接走 IMAP；否则拿 IMAP
+	// refresh token 请求 Graph 会得到 401/403，并可能消耗一次轮换 token。
+	useIMAP := !microsoftMailbox || imapOnly || microsoftIMAPOAuth
 	var graphErr error
 	var messageErr error
 	validUntil, _ := time.Parse(time.RFC3339, credential["expires_at"])

@@ -126,7 +126,9 @@ func (v *MailboxVerifier) Verify(ctx context.Context, actorID, mailboxID, ip str
 	microsoftIMAPOAuth := isMicrosoftIMAPOAuth(credential.Mailbox, config)
 	imapOnly := credential.Mailbox.ConnectionMethod == domain.MailboxConnectionIMAP
 	graphErr := errors.New("缺少 Graph OAuth 凭证")
-	if microsoftMailbox && !imapOnly && v.graph != nil && (config["access_token"] != "" || config["refresh_token"] != "") {
+	// 源项目导入的 Microsoft OAuth 是 IMAP scope，不能先拿它请求 Graph。
+	// 某些租户的 refresh token 会轮换，错误地刷新一次 Graph 还可能消耗掉可用的 IMAP token。
+	if microsoftMailbox && !imapOnly && !microsoftIMAPOAuth && v.graph != nil && (config["access_token"] != "" || config["refresh_token"] != "") {
 		accessToken := config["access_token"]
 		validUntil, _ := time.Parse(time.RFC3339, config["expires_at"])
 		didRefresh := false
@@ -226,7 +228,8 @@ func (v *MailboxVerifier) Verify(ctx context.Context, actorID, mailboxID, ip str
 	return MailboxVerificationResult{Method: domain.MailboxConnectionAuto, Status: domain.MailboxVerificationFailed, VerifiedAt: now}, errors.New(message)
 }
 
-// ReadMessages 读取授权请求所需的邮箱内容；Microsoft 优先 Graph，其余渠道直接使用 IMAP。
+// ReadMessages 读取授权请求所需的邮箱内容；Microsoft Graph OAuth 优先 Graph，
+// 源项目导入的 IMAP OAuth 直接使用 IMAP，其余渠道也直接使用 IMAP。
 // 凭证只在本次请求的内存中使用，正文也不会写入审计日志。
 func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, ip string) ([]Message, error) {
 	credential, err := v.repository.GetMailboxCredential(mailboxID)
@@ -238,7 +241,7 @@ func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, 
 	microsoftIMAPOAuth := isMicrosoftIMAPOAuth(credential.Mailbox, config)
 	imapOnly := credential.Mailbox.ConnectionMethod == domain.MailboxConnectionIMAP
 	graphErr := errors.New("缺少 Graph OAuth 凭证")
-	if microsoftMailbox && !imapOnly && v.graph != nil && (config["access_token"] != "" || config["refresh_token"] != "") {
+	if microsoftMailbox && !imapOnly && !microsoftIMAPOAuth && v.graph != nil && (config["access_token"] != "" || config["refresh_token"] != "") {
 		accessToken := config["access_token"]
 		validUntil, _ := time.Parse(time.RFC3339, config["expires_at"])
 		if accessToken == "" || (!validUntil.IsZero() && !validUntil.After(time.Now().UTC())) {
@@ -553,6 +556,13 @@ func (c *MicrosoftIMAPConnector) Verify(ctx context.Context, address string, cre
 	return nil
 }
 
+func imapUsername(address string, credential map[string]string) string {
+	if username := strings.TrimSpace(credential["imap_user"]); username != "" {
+		return username
+	}
+	return address
+}
+
 func (c *MicrosoftIMAPConnector) connect(ctx context.Context, address string, credential map[string]string) (*imapclient.Client, func(), error) {
 	endpoint, err := imapServerConfig(address)
 	if err != nil {
@@ -578,11 +588,16 @@ func (c *MicrosoftIMAPConnector) connect(ctx context.Context, address string, cr
 		close(done)
 		_ = client.Close()
 	}
+	username := imapUsername(address, credential)
 	if accessToken := credential["access_token"]; accessToken != "" {
-		err = client.Authenticate(newXOAuth2Client(address, accessToken))
+		err = client.Authenticate(newXOAuth2Client(username, accessToken))
 	} else if password := credential["password"]; password != "" {
-		for _, username := range endpoint.LoginCandidates {
-			err = client.Login(username, password).Wait()
+		candidates := endpoint.LoginCandidates
+		if username != address {
+			candidates = append([]string{username}, candidates...)
+		}
+		for _, loginUsername := range candidates {
+			err = client.Login(loginUsername, password).Wait()
 			if err == nil {
 				break
 			}
