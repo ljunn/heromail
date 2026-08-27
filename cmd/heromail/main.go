@@ -52,7 +52,9 @@ func main() {
 	}
 	if resources, ok := repository.(store.ResourceRepository); ok && server.MailboxVerifier != nil {
 		if queue, queueOK := repository.(store.MailboxVerificationQueue); queueOK {
-			go mail.NewVerificationWorkerWithConcurrency(resources, queue, server.MailboxVerifier, positiveEnvInt("HEROMAIL_VERIFICATION_CONCURRENCY", 64), positiveEnvInt("HEROMAIL_HISTORY_SCAN_CONCURRENCY", 8)).Run(ctx)
+			// Microsoft IMAP 对单租户并发会话有限制；源项目使用 4 个验证线程。
+			// 大批量重验证时保持低并发，避免把有效账号触发为假性连接失败。
+			go mail.NewVerificationWorkerWithConcurrency(resources, queue, server.MailboxVerifier, positiveEnvInt("HEROMAIL_VERIFICATION_CONCURRENCY", 4), positiveEnvInt("HEROMAIL_HISTORY_SCAN_CONCURRENCY", 2)).Run(ctx)
 		}
 	}
 	if resources, ok := repository.(store.ResourceRepository); ok && server.Microsoft != nil {
