@@ -44,6 +44,8 @@ const microsoftIMAPNoopReverifyKey = "microsoft-imap-noop-reverify-v1"
 
 const microsoftIMAPPasswordFallbackReverifyKey = "microsoft-imap-password-fallback-reverify-v1"
 
+const microsoftIMAPPasswordOnlyReverifyKey = "microsoft-imap-password-only-reverify-v1"
+
 func shouldSeedDefaultServices(serviceCount int64, markerExists bool) bool {
 	return !markerExists && serviceCount == 0
 }
@@ -90,7 +92,10 @@ func (s *PostgresStore) migrate() error {
 	if err := s.migrateMicrosoftIMAPNoopFailures(); err != nil {
 		return err
 	}
-	return s.migrateMicrosoftIMAPPasswordFallbackFailures()
+	if err := s.migrateMicrosoftIMAPPasswordFallbackFailures(); err != nil {
+		return err
+	}
+	return s.migrateMicrosoftIMAPPasswordOnlyFailures()
 }
 
 // migrateLegacyMicrosoftIMAPOAuth 修复旧版本把源系统 IMAP OAuth 当成 Graph
@@ -339,6 +344,73 @@ func (s *PostgresStore) migrateMicrosoftIMAPPasswordFallbackFailures() error {
 func microsoftIMAPPasswordFallbackCredential(credential map[string]string) bool {
 	return strings.TrimSpace(credential["password"]) != "" &&
 		(legacyMicrosoftIMAPOAuthCredential(credential) || microsoftIMAPOAuthCredential(credential))
+}
+
+// migrateMicrosoftIMAPPasswordOnlyFailures 重新排队历史上只导入密码的
+// Microsoft 邮箱。旧版验证队列只会自动重试网络错误，这些记录一旦遇到
+// 临时错误就会永久停在失败状态；凭证仍在时应至少再验证一次。
+func (s *PostgresStore) migrateMicrosoftIMAPPasswordOnlyFailures() error {
+	var marker sqlSeedState
+	markerErr := s.db.First(&marker, "key = ?", microsoftIMAPPasswordOnlyReverifyKey).Error
+	if markerErr == nil {
+		return nil
+	}
+	if !errors.Is(markerErr, gorm.ErrRecordNotFound) {
+		return markerErr
+	}
+
+	var requeued int64
+	var rows []sqlMailbox
+	providers := []string{domain.MailboxProviderOutlook, domain.MailboxProviderOutlookDE, domain.MailboxProviderHotmail}
+	result := s.db.Where("provider IN ? AND verification_status = ? AND encrypted_credential <> ''", providers, domain.MailboxVerificationFailed).FindInBatches(&rows, 500, func(tx *gorm.DB, _ int) error {
+		for index := range rows {
+			var credential map[string]string
+			if err := s.decryptJSON(rows[index].EncryptedCredential, &credential); err != nil {
+				continue
+			}
+			if !microsoftIMAPPasswordOnlyCredential(credential) {
+				continue
+			}
+			updates := map[string]any{
+				"verification_status": domain.MailboxVerificationPending,
+				"verification_error":  "",
+				"updated_at":          time.Now().UTC(),
+			}
+			if rows[index].ActiveOrderID == "" && rows[index].State != string(domain.MailboxBlocked) {
+				updates["state"] = domain.MailboxPending
+			}
+			updated := tx.Model(&sqlMailbox{}).Where("id = ? AND verification_status = ?", rows[index].ID, domain.MailboxVerificationFailed).Updates(updates)
+			if updated.Error != nil {
+				return updated.Error
+			}
+			requeued += updated.RowsAffected
+		}
+		return nil
+	})
+	if result.Error != nil {
+		return fmt.Errorf("重新验证仅密码 Microsoft 邮箱失败：%w", result.Error)
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&sqlSeedState{Key: microsoftIMAPPasswordOnlyReverifyKey, CreatedAt: time.Now().UTC()}).Error; err != nil {
+			return err
+		}
+		if requeued == 0 {
+			return nil
+		}
+		return tx.Create(&sqlAuditLog{
+			ID:           uuid.NewString(),
+			ActorID:      "system",
+			Action:       "mailbox.oauth.reverify",
+			ResourceType: "mailbox",
+			ResourceID:   "all",
+			Detail:       fmt.Sprintf("重新验证仅含密码的 Microsoft 邮箱 %d 条", requeued),
+		}).Error
+	})
+}
+
+func microsoftIMAPPasswordOnlyCredential(credential map[string]string) bool {
+	return strings.TrimSpace(credential["password"]) != "" &&
+		(strings.TrimSpace(credential["client_id"]) == "" || strings.TrimSpace(credential["refresh_token"]) == "")
 }
 
 func (s *PostgresStore) migrateProviderPricing() error {

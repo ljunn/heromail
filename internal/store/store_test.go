@@ -538,3 +538,23 @@ func TestMicrosoftIMAPPasswordFallbackCredential(t *testing.T) {
 		t.Fatal("密码登录但没有 Microsoft OAuth 标识的记录不应被该迁移处理")
 	}
 }
+
+func TestMicrosoftIMAPPasswordOnlyCredential(t *testing.T) {
+	if !microsoftIMAPPasswordOnlyCredential(map[string]string{"password": "mailbox-password"}) {
+		t.Fatal("仅密码 Microsoft 凭证应进入一次性重验证")
+	}
+	if !microsoftIMAPPasswordOnlyCredential(map[string]string{
+		"password":  "mailbox-password",
+		"client_id": "source-client",
+	}) {
+		t.Fatal("缺少任一 OAuth 字段时仍应按密码记录重验证")
+	}
+	if microsoftIMAPPasswordOnlyCredential(map[string]string{
+		"password":       "mailbox-password",
+		"client_id":      "source-client",
+		"refresh_token":  "source-refresh",
+		"oauth_protocol": "imap",
+	}) {
+		t.Fatal("完整双凭证不应被仅密码迁移重复处理")
+	}
+}

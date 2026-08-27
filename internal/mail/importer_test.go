@@ -74,6 +74,15 @@ func TestMailboxLineParserSupportsAdobeRegisterJSONFields(t *testing.T) {
 	if credential["client_id"] == "" || credential["refresh_token"] != "refresh-value" || credential["imap_user"] != "source-login@outlook.com" {
 		t.Fatalf("源项目驼峰字段没有正确转换：%v", credential)
 	}
+	caseInsensitive := `{"EMAIL":"case@outlook.com","PASSWORD":"secret","CLIENTID":"00000000-0000-0000-0000-000000000001","REFRESHTOKEN":"refresh-value","IMAPUSER":"case-login@outlook.com"}`
+	record, err = NewMailboxLineParser().Parse(caseInsensitive)
+	if err != nil {
+		t.Fatalf("大小写不一致的源项目 JSON 记录解析失败：%v", err)
+	}
+	credential = record.Credential()
+	if record.Address != "case@outlook.com" || credential["client_id"] == "" || credential["refresh_token"] != "refresh-value" || credential["imap_user"] != "case-login@outlook.com" {
+		t.Fatalf("大小写不一致的源项目字段没有正确转换：%v", credential)
+	}
 }
 
 func TestMailboxLineParserRejectsUnsupportedProviderWithoutLeakingLine(t *testing.T) {

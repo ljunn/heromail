@@ -107,6 +107,15 @@ func firstImportValue(values map[string]string, keys ...string) string {
 			return value
 		}
 	}
+	// 外部导出文件的 JSON 键名大小写不固定，例如 clientId、ClientID、
+	// refresh_token 都应映射到同一个内部凭证字段。
+	for actualKey, value := range values {
+		for _, key := range keys {
+			if strings.EqualFold(strings.TrimSpace(actualKey), key) && strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
 	return ""
 }
 
