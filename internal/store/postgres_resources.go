@@ -278,6 +278,7 @@ func (s *PostgresStore) PendingMailboxVerificationIDs(limit int) ([]string, erro
 	}
 	var ids []string
 	cutoff := time.Now().Add(-5 * time.Minute)
+	imapSessionCutoff := time.Now().Add(-30 * time.Minute)
 	err := s.db.Model(&sqlMailbox{}).
 		Where(`
 			verification_status = ?
@@ -299,11 +300,17 @@ func (s *PostgresStore) PendingMailboxVerificationIDs(limit int) ([]string, erro
 			)
 			OR (
 				verification_status = ?
+				AND updated_at <= ?
+				AND verification_error ILIKE '%User is authenticated but not connected%'
+			)
+			OR (
+				verification_status = ?
 				AND connection_method IN ?
 				AND oauth_valid_until <= ?
 			)`,
 			domain.MailboxVerificationPending,
 			domain.MailboxVerificationFailed, cutoff,
+			domain.MailboxVerificationFailed, imapSessionCutoff,
 			domain.MailboxVerificationVerified,
 			[]string{domain.MailboxConnectionMicrosoftGraph, domain.MailboxConnectionMicrosoftOAuth}, time.Now()).
 		Order("updated_at ASC").Limit(limit).Pluck("id", &ids).Error
