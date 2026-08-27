@@ -2,6 +2,34 @@
 
 本项目的所有正式版本变更都记录在此文件。版本号遵循语义化版本，发布日期使用 UTC。
 
+## [1.10.24] - 2026-08-27
+
+### 新增
+
+- Microsoft 邮箱验证支持 Graph 与 IMAP OAuth 双通道探测，验证成功后保存实际可用的登录方式。
+- 导入记录保留 OAuth 协议标记，后续收码 Worker 按已验证的连接方式读取邮箱。
+
+### 修复
+
+- 修复源系统导出的 Outlook `client_id + refresh_token` 被错误当作 Graph 凭据，导致邮箱全部验证失败、订单无法收码的问题。
+- 修复 Outlook IMAP OAuth 刷新未使用 `consumers` 端点和 IMAP 权限范围的问题。
+- 启动时回填旧版本导入的 Microsoft OAuth 记录并重新加入验证队列，避免存量邮箱停留在 `auth_error` 状态。
+
+### 安全
+
+- Graph 与 IMAP Token 按授权资源隔离，验证失败不会把错误 Token 继续交给另一种协议使用。
+- OAuth 刷新和迁移审计只记录资源 ID 与操作结果，不记录邮箱密码、Token 或邮件内容。
+
+### 兼容性
+
+- 保留现有 Graph OAuth、密码 IMAP、邮箱导入格式和订单状态机；无需手工修改数据库表结构。
+- 已有 PostgreSQL、Redis 和 `ghcr.io/ljunn/heromail:latest` 部署可直接在线升级。
+
+### 部署注意事项
+
+- 发布后必须等待 GitHub Actions 完成检查、镜像构建和正式 Release，再通过管理员后台在线升级到 `v1.10.24`。
+- 升级后检查邮箱池中待验证、授权异常和已验证数量，确认存量 OAuth 邮箱重新进入验证队列，并用新订单验证验证码收取。
+
 ## [1.10.23] - 2026-08-26
 
 ### 新增

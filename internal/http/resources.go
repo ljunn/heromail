@@ -225,7 +225,7 @@ func (s *Server) adminImportMailboxes(c *gin.Context) {
 				Provider:            record.Provider,
 				Pool:                pool.Name,
 				State:               domain.MailboxPending,
-				ConnectionMethod:    domain.MailboxConnectionAuto,
+				ConnectionMethod:    record.ConnectionMethod,
 				VerificationStatus:  domain.MailboxVerificationPending,
 				RegisteredPlatforms: []string{},
 			}, record.Credential(), c.ClientIP())

@@ -98,6 +98,17 @@ type graphConnectorStub struct {
 	allCalls    int
 }
 
+type microsoftIMAPGraphConnectorStub struct {
+	graphConnectorStub
+	imapRefreshes int
+}
+
+func (s *microsoftIMAPGraphConnectorStub) RefreshIMAPCredential(context.Context, map[string]string) (map[string]string, time.Time, error) {
+	s.imapRefreshes++
+	validUntil := time.Now().Add(time.Hour)
+	return map[string]string{"access_token": "imap-access", "refresh_token": "imap-refresh", "expires_at": validUntil.Format(time.RFC3339)}, validUntil, nil
+}
+
 type oauthRefresherStub struct {
 	refreshes int
 }
@@ -178,6 +189,22 @@ func TestMailboxVerifierDoesNotReuseGraphTokenAsIMAPFallback(t *testing.T) {
 	}
 	if !strings.Contains(repository.message, "重新授权 Graph") {
 		t.Fatalf("失败原因没有引导重新授权：%q", repository.message)
+	}
+}
+
+func TestMailboxVerifierProbesGraphThenImportedMicrosoftIMAPOAuth(t *testing.T) {
+	repository := &verificationRepositoryStub{credential: store.MailboxCredential{
+		Mailbox: domain.Mailbox{ID: "mailbox-imported-imap", Address: "user@outlook.com"},
+		Config:  map[string]string{"client_id": "source-client", "refresh_token": "source-refresh"},
+	}}
+	graph := &microsoftIMAPGraphConnectorStub{}
+	imap := &imapConnectorStub{}
+	result, err := NewMailboxVerifier(repository, graph, imap).Verify(context.Background(), "system", repository.credential.Mailbox.ID, "")
+	if err != nil || result.Method != domain.MailboxConnectionIMAP || graph.imapRefreshes != 1 || graph.refreshes != 1 || imap.calls != 1 {
+		t.Fatalf("导入的 Microsoft OAuth 未完成 Graph/IMAP 探测：result=%+v err=%v imap_refreshes=%d graph_refreshes=%d imap=%d", result, err, graph.imapRefreshes, graph.refreshes, imap.calls)
+	}
+	if imap.credentials[0]["access_token"] != "imap-access" {
+		t.Fatalf("刷新后的 IMAP Token 未传给连接器：%v", imap.credentials[0])
 	}
 }
 

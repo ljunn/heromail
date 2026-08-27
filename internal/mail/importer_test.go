@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/ljunn/heromail/internal/domain"
 )
 
 func TestMailboxLineParserSupportsConfiguredProviderFormats(t *testing.T) {
@@ -45,6 +47,20 @@ func TestMailboxLineParserSupportsConfiguredProviderFormats(t *testing.T) {
 				t.Fatalf("凭证字段识别错误：%+v", credential)
 			}
 		})
+	}
+}
+
+func TestMailboxLineParserMarksLegacyMicrosoftOAuthAsIMAP(t *testing.T) {
+	line := `{"email":"legacy@outlook.com","client_id":"00000000-0000-0000-0000-000000000001","refresh_token":"refresh-value"}`
+	record, err := NewMailboxLineParser().Parse(line)
+	if err != nil {
+		t.Fatalf("解析旧 Microsoft OAuth 记录失败：%v", err)
+	}
+	if record.ConnectionMethod != domain.MailboxConnectionAuto || record.OAuthProtocol != "imap" {
+		t.Fatalf("旧 Microsoft OAuth 未进入自动探测：%+v", record)
+	}
+	if record.Credential()["oauth_protocol"] != "imap" {
+		t.Fatalf("导入凭据未保留 OAuth 协议：%v", record.Credential())
 	}
 }
 

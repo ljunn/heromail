@@ -29,16 +29,20 @@ type MailboxImportRecord struct {
 	ClientSecret string
 	AccessToken  string
 	RefreshToken string
+	// ConnectionMethod 记录导入凭据实际使用的收件协议。
+	ConnectionMethod string
+	OAuthProtocol    string
 }
 
 func (r MailboxImportRecord) Credential() map[string]string {
 	values := map[string]string{
-		"password":      r.Password,
-		"totp_url":      r.TOTPURL,
-		"client_id":     r.ClientID,
-		"client_secret": r.ClientSecret,
-		"access_token":  r.AccessToken,
-		"refresh_token": r.RefreshToken,
+		"password":       r.Password,
+		"totp_url":       r.TOTPURL,
+		"client_id":      r.ClientID,
+		"client_secret":  r.ClientSecret,
+		"access_token":   r.AccessToken,
+		"refresh_token":  r.RefreshToken,
+		"oauth_protocol": r.OAuthProtocol,
 	}
 	result := make(map[string]string, len(values))
 	for key, value := range values {
@@ -81,13 +85,15 @@ func parseMailboxJSONLine(line string) (MailboxImportRecord, error) {
 		return MailboxImportRecord{}, errors.New("JSON Lines 格式无效")
 	}
 	record := MailboxImportRecord{
-		Address:      firstImportValue(values, "email", "address", "username"),
-		Password:     firstImportValue(values, "password", "pass"),
-		TOTPURL:      firstImportValue(values, "totp_url", "totp", "otp_url", "two_factor_url", "2fa_url"),
-		ClientID:     firstImportValue(values, "client_id", "clientid"),
-		ClientSecret: firstImportValue(values, "client_secret", "clientsecret"),
-		AccessToken:  firstImportValue(values, "access_token", "accesstoken"),
-		RefreshToken: firstImportValue(values, "refresh_token", "refreshtoken"),
+		Address:          firstImportValue(values, "email", "address", "username"),
+		Password:         firstImportValue(values, "password", "pass"),
+		TOTPURL:          firstImportValue(values, "totp_url", "totp", "otp_url", "two_factor_url", "2fa_url"),
+		ClientID:         firstImportValue(values, "client_id", "clientid"),
+		ClientSecret:     firstImportValue(values, "client_secret", "clientsecret"),
+		AccessToken:      firstImportValue(values, "access_token", "accesstoken"),
+		RefreshToken:     firstImportValue(values, "refresh_token", "refreshtoken"),
+		ConnectionMethod: firstImportValue(values, "connection_method", "connection"),
+		OAuthProtocol:    firstImportValue(values, "oauth_protocol", "oauth_type", "protocol", "auth_type"),
 	}
 	return normalizeMailboxImportRecord(record)
 }
@@ -150,6 +156,10 @@ func mailboxRecordFromFields(fields []string) (MailboxImportRecord, error) {
 				record.RefreshToken = fieldValue
 			case "totp_url", "totp", "otp_url", "two_factor_url", "2fa_url":
 				record.TOTPURL = fieldValue
+			case "connection_method", "connection":
+				record.ConnectionMethod = fieldValue
+			case "oauth_protocol", "oauth_type", "protocol", "auth_type":
+				record.OAuthProtocol = fieldValue
 			}
 			continue
 		}
@@ -183,10 +193,43 @@ func normalizeMailboxImportRecord(record MailboxImportRecord) (MailboxImportReco
 		return MailboxImportRecord{}, errors.New("不支持该邮箱类型")
 	}
 	record.Provider = provider
+	record.ConnectionMethod = normalizeImportConnectionMethod(record.ConnectionMethod)
+	record.OAuthProtocol = normalizeImportOAuthProtocol(record.OAuthProtocol)
+	if domain.IsMicrosoftMailboxProvider(provider) {
+		// 旧迁移文件没有协议字段，但源项目导出的 refresh token 是
+		// Outlook IMAP OAuth 凭据。按该协议兼容处理。
+		if record.OAuthProtocol == "" && record.ClientID != "" && record.RefreshToken != "" {
+			record.OAuthProtocol = "imap"
+		}
+	}
 	if len(record.Credential()) == 0 {
 		return MailboxImportRecord{}, errors.New("邮箱凭证不能为空")
 	}
 	return record, nil
+}
+
+func normalizeImportConnectionMethod(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case domain.MailboxConnectionIMAP:
+		return domain.MailboxConnectionIMAP
+	case domain.MailboxConnectionMicrosoftGraph:
+		return domain.MailboxConnectionMicrosoftGraph
+	case domain.MailboxConnectionMicrosoftOAuth:
+		return domain.MailboxConnectionMicrosoftOAuth
+	default:
+		return domain.MailboxConnectionAuto
+	}
+}
+
+func normalizeImportOAuthProtocol(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "imap", "imap_oauth", "microsoft_imap", "microsoft_imap_oauth":
+		return "imap"
+	case "graph", "microsoft_graph":
+		return "graph"
+	default:
+		return ""
+	}
 }
 
 type MailboxImportLineError struct {

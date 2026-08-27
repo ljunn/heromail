@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -384,6 +385,34 @@ func TestRefreshTokenRequestKeepsOriginallyGrantedScopes(t *testing.T) {
 	}
 }
 
+func TestRefreshIMAPCredentialUsesConsumersIMAPScope(t *testing.T) {
+	client := NewMicrosoftClient(MicrosoftConfig{Tenant: "common"})
+	client.http = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/consumers/oauth2/v2.0/token" {
+			return nil, fmt.Errorf("IMAP OAuth tenant 错误：%s", request.URL.Path)
+		}
+		if err := request.ParseForm(); err != nil {
+			return nil, err
+		}
+		if request.Form.Get("scope") != microsoftIMAPOAuthScope {
+			return nil, fmt.Errorf("IMAP OAuth scope 错误：%q", request.Form.Get("scope"))
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"access_token":"imap-access","refresh_token":"imap-refresh","expires_in":3600}`)),
+			Request:    request,
+		}, nil
+	})}
+	credential, validUntil, err := client.RefreshIMAPCredential(context.Background(), map[string]string{
+		"client_id":     "source-client",
+		"refresh_token": "source-refresh",
+	})
+	if err != nil || credential["access_token"] != "imap-access" || credential["refresh_token"] != "imap-refresh" || !validUntil.After(time.Now()) {
+		t.Fatalf("IMAP OAuth 刷新失败：credential=%v valid_until=%s err=%v", credential, validUntil, err)
+	}
+}
+
 func TestWorkerDoesNotRefreshGraphAfterMailboxUsesIMAP(t *testing.T) {
 	client := NewMicrosoftClient(MicrosoftConfig{ClientID: "client-id", Tenant: "common"})
 	var refreshCalls int
@@ -402,6 +431,44 @@ func TestWorkerDoesNotRefreshGraphAfterMailboxUsesIMAP(t *testing.T) {
 	})
 	if refreshCalls != 0 {
 		t.Fatalf("IMAP 通道仍刷新 Graph %d 次", refreshCalls)
+	}
+}
+
+type credentialMessageConnector struct {
+	credential map[string]string
+}
+
+func (*credentialMessageConnector) Verify(context.Context, string, map[string]string) error {
+	return nil
+}
+func (s *credentialMessageConnector) Messages(_ context.Context, _ string, credential map[string]string) ([]Message, error) {
+	s.credential = credential
+	return []Message{}, nil
+}
+
+func TestWorkerRefreshesImportedMicrosoftIMAPOAuth(t *testing.T) {
+	client := NewMicrosoftClient(MicrosoftConfig{})
+	client.http = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/consumers/oauth2/v2.0/token" {
+			return nil, fmt.Errorf("IMAP OAuth endpoint 错误：%s", request.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"access_token":"imap-access","refresh_token":"imap-refresh","expires_in":3600}`)),
+			Request:    request,
+		}, nil
+	})}
+	repository := &concurrentPollRepository{mailboxes: []store.MailboxCredential{{
+		Mailbox: domain.Mailbox{ID: "mailbox-imported-imap", Address: "user@outlook.com"},
+		Config:  map[string]string{"client_id": "source-client", "refresh_token": "source-refresh"},
+	}}}
+	connector := &credentialMessageConnector{}
+	worker := NewWorker(repository, codeReceiverStub{}, client, time.Minute)
+	worker.imap = connector
+	worker.poll(context.Background())
+	if connector.credential["access_token"] != "imap-access" {
+		t.Fatalf("Worker 未把刷新后的 IMAP Token 用于收码：%v", connector.credential)
 	}
 }
 

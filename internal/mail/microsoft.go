@@ -31,6 +31,8 @@ type MicrosoftClient struct {
 	http   *http.Client
 }
 
+const microsoftIMAPOAuthScope = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
+
 type Profile struct {
 	Address string
 }
@@ -101,6 +103,45 @@ func (c *MicrosoftClient) RefreshCredential(ctx context.Context, credential map[
 	tenant := strings.TrimSpace(credential["tenant"])
 	if tenant == "" {
 		tenant = c.config.Tenant
+	}
+	return c.tokenForTenant(ctx, tenant, values)
+}
+
+// RefreshIMAPCredential 刷新源系统使用的 Outlook IMAP OAuth 凭据。
+// 这类 refresh token 只能用于 IMAP 资源，不能拿去调用 Microsoft Graph。
+func (c *MicrosoftClient) RefreshIMAPCredential(ctx context.Context, credential map[string]string) (map[string]string, time.Time, error) {
+	clientID := strings.TrimSpace(credential["client_id"])
+	if clientID == "" {
+		clientID = c.config.ClientID
+	}
+	refreshToken := strings.TrimSpace(credential["refresh_token"])
+	if clientID == "" {
+		return nil, time.Time{}, errors.New("缺少 Microsoft IMAP client_id")
+	}
+	if refreshToken == "" {
+		accessToken := strings.TrimSpace(credential["access_token"])
+		if accessToken == "" {
+			return nil, time.Time{}, errors.New("缺少 Microsoft IMAP refresh_token 或 access_token")
+		}
+		validUntil, _ := time.Parse(time.RFC3339, strings.TrimSpace(credential["expires_at"]))
+		return map[string]string{"access_token": accessToken}, validUntil, nil
+	}
+	clientSecret := strings.TrimSpace(credential["client_secret"])
+	if clientSecret == "" && clientID == c.config.ClientID {
+		clientSecret = c.config.ClientSecret
+	}
+	values := refreshTokenValues(clientID, refreshToken, clientSecret)
+	scope := strings.TrimSpace(credential["oauth_scope"])
+	if scope == "" {
+		scope = microsoftIMAPOAuthScope
+	}
+	values.Set("scope", scope)
+	tenant := strings.TrimSpace(credential["oauth_tenant"])
+	if tenant == "" {
+		tenant = strings.TrimSpace(credential["tenant"])
+	}
+	if tenant == "" {
+		tenant = "consumers"
 	}
 	return c.tokenForTenant(ctx, tenant, values)
 }
@@ -343,19 +384,37 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 	}
 	credential := mailbox.Config
 	microsoftMailbox := supportsMicrosoftGraph(mailbox.Mailbox)
-	useIMAP := !microsoftMailbox || mailbox.Mailbox.ConnectionMethod == domain.MailboxConnectionIMAP
+	microsoftIMAPOAuth := isMicrosoftIMAPOAuth(mailbox.Mailbox, credential)
+	imapOnly := mailbox.Mailbox.ConnectionMethod == domain.MailboxConnectionIMAP
+	useIMAP := !microsoftMailbox || imapOnly
 	var graphErr error
+	var messageErr error
 	validUntil, _ := time.Parse(time.RFC3339, credential["expires_at"])
-	// 已经切换到 IMAP 的邮箱不再尝试刷新失效的 Graph token，避免每轮轮询重复产生 invalid_grant。
-	needsRefresh := microsoftMailbox && !useIMAP && credential["refresh_token"] != "" && (credential["access_token"] == "" || time.Until(validUntil) < 5*time.Minute)
-	if needsRefresh {
+	if useIMAP && microsoftIMAPOAuth {
+		needsRefresh := credential["refresh_token"] != "" && (credential["access_token"] == "" || time.Until(validUntil) < 5*time.Minute)
+		if needsRefresh {
+			if w.client == nil {
+				messageErr = errors.New("缺少 Microsoft IMAP OAuth 客户端")
+			} else {
+				refreshed, newValidUntil, refreshErr := w.client.RefreshIMAPCredential(ctx, credentialForIMAPOAuth(credential))
+				if refreshErr != nil {
+					messageErr = refreshErr
+				} else {
+					credential, validUntil = mergeCredential(credential, refreshed), newValidUntil
+					if saveErr := w.repository.UpdateMailboxCredential("system", mailbox.Mailbox.ID, credential, validUntil, ""); saveErr != nil {
+						messageErr = saveErr
+					}
+				}
+			}
+		}
+	} else if microsoftMailbox && !useIMAP && credential["refresh_token"] != "" && (credential["access_token"] == "" || time.Until(validUntil) < 5*time.Minute) {
+		// Graph 通道刷新失效时，只有密码凭证才允许回退到 IMAP。
 		if w.client == nil {
 			graphErr = errors.New("缺少 Microsoft Graph 客户端")
 		} else {
 			refreshed, newValidUntil, refreshErr := w.client.RefreshCredential(ctx, credential)
 			if refreshErr != nil {
 				graphErr = refreshErr
-				useIMAP = credential["password"] != ""
 			} else {
 				credential, validUntil = mergeCredential(credential, refreshed), newValidUntil
 				_ = w.repository.UpdateMailboxCredential("system", mailbox.Mailbox.ID, credential, validUntil, "")
@@ -363,26 +422,45 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 		}
 	}
 	var messages []Message
-	var messageErr error
 	imapCredential := credentialForIMAPFallback(credential, graphErr)
-	if useIMAP {
+	if microsoftIMAPOAuth {
+		imapCredential = credential
+	}
+	if messageErr == nil && useIMAP {
 		if microsoftMailbox && graphErr != nil && credential["password"] == "" {
 			messageErr = graphErr
 		} else {
 			messages, messageErr = w.imap.Messages(ctx, mailbox.Mailbox.Address, imapCredential)
 		}
-	} else if graphErr != nil {
+	} else if messageErr == nil && graphErr != nil {
 		messageErr = graphErr
-	} else {
+	} else if messageErr == nil {
 		if w.client == nil || credential["access_token"] == "" {
 			messageErr = errors.New("缺少 Graph OAuth 凭证")
 		} else {
 			messages, messageErr = w.client.Messages(ctx, credential["access_token"])
 		}
 	}
-	if messageErr != nil && !useIMAP && credential["password"] != "" {
+	if messageErr != nil && !useIMAP && (credential["password"] != "" || microsoftIMAPOAuth) {
 		useIMAP = true
-		messages, messageErr = w.imap.Messages(ctx, mailbox.Mailbox.Address, credentialForIMAPFallback(credential, messageErr))
+		imapCredential = credentialForIMAPFallback(credential, messageErr)
+		if microsoftIMAPOAuth {
+			if w.client == nil {
+				messageErr = errors.New("缺少 Microsoft IMAP OAuth 客户端")
+			} else {
+				refreshed, newValidUntil, refreshErr := w.client.RefreshIMAPCredential(ctx, credentialForIMAPOAuth(credential))
+				if refreshErr != nil {
+					messageErr = refreshErr
+				} else {
+					credential, validUntil = mergeCredential(credential, refreshed), newValidUntil
+					imapCredential = credential
+					messageErr = w.repository.UpdateMailboxCredential("system", mailbox.Mailbox.ID, credential, validUntil, "")
+				}
+			}
+		}
+		if messageErr == nil {
+			messages, messageErr = w.imap.Messages(ctx, mailbox.Mailbox.Address, imapCredential)
+		}
 	}
 	if messageErr != nil {
 		method := domain.MailboxConnectionMicrosoftGraph
@@ -394,7 +472,7 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 		_ = w.repository.UpdateMailboxVerification("system", mailbox.Mailbox.ID, method, domain.MailboxVerificationFailed, message, time.Now().UTC(), "")
 		return
 	}
-	if microsoftMailbox && useIMAP && graphErr != nil {
+	if microsoftMailbox && useIMAP {
 		_ = w.repository.UpdateMailboxVerification("system", mailbox.Mailbox.ID, domain.MailboxConnectionIMAP, domain.MailboxVerificationVerified, "", time.Now().UTC(), "")
 	}
 	for _, message := range messages {

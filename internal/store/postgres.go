@@ -72,7 +72,75 @@ func (s *PostgresStore) migrate() error {
 	if err := s.db.AutoMigrate(&sqlUser{}, &sqlSession{}, &sqlAPIKey{}, &sqlService{}, &sqlSeedState{}, &sqlSystemConfig{}, &sqlMailboxPool{}, &sqlMailbox{}, &sqlMailboxService{}, &sqlOrder{}, &sqlWalletLedger{}, &sqlPaymentProvider{}, &sqlPaymentOrder{}, &sqlMailEvent{}, &sqlWebhookEndpoint{}, &sqlWebhookDelivery{}, &sqlAuditLog{}); err != nil {
 		return fmt.Errorf("执行数据库迁移失败：%w", err)
 	}
-	return s.migrateProviderPricing()
+	if err := s.migrateProviderPricing(); err != nil {
+		return err
+	}
+	return s.migrateLegacyMicrosoftIMAPOAuth()
+}
+
+// migrateLegacyMicrosoftIMAPOAuth 修复旧版本把源系统 IMAP OAuth 当成 Graph
+// 凭据导入的问题。通过协议字段和 connection_method 做幂等标记，失败记录会
+// 回到验证队列，由 VerificationWorker 使用正确的 IMAP scope 重新验证。
+func (s *PostgresStore) migrateLegacyMicrosoftIMAPOAuth() error {
+	var migrated int64
+	var rows []sqlMailbox
+	query := s.db.Where("provider IN ? AND connection_method = ? AND encrypted_credential <> ''", []string{
+		domain.MailboxProviderOutlook,
+		domain.MailboxProviderOutlookDE,
+		domain.MailboxProviderHotmail,
+	}, domain.MailboxConnectionAuto)
+	result := query.FindInBatches(&rows, 500, func(tx *gorm.DB, _ int) error {
+		for index := range rows {
+			var credential map[string]string
+			if err := s.decryptJSON(rows[index].EncryptedCredential, &credential); err != nil {
+				continue
+			}
+			if !legacyMicrosoftIMAPOAuthCredential(credential) {
+				continue
+			}
+			credential["oauth_protocol"] = "imap"
+			encrypted, err := s.encryptJSON(credential)
+			if err != nil {
+				return err
+			}
+			updates := map[string]any{
+				"encrypted_credential": encrypted,
+				"connection_method":    domain.MailboxConnectionAuto,
+				"verification_status":  domain.MailboxVerificationPending,
+				"verification_error":   "",
+				"updated_at":           time.Now().UTC(),
+			}
+			if rows[index].ActiveOrderID == "" {
+				updates["state"] = domain.MailboxPending
+			}
+			result := tx.Model(&sqlMailbox{}).Where("id = ? AND connection_method = ?", rows[index].ID, domain.MailboxConnectionAuto).Updates(updates)
+			if result.Error != nil {
+				return result.Error
+			}
+			migrated += result.RowsAffected
+		}
+		return nil
+	})
+	if result.Error != nil {
+		return fmt.Errorf("迁移旧 Microsoft IMAP OAuth 凭据失败：%w", result.Error)
+	}
+	if migrated == 0 {
+		return nil
+	}
+	return s.db.Create(&sqlAuditLog{
+		ID:           uuid.NewString(),
+		ActorID:      "system",
+		Action:       "mailbox.oauth.migrate",
+		ResourceType: "mailbox",
+		ResourceID:   "all",
+		Detail:       fmt.Sprintf("修复旧版 Microsoft IMAP OAuth 导入记录 %d 条并重新验证", migrated),
+	}).Error
+}
+
+func legacyMicrosoftIMAPOAuthCredential(credential map[string]string) bool {
+	return strings.TrimSpace(credential["oauth_protocol"]) == "" &&
+		strings.TrimSpace(credential["client_id"]) != "" &&
+		strings.TrimSpace(credential["refresh_token"]) != ""
 }
 
 func (s *PostgresStore) migrateProviderPricing() error {

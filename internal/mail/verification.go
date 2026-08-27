@@ -78,6 +78,43 @@ func NewMailboxVerifier(repository MailboxVerificationRepository, graph GraphCon
 	return &MailboxVerifier{repository: repository, graph: graph, imap: imap, oauth: oauth}
 }
 
+type microsoftIMAPCredentialRefresher interface {
+	RefreshIMAPCredential(ctx context.Context, credential map[string]string) (map[string]string, time.Time, error)
+}
+
+// isMicrosoftIMAPOAuth 识别源系统导出的 Outlook IMAP OAuth 凭据。
+// 旧导入记录没有 oauth_protocol 字段。导入器保存了源系统的 client_id，
+// 而 HeroMail 自有 Graph OAuth 不会把 client_id 写入邮箱凭据，因此可据此兼容存量记录。
+func isMicrosoftIMAPOAuth(mailbox domain.Mailbox, config map[string]string) bool {
+	if !supportsMicrosoftGraph(mailbox) {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(config["oauth_protocol"])) {
+	case "imap", "imap_oauth", "microsoft_imap", "microsoft_imap_oauth":
+		return true
+	case "graph", "microsoft_graph":
+		return false
+	}
+	if mailbox.ConnectionMethod == domain.MailboxConnectionIMAP {
+		return strings.TrimSpace(config["client_id"]) != "" && strings.TrimSpace(config["refresh_token"]) != "" && strings.TrimSpace(config["password"]) == ""
+	}
+	connectionMethod := mailbox.ConnectionMethod
+	if connectionMethod == "" {
+		connectionMethod = domain.MailboxConnectionAuto
+	}
+	return connectionMethod == domain.MailboxConnectionAuto &&
+		strings.TrimSpace(config["client_id"]) != "" &&
+		strings.TrimSpace(config["refresh_token"]) != ""
+}
+
+func (v *MailboxVerifier) refreshMicrosoftIMAPCredential(ctx context.Context, config map[string]string) (map[string]string, time.Time, error) {
+	refresher, ok := v.graph.(microsoftIMAPCredentialRefresher)
+	if !ok {
+		return nil, time.Time{}, errors.New("Microsoft IMAP OAuth 尚未配置")
+	}
+	return refresher.RefreshIMAPCredential(ctx, config)
+}
+
 func (v *MailboxVerifier) Verify(ctx context.Context, actorID, mailboxID, ip string) (MailboxVerificationResult, error) {
 	credential, err := v.repository.GetMailboxCredential(mailboxID)
 	if err != nil {
@@ -86,8 +123,10 @@ func (v *MailboxVerifier) Verify(ctx context.Context, actorID, mailboxID, ip str
 	now := time.Now().UTC()
 	config := cloneCredential(credential.Config)
 	microsoftMailbox := supportsMicrosoftGraph(credential.Mailbox)
+	microsoftIMAPOAuth := isMicrosoftIMAPOAuth(credential.Mailbox, config)
+	imapOnly := credential.Mailbox.ConnectionMethod == domain.MailboxConnectionIMAP
 	graphErr := errors.New("缺少 Graph OAuth 凭证")
-	if microsoftMailbox && v.graph != nil && (config["access_token"] != "" || config["refresh_token"] != "") {
+	if microsoftMailbox && !imapOnly && v.graph != nil && (config["access_token"] != "" || config["refresh_token"] != "") {
 		accessToken := config["access_token"]
 		validUntil, _ := time.Parse(time.RFC3339, config["expires_at"])
 		didRefresh := false
@@ -140,13 +179,36 @@ func (v *MailboxVerifier) Verify(ctx context.Context, actorID, mailboxID, ip str
 	}
 
 	imapErr := errors.New("缺少 IMAP 凭证")
-	if v.imap != nil && hasIMAPFallbackCredential(credential.Mailbox, config, graphErr) {
+	if v.imap != nil && (microsoftIMAPOAuth || hasIMAPFallbackCredential(credential.Mailbox, config, graphErr)) {
 		imapCredential := credentialForIMAPFallback(config, graphErr)
-		if refreshed, refreshErr := v.refreshGoogleCredential(ctx, actorID, credential.Mailbox, imapCredential, false, ip); refreshErr != nil {
+		ready := true
+		if microsoftIMAPOAuth {
+			if imapOAuthCredentialNeedsRefresh(config, now) || (!imapOnly && graphErr != nil && strings.TrimSpace(config["refresh_token"]) != "") {
+				imapCredential = credentialForIMAPOAuth(config)
+				refreshed, validUntil, refreshErr := v.refreshMicrosoftIMAPCredential(ctx, imapCredential)
+				if refreshErr != nil {
+					imapErr = refreshErr
+					ready = false
+				} else {
+					config = mergeCredential(config, refreshed)
+					imapCredential = config
+					if saveErr := v.repository.UpdateMailboxCredential(actorID, mailboxID, config, validUntil, ip); saveErr != nil {
+						imapErr = saveErr
+						ready = false
+					}
+				}
+			} else {
+				imapCredential = config
+			}
+		} else if refreshed, refreshErr := v.refreshGoogleCredential(ctx, actorID, credential.Mailbox, imapCredential, false, ip); refreshErr != nil {
 			imapErr = refreshErr
+			ready = false
 		} else {
+			imapCredential = refreshed
+		}
+		if ready {
 			verifyContext, cancel := context.WithTimeout(ctx, 25*time.Second)
-			imapErr = v.imap.Verify(verifyContext, credential.Mailbox.Address, refreshed)
+			imapErr = v.imap.Verify(verifyContext, credential.Mailbox.Address, imapCredential)
 			cancel()
 		}
 		if imapErr == nil {
@@ -155,7 +217,7 @@ func (v *MailboxVerifier) Verify(ctx context.Context, actorID, mailboxID, ip str
 	}
 
 	message := compactVerificationError(graphErr, imapErr)
-	if !microsoftMailbox {
+	if !microsoftMailbox || imapOnly {
 		message = compactIMAPError(imapErr)
 	}
 	if updateErr := v.repository.UpdateMailboxVerification(actorID, mailboxID, domain.MailboxConnectionAuto, domain.MailboxVerificationFailed, message, now, ip); updateErr != nil {
@@ -173,8 +235,10 @@ func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, 
 	}
 	config := cloneCredential(credential.Config)
 	microsoftMailbox := supportsMicrosoftGraph(credential.Mailbox)
+	microsoftIMAPOAuth := isMicrosoftIMAPOAuth(credential.Mailbox, config)
+	imapOnly := credential.Mailbox.ConnectionMethod == domain.MailboxConnectionIMAP
 	graphErr := errors.New("缺少 Graph OAuth 凭证")
-	if microsoftMailbox && v.graph != nil && (config["access_token"] != "" || config["refresh_token"] != "") {
+	if microsoftMailbox && !imapOnly && v.graph != nil && (config["access_token"] != "" || config["refresh_token"] != "") {
 		accessToken := config["access_token"]
 		validUntil, _ := time.Parse(time.RFC3339, config["expires_at"])
 		if accessToken == "" || (!validUntil.IsZero() && !validUntil.After(time.Now().UTC())) {
@@ -205,11 +269,28 @@ func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, 
 			}
 		}
 	}
-	if v.imap != nil && hasIMAPFallbackCredential(credential.Mailbox, config, graphErr) {
+	if v.imap != nil && (microsoftIMAPOAuth || hasIMAPFallbackCredential(credential.Mailbox, config, graphErr)) {
 		imapCredential := credentialForIMAPFallback(config, graphErr)
-		imapCredential, refreshErr := v.refreshGoogleCredential(ctx, actorID, credential.Mailbox, imapCredential, false, ip)
+		var refreshErr error
+		if microsoftIMAPOAuth {
+			if imapOAuthCredentialNeedsRefresh(config, time.Now().UTC()) || (!imapOnly && graphErr != nil && strings.TrimSpace(config["refresh_token"]) != "") {
+				imapCredential = credentialForIMAPOAuth(config)
+				var refreshed map[string]string
+				var validUntil time.Time
+				refreshed, validUntil, refreshErr = v.refreshMicrosoftIMAPCredential(ctx, imapCredential)
+				if refreshErr == nil {
+					config = mergeCredential(config, refreshed)
+					imapCredential = config
+					refreshErr = v.repository.UpdateMailboxCredential(actorID, mailboxID, config, validUntil, ip)
+				}
+			} else {
+				imapCredential = config
+			}
+		} else {
+			imapCredential, refreshErr = v.refreshGoogleCredential(ctx, actorID, credential.Mailbox, imapCredential, false, ip)
+		}
 		if refreshErr != nil {
-			if !microsoftMailbox {
+			if !microsoftMailbox || imapOnly {
 				return nil, fmt.Errorf("IMAP：%v", refreshErr)
 			}
 			return nil, fmt.Errorf("Graph：%v；IMAP：%v", graphErr, refreshErr)
@@ -220,7 +301,7 @@ func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, 
 			if messages, readErr := reader.AllMessages(imapContext, credential.Mailbox.Address, imapCredential); readErr == nil {
 				return messages, nil
 			} else {
-				if !microsoftMailbox {
+				if !microsoftMailbox || imapOnly {
 					return nil, fmt.Errorf("IMAP：%w", readErr)
 				}
 				return nil, fmt.Errorf("Graph：%v；IMAP：%v", graphErr, readErr)
@@ -230,14 +311,14 @@ func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, 
 			if messages, readErr := reader.Messages(imapContext, credential.Mailbox.Address, imapCredential); readErr == nil {
 				return messages, nil
 			} else {
-				if !microsoftMailbox {
+				if !microsoftMailbox || imapOnly {
 					return nil, fmt.Errorf("IMAP：%w", readErr)
 				}
 				return nil, fmt.Errorf("Graph：%v；IMAP：%v", graphErr, readErr)
 			}
 		}
 	}
-	if !microsoftMailbox {
+	if !microsoftMailbox || imapOnly {
 		return nil, errors.New("缺少 IMAP 凭证")
 	}
 	return nil, fmt.Errorf("Graph：%s", compactGraphError(graphErr))
@@ -316,6 +397,21 @@ func credentialForIMAPFallback(config map[string]string, _ error) map[string]str
 	result := cloneCredential(config)
 	delete(result, "access_token")
 	return result
+}
+
+func credentialForIMAPOAuth(config map[string]string) map[string]string {
+	result := cloneCredential(config)
+	delete(result, "access_token")
+	delete(result, "expires_at")
+	return result
+}
+
+func imapOAuthCredentialNeedsRefresh(config map[string]string, now time.Time) bool {
+	if strings.TrimSpace(config["access_token"]) == "" {
+		return true
+	}
+	validUntil, err := time.Parse(time.RFC3339, strings.TrimSpace(config["expires_at"]))
+	return err == nil && !validUntil.IsZero() && !validUntil.After(now)
 }
 
 func compactVerificationError(graphErr, imapErr error) string {
