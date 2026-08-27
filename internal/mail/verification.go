@@ -219,7 +219,7 @@ func (v *MailboxVerifier) Verify(ctx context.Context, actorID, mailboxID, ip str
 	}
 
 	message := compactVerificationError(graphErr, imapErr)
-	if !microsoftMailbox || imapOnly {
+	if !microsoftMailbox || imapOnly || microsoftIMAPOAuth {
 		message = compactIMAPError(imapErr)
 	}
 	if updateErr := v.repository.UpdateMailboxVerification(actorID, mailboxID, domain.MailboxConnectionAuto, domain.MailboxVerificationFailed, message, now, ip); updateErr != nil {
@@ -293,7 +293,7 @@ func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, 
 			imapCredential, refreshErr = v.refreshGoogleCredential(ctx, actorID, credential.Mailbox, imapCredential, false, ip)
 		}
 		if refreshErr != nil {
-			if !microsoftMailbox || imapOnly {
+			if !microsoftMailbox || imapOnly || microsoftIMAPOAuth {
 				return nil, fmt.Errorf("IMAP：%v", refreshErr)
 			}
 			return nil, fmt.Errorf("Graph：%v；IMAP：%v", graphErr, refreshErr)
@@ -304,7 +304,7 @@ func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, 
 			if messages, readErr := reader.AllMessages(imapContext, credential.Mailbox.Address, imapCredential); readErr == nil {
 				return messages, nil
 			} else {
-				if !microsoftMailbox || imapOnly {
+				if !microsoftMailbox || imapOnly || microsoftIMAPOAuth {
 					return nil, fmt.Errorf("IMAP：%w", readErr)
 				}
 				return nil, fmt.Errorf("Graph：%v；IMAP：%v", graphErr, readErr)
@@ -314,14 +314,14 @@ func (v *MailboxVerifier) ReadMessages(ctx context.Context, actorID, mailboxID, 
 			if messages, readErr := reader.Messages(imapContext, credential.Mailbox.Address, imapCredential); readErr == nil {
 				return messages, nil
 			} else {
-				if !microsoftMailbox || imapOnly {
+				if !microsoftMailbox || imapOnly || microsoftIMAPOAuth {
 					return nil, fmt.Errorf("IMAP：%w", readErr)
 				}
 				return nil, fmt.Errorf("Graph：%v；IMAP：%v", graphErr, readErr)
 			}
 		}
 	}
-	if !microsoftMailbox || imapOnly {
+	if !microsoftMailbox || imapOnly || microsoftIMAPOAuth {
 		return nil, errors.New("缺少 IMAP 凭证")
 	}
 	return nil, fmt.Errorf("Graph：%s", compactGraphError(graphErr))
