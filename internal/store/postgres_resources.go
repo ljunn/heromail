@@ -186,14 +186,21 @@ func (s *PostgresStore) GetMailboxCredential(mailboxID string) (MailboxCredentia
 	return MailboxCredential{Mailbox: mapMailbox(row, nil), Config: config}, nil
 }
 
-func (s *PostgresStore) ListMailboxCredentialsPage(afterID string, limit int) ([]MailboxCredential, error) {
+func (s *PostgresStore) ListActiveMailboxCredentialsPage(afterID string, limit int) ([]MailboxCredential, error) {
 	if limit < 1 || limit > 500 {
 		limit = 100
 	}
 	var rows []sqlMailbox
-	// 收码 Worker 只读取已经验证的邮箱。待验证邮箱由 VerificationWorker 独立处理，
-	// 否则导入大批账号时会把验证请求和实时收码请求互相拖慢。
-	query := s.db.Where("encrypted_credential <> '' AND state NOT IN ? AND verification_status = ?", []string{string(domain.MailboxBlocked), string(domain.MailboxError)}, domain.MailboxVerificationVerified)
+	// 实时收码只需要访问存在有效待收码订单的邮箱。若扫描全部已验证资产，
+	// 大批量导入后每 15 秒会产生数万次无效订单查询并耗尽数据库连接资源。
+	query := s.db.
+		Where("encrypted_credential <> '' AND state NOT IN ? AND verification_status = ?", []string{string(domain.MailboxBlocked), string(domain.MailboxError)}, domain.MailboxVerificationVerified).
+		Where(`EXISTS (
+			SELECT 1 FROM registration_orders
+			WHERE registration_orders.mailbox_id = mailboxes.id
+				AND registration_orders.status IN ?
+				AND registration_orders.expires_at > ?
+		)`, []domain.OrderStatus{domain.OrderAssigned, domain.OrderWaitingCode}, time.Now().UTC())
 	if afterID != "" {
 		query = query.Where("id > ?", afterID)
 	}

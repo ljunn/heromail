@@ -296,7 +296,7 @@ type Worker struct {
 }
 
 type workerRepository interface {
-	ListMailboxCredentialsPage(afterID string, limit int) ([]store.MailboxCredential, error)
+	ListActiveMailboxCredentialsPage(afterID string, limit int) ([]store.MailboxCredential, error)
 	UpdateMailboxCredential(actorID, mailboxID string, credential map[string]string, validUntil time.Time, ip string) error
 	UpdateMailboxVerification(actorID, mailboxID, method, status, verificationError string, verifiedAt time.Time, ip string) error
 	WaitingOrdersForMailbox(mailboxID string) []domain.Order
@@ -347,7 +347,7 @@ func (w *Worker) poll(ctx context.Context) {
 		concurrency = 1
 	}
 	for {
-		mailboxes, err := w.repository.ListMailboxCredentialsPage(afterID, batchSize)
+		mailboxes, err := w.repository.ListActiveMailboxCredentialsPage(afterID, batchSize)
 		if err != nil {
 			return
 		}

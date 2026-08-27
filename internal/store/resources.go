@@ -26,7 +26,7 @@ type ResourceRepository interface {
 	SaveMailbox(actorID string, mailbox domain.Mailbox, credential map[string]string, ip string) (domain.Mailbox, error)
 	DeleteMailbox(actorID, mailboxID, ip string) error
 	GetMailboxCredential(mailboxID string) (MailboxCredential, error)
-	ListMailboxCredentialsPage(afterID string, limit int) ([]MailboxCredential, error)
+	ListActiveMailboxCredentialsPage(afterID string, limit int) ([]MailboxCredential, error)
 	UpdateMailboxCredential(actorID, mailboxID string, credential map[string]string, validUntil time.Time, ip string) error
 	UpdateMailboxVerification(actorID, mailboxID, method, status, verificationError string, verifiedAt time.Time, ip string) error
 	PendingMailboxVerificationIDs(limit int) ([]string, error)

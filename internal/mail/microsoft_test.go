@@ -16,12 +16,22 @@ import (
 )
 
 type pagingWorkerRepository struct {
-	mailboxes []store.MailboxCredential
-	pages     int
+	mailboxes       []store.MailboxCredential
+	allPages        int
+	activeOnlyPages int
 }
 
 func (s *pagingWorkerRepository) ListMailboxCredentialsPage(afterID string, limit int) ([]store.MailboxCredential, error) {
-	s.pages++
+	s.allPages++
+	return s.mailboxPage(afterID, limit), nil
+}
+
+func (s *pagingWorkerRepository) ListActiveMailboxCredentialsPage(afterID string, limit int) ([]store.MailboxCredential, error) {
+	s.activeOnlyPages++
+	return s.mailboxPage(afterID, limit), nil
+}
+
+func (s *pagingWorkerRepository) mailboxPage(afterID string, limit int) []store.MailboxCredential {
 	start := 0
 	for start < len(s.mailboxes) && s.mailboxes[start].Mailbox.ID <= afterID {
 		start++
@@ -30,7 +40,7 @@ func (s *pagingWorkerRepository) ListMailboxCredentialsPage(afterID string, limi
 	if end > len(s.mailboxes) {
 		end = len(s.mailboxes)
 	}
-	return s.mailboxes[start:end], nil
+	return s.mailboxes[start:end]
 }
 
 func (*pagingWorkerRepository) UpdateMailboxCredential(string, string, map[string]string, time.Time, string) error {
@@ -59,7 +69,7 @@ type concurrentPollRepository struct {
 	mailboxes []store.MailboxCredential
 }
 
-func (s *concurrentPollRepository) ListMailboxCredentialsPage(afterID string, limit int) ([]store.MailboxCredential, error) {
+func (s *concurrentPollRepository) ListActiveMailboxCredentialsPage(afterID string, limit int) ([]store.MailboxCredential, error) {
 	start := 0
 	for start < len(s.mailboxes) && s.mailboxes[start].Mailbox.ID <= afterID {
 		start++
@@ -126,7 +136,7 @@ type historyMatchingRepository struct {
 	marked   []string
 }
 
-func (*historyMatchingRepository) ListMailboxCredentialsPage(string, int) ([]store.MailboxCredential, error) {
+func (*historyMatchingRepository) ListActiveMailboxCredentialsPage(string, int) ([]store.MailboxCredential, error) {
 	return nil, nil
 }
 func (*historyMatchingRepository) UpdateMailboxCredential(string, string, map[string]string, time.Time, string) error {
@@ -153,7 +163,7 @@ func (*historyMatchingRepository) MarkMailEvent(string, string, string, string, 
 	return true, nil
 }
 
-func (*earlyMailRepository) ListMailboxCredentialsPage(string, int) ([]store.MailboxCredential, error) {
+func (*earlyMailRepository) ListActiveMailboxCredentialsPage(string, int) ([]store.MailboxCredential, error) {
 	return nil, nil
 }
 func (*earlyMailRepository) UpdateMailboxCredential(string, string, map[string]string, time.Time, string) error {
@@ -204,15 +214,18 @@ func (s *retryingCodeReceiver) ReceiveCodeValue(orderID, code string) (domain.Or
 	return domain.Order{ID: orderID, Code: code, Status: domain.OrderCodeReceived}, nil
 }
 
-func TestWorkerScansMailboxCredentialsPastFirstPage(t *testing.T) {
+func TestWorkerScansOnlyActiveMailboxCredentialsPastFirstPage(t *testing.T) {
 	repository := &pagingWorkerRepository{mailboxes: make([]store.MailboxCredential, 205)}
 	for index := range repository.mailboxes {
 		repository.mailboxes[index].Mailbox.ID = fmt.Sprintf("mailbox-%03d", index)
 	}
 	worker := NewWorker(repository, codeReceiverStub{}, NewMicrosoftClient(MicrosoftConfig{}), time.Minute)
 	worker.poll(context.Background())
-	if repository.pages != 3 {
-		t.Fatalf("邮箱凭证分页次数 = %d，期望 3", repository.pages)
+	if repository.activeOnlyPages != 3 {
+		t.Fatalf("活跃订单邮箱凭证分页次数 = %d，期望 3", repository.activeOnlyPages)
+	}
+	if repository.allPages != 0 {
+		t.Fatalf("Worker 不应扫描全部已验证邮箱，实际分页次数 = %d", repository.allPages)
 	}
 }
 
