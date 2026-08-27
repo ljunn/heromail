@@ -526,6 +526,8 @@ func mapStoreError(err error) (int, string) {
 		return http.StatusConflict, "service_disabled"
 	case errors.Is(err, store.ErrNoMailboxAvailable):
 		return http.StatusServiceUnavailable, "no_mailbox_available"
+	case errors.Is(err, store.ErrAllocationBusy):
+		return http.StatusTooManyRequests, "allocation_busy"
 	case errors.Is(err, store.ErrInsufficientBalance):
 		return http.StatusPaymentRequired, "insufficient_balance"
 	case errors.Is(err, store.ErrInvalidMailboxProviders):

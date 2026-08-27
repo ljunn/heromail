@@ -12,6 +12,17 @@ import (
 
 var testOrderProviders = []string{domain.MailboxProviderOutlook, domain.MailboxProviderHotmail}
 
+func TestEffectiveProviderPricesBackfillsAllowedProvider(t *testing.T) {
+	prices := effectiveProviderPricesCents(sqlService{
+		AllowedProviders:    []string{domain.MailboxProviderOutlook, domain.MailboxProviderOutlookDE},
+		ProviderPricesCents: map[string]int64{domain.MailboxProviderOutlook: 60},
+		PriceCents:          60,
+	})
+	if prices[domain.MailboxProviderOutlookDE] != 60 {
+		t.Fatalf("缺失邮箱类型单价没有回填：%v", prices)
+	}
+}
+
 func TestRegistrationConsumesMailboxForOneServiceOnly(t *testing.T) {
 	s := New()
 	first, err := s.CreateOrder("user-001", "svc-adobe", "test-1", testOrderProviders)

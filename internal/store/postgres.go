@@ -151,12 +151,20 @@ func (s *PostgresStore) migrateProviderPricing() error {
 		}
 		updatedServices := int64(0)
 		for index := range services {
-			if len(services[index].ProviderPricesCents) > 0 {
-				continue
-			}
 			prices := make(map[string]int64, len(services[index].AllowedProviders))
+			for provider, price := range services[index].ProviderPricesCents {
+				prices[provider] = price
+			}
+			changed := false
 			for _, provider := range services[index].AllowedProviders {
+				if _, exists := prices[provider]; exists {
+					continue
+				}
 				prices[provider] = services[index].PriceCents
+				changed = true
+			}
+			if !changed {
+				continue
 			}
 			encodedPrices, err := json.Marshal(prices)
 			if err != nil {
@@ -510,16 +518,13 @@ func (s *PostgresStore) CreateOrder(userID, serviceID, requestID string, mailbox
 	ctx := context.Background()
 	lockKey := "heromail:allocate:" + serviceID
 	lockValue := uuid.NewString()
-	locked, err := s.redis.SetNX(ctx, lockKey, lockValue, 15*time.Second).Result()
-	if err != nil {
+	if err := s.acquireAllocationLock(ctx, lockKey, lockValue); err != nil {
 		return domain.Order{}, err
-	}
-	if !locked {
-		return domain.Order{}, ErrNoMailboxAvailable
 	}
 	defer s.releaseLock(ctx, lockKey, lockValue)
 
 	var result domain.Order
+	var err error
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		var service sqlService
 		if err := tx.Where("id = ? OR code = ?", serviceID, serviceID).First(&service).Error; err != nil {
@@ -597,6 +602,24 @@ func (s *PostgresStore) CreateOrder(userID, serviceID, requestID string, mailbox
 		return nil
 	})
 	return result, err
+}
+
+// acquireAllocationLock 短暂等待同一平台的并发分配完成，避免把锁竞争误报为库存耗尽。
+func (s *PostgresStore) acquireAllocationLock(ctx context.Context, key, value string) error {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		locked, err := s.redis.SetNX(ctx, key, value, 15*time.Second).Result()
+		if err != nil {
+			return err
+		}
+		if locked {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return ErrAllocationBusy
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 func (s *PostgresStore) GetOrder(id string) (domain.Order, bool) {
@@ -1128,12 +1151,14 @@ func providerPricesCents(prices map[string]float64) map[string]int64 {
 }
 
 func effectiveProviderPricesCents(service sqlService) map[string]int64 {
-	if len(service.ProviderPricesCents) > 0 {
-		return service.ProviderPricesCents
-	}
 	result := make(map[string]int64, len(service.AllowedProviders))
+	for provider, price := range service.ProviderPricesCents {
+		result[provider] = price
+	}
 	for _, provider := range service.AllowedProviders {
-		result[provider] = service.PriceCents
+		if _, exists := result[provider]; !exists {
+			result[provider] = service.PriceCents
+		}
 	}
 	return result
 }

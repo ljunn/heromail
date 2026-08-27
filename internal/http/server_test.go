@@ -25,6 +25,13 @@ import (
 	"github.com/ljunn/heromail/internal/store"
 )
 
+func TestMapStoreErrorDistinguishesAllocationContention(t *testing.T) {
+	status, code := mapStoreError(store.ErrAllocationBusy)
+	if status != http.StatusTooManyRequests || code != "allocation_busy" {
+		t.Fatalf("分配锁竞争错误映射为 status=%d code=%s", status, code)
+	}
+}
+
 func TestCreateOrderAutomaticallyListensWithoutUserMutationEndpoints(t *testing.T) {
 	server := NewServer(store.New())
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/orders", bytes.NewBufferString(`{"service":"adobe","mailbox_providers":["outlook","hotmail"],"request_id":"http-test-001"}`))

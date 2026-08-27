@@ -1,14 +1,16 @@
-FROM golang:1.26-alpine AS build-stage
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build-stage
 
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_TIME=unknown
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/ljunn/heromail/internal/buildinfo.Version=${VERSION} -X github.com/ljunn/heromail/internal/buildinfo.Commit=${COMMIT} -X github.com/ljunn/heromail/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /heromail ./cmd/heromail
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags="-s -w -X github.com/ljunn/heromail/internal/buildinfo.Version=${VERSION} -X github.com/ljunn/heromail/internal/buildinfo.Commit=${COMMIT} -X github.com/ljunn/heromail/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /heromail ./cmd/heromail
 
 FROM alpine:3.22
 

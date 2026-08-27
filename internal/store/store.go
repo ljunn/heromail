@@ -16,6 +16,7 @@ var (
 	ErrServiceNotFound          = errors.New("target service not found")
 	ErrServiceDisabled          = errors.New("target service is disabled")
 	ErrNoMailboxAvailable       = errors.New("no mailbox available for this service")
+	ErrAllocationBusy           = errors.New("邮箱正在分配中，请稍后重试")
 	ErrOrderNotFound            = errors.New("order not found")
 	ErrInvalidOrderState        = errors.New("order is not in a mutable state")
 	ErrVerificationCodeRequired = errors.New("verification code is required")
