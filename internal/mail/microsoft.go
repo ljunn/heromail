@@ -385,13 +385,17 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 	credential := mailbox.Config
 	microsoftMailbox := supportsMicrosoftGraph(mailbox.Mailbox)
 	microsoftIMAPOAuth := isMicrosoftIMAPOAuth(mailbox.Mailbox, credential)
+	microsoftIMAPPassword := isMicrosoftIMAPPassword(mailbox.Mailbox, credential)
 	imapOnly := mailbox.Mailbox.ConnectionMethod == domain.MailboxConnectionIMAP
 	// 源项目导入的 Microsoft OAuth 只有 IMAP scope，直接走 IMAP；否则拿 IMAP
 	// refresh token 请求 Graph 会得到 401/403，并可能消耗一次轮换 token。
-	useIMAP := !microsoftMailbox || imapOnly || microsoftIMAPOAuth
+	useIMAP := !microsoftMailbox || imapOnly || microsoftIMAPOAuth || microsoftIMAPPassword
 	var graphErr error
 	var messageErr error
 	validUntil, _ := time.Parse(time.RFC3339, credential["expires_at"])
+	if validUntil.IsZero() {
+		validUntil = mailbox.Mailbox.OAuthValidUntil
+	}
 	if useIMAP && microsoftIMAPOAuth {
 		needsRefresh := credential["refresh_token"] != "" && (credential["access_token"] == "" || time.Until(validUntil) < 5*time.Minute)
 		if needsRefresh {
@@ -441,6 +445,24 @@ func (w *Worker) pollMailbox(ctx context.Context, mailbox store.MailboxCredentia
 			messageErr = errors.New("缺少 Graph OAuth 凭证")
 		} else {
 			messages, messageErr = w.client.Messages(ctx, credential["access_token"])
+		}
+	}
+	if messageErr != nil && useIMAP && microsoftIMAPOAuth && strings.TrimSpace(credential["password"]) != "" && w.imap != nil {
+		// 导入记录可能同时含有 OAuth 和密码。OAuth 失效时必须尝试密码，
+		// 成功后记住选择，后续订单收码不再重复使用失效 OAuth。
+		passwordCredential := credentialForIMAPFallback(credential, messageErr)
+		passwordMessages, passwordErr := w.imap.Messages(ctx, mailbox.Mailbox.Address, passwordCredential)
+		if passwordErr == nil {
+			updatedCredential := cloneCredential(credential)
+			updatedCredential["imap_auth_method"] = "password"
+			if saveErr := w.repository.UpdateMailboxCredential("system", mailbox.Mailbox.ID, updatedCredential, validUntil, ""); saveErr != nil {
+				messageErr = saveErr
+			} else {
+				credential = updatedCredential
+				messages, messageErr = passwordMessages, nil
+			}
+		} else {
+			messageErr = fmt.Errorf("OAuth：%v；密码：%v", messageErr, passwordErr)
 		}
 	}
 	if messageErr != nil && !useIMAP && (credential["password"] != "" || microsoftIMAPOAuth) {

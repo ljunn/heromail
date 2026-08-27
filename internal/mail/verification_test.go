@@ -100,11 +100,15 @@ type graphConnectorStub struct {
 
 type microsoftIMAPGraphConnectorStub struct {
 	graphConnectorStub
-	imapRefreshes int
+	imapRefreshes  int
+	imapRefreshErr error
 }
 
 func (s *microsoftIMAPGraphConnectorStub) RefreshIMAPCredential(context.Context, map[string]string) (map[string]string, time.Time, error) {
 	s.imapRefreshes++
+	if s.imapRefreshErr != nil {
+		return nil, time.Time{}, s.imapRefreshErr
+	}
 	validUntil := time.Now().Add(time.Hour)
 	return map[string]string{"access_token": "imap-access", "refresh_token": "imap-refresh", "expires_at": validUntil.Format(time.RFC3339)}, validUntil, nil
 }
@@ -208,6 +212,73 @@ func TestMailboxVerifierUsesIMAPForImportedMicrosoftIMAPOAuth(t *testing.T) {
 	}
 }
 
+func TestMailboxVerifierFallsBackToPasswordWhenImportedIMAPOAuthFails(t *testing.T) {
+	repository := &verificationRepositoryStub{credential: store.MailboxCredential{
+		Mailbox: domain.Mailbox{ID: "mailbox-imported-oauth-password", Address: "user@outlook.com"},
+		Config: map[string]string{
+			"oauth_protocol": "imap",
+			"client_id":      "source-client",
+			"refresh_token":  "source-refresh",
+			"access_token":   "oauth-access",
+			"expires_at":     time.Now().Add(time.Hour).Format(time.RFC3339),
+			"password":       "working-password",
+		},
+	}}
+	imap := &imapConnectorStub{verifyErrors: []error{errors.New("OAuth 认证失败"), nil}}
+	result, err := NewMailboxVerifier(repository, nil, imap).Verify(context.Background(), "system", repository.credential.Mailbox.ID, "")
+	if err != nil || result.Status != domain.MailboxVerificationVerified || result.Method != domain.MailboxConnectionIMAP {
+		t.Fatalf("导入 OAuth 失败后未回退密码：result=%+v err=%v", result, err)
+	}
+	if imap.calls != 2 || imap.credentials[1]["access_token"] != "" || imap.credentials[1]["password"] != "working-password" {
+		t.Fatalf("未按 OAuth、密码顺序尝试两种登录方式：calls=%d credentials=%v", imap.calls, imap.credentials)
+	}
+}
+
+func TestMailboxVerifierKeepsPersistedPasswordRoute(t *testing.T) {
+	repository := &verificationRepositoryStub{credential: store.MailboxCredential{
+		Mailbox: domain.Mailbox{ID: "mailbox-imported-password-route", Address: "user@outlook.com"},
+		Config: map[string]string{
+			"oauth_protocol":   "imap",
+			"client_id":        "source-client",
+			"refresh_token":    "source-refresh",
+			"access_token":     "stale-oauth-access",
+			"imap_auth_method": "password",
+			"password":         "working-password",
+		},
+	}}
+	graph := &graphConnectorStub{profileErr: errors.New("不应访问 Graph")}
+	imap := &imapConnectorStub{}
+	result, err := NewMailboxVerifier(repository, graph, imap).Verify(context.Background(), "system", repository.credential.Mailbox.ID, "")
+	if err != nil || result.Status != domain.MailboxVerificationVerified || graph.calls != 0 || imap.calls != 1 {
+		t.Fatalf("已确认密码的邮箱未固定走 IMAP：result=%+v err=%v graph=%d imap=%d", result, err, graph.calls, imap.calls)
+	}
+	if imap.credentials[0]["access_token"] != "" || imap.credentials[0]["password"] != "working-password" {
+		t.Fatalf("密码路由仍携带 OAuth Token：%v", imap.credentials[0])
+	}
+}
+
+func TestMailboxVerifierReadsMessagesWithImportedIMAPOAuthPasswordFallback(t *testing.T) {
+	repository := &verificationRepositoryStub{credential: store.MailboxCredential{
+		Mailbox: domain.Mailbox{ID: "mailbox-imported-oauth-password-read", Address: "user@outlook.com"},
+		Config: map[string]string{
+			"oauth_protocol": "imap",
+			"client_id":      "source-client",
+			"refresh_token":  "source-refresh",
+			"access_token":   "oauth-access",
+			"expires_at":     time.Now().Add(time.Hour).Format(time.RFC3339),
+			"password":       "working-password",
+		},
+	}}
+	imap := &imapConnectorStub{allMessages: []Message{{ID: "password-message"}}, allErrors: []error{errors.New("OAuth 收件失败"), nil}}
+	messages, err := NewMailboxVerifier(repository, nil, imap).ReadMessages(context.Background(), "system", repository.credential.Mailbox.ID, "")
+	if err != nil || len(messages) != 1 || messages[0].ID != "password-message" {
+		t.Fatalf("收件读取未回退密码：messages=%+v err=%v", messages, err)
+	}
+	if imap.allCalls != 2 || imap.credentials[1]["access_token"] != "" || imap.credentials[1]["password"] != "working-password" {
+		t.Fatalf("收件读取未按 OAuth、密码顺序尝试：calls=%d credentials=%v", imap.allCalls, imap.credentials)
+	}
+}
+
 func TestCompactGraphErrorExplainsInvalidGrant(t *testing.T) {
 	message := compactGraphError(errors.New(`Microsoft Token 接口返回 400: {"error":"invalid_grant","error_description":"AADSTS70000"}`))
 	if !strings.Contains(message, "重新授权 Graph") || strings.Contains(message, "AADSTS70000") {
@@ -230,23 +301,35 @@ func (s *graphConnectorStub) AllMessages(context.Context, string) ([]Message, er
 }
 
 type imapConnectorStub struct {
-	err         error
-	calls       int
-	credentials []map[string]string
-	allMessages []Message
-	allErr      error
-	allCalls    int
+	err          error
+	verifyErrors []error
+	calls        int
+	credentials  []map[string]string
+	allMessages  []Message
+	allErr       error
+	allErrors    []error
+	allCalls     int
 }
 
 func (s *imapConnectorStub) Verify(_ context.Context, _ string, credential map[string]string) error {
 	s.calls++
 	s.credentials = append(s.credentials, credential)
+	if len(s.verifyErrors) > 0 {
+		err := s.verifyErrors[0]
+		s.verifyErrors = s.verifyErrors[1:]
+		return err
+	}
 	return s.err
 }
 
 func (s *imapConnectorStub) AllMessages(_ context.Context, _ string, credential map[string]string) ([]Message, error) {
 	s.allCalls++
 	s.credentials = append(s.credentials, credential)
+	if len(s.allErrors) > 0 {
+		err := s.allErrors[0]
+		s.allErrors = s.allErrors[1:]
+		return s.allMessages, err
+	}
 	return s.allMessages, s.allErr
 }
 

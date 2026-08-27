@@ -2,6 +2,7 @@ package mail
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -448,15 +449,24 @@ func TestWorkerDoesNotRefreshGraphAfterMailboxUsesIMAP(t *testing.T) {
 }
 
 type credentialMessageConnector struct {
-	credential map[string]string
+	credential  map[string]string
+	messageErrs []error
+	messages    []Message
+	calls       int
 }
 
 func (*credentialMessageConnector) Verify(context.Context, string, map[string]string) error {
 	return nil
 }
 func (s *credentialMessageConnector) Messages(_ context.Context, _ string, credential map[string]string) ([]Message, error) {
+	s.calls++
 	s.credential = credential
-	return []Message{}, nil
+	if len(s.messageErrs) > 0 {
+		err := s.messageErrs[0]
+		s.messageErrs = s.messageErrs[1:]
+		return nil, err
+	}
+	return s.messages, nil
 }
 
 func TestWorkerRefreshesImportedMicrosoftIMAPOAuth(t *testing.T) {
@@ -482,6 +492,27 @@ func TestWorkerRefreshesImportedMicrosoftIMAPOAuth(t *testing.T) {
 	worker.poll(context.Background())
 	if connector.credential["access_token"] != "imap-access" {
 		t.Fatalf("Worker 未把刷新后的 IMAP Token 用于收码：%v", connector.credential)
+	}
+}
+
+func TestWorkerFallsBackToPasswordWhenImportedIMAPOAuthFails(t *testing.T) {
+	repository := &concurrentPollRepository{mailboxes: []store.MailboxCredential{{
+		Mailbox: domain.Mailbox{ID: "mailbox-imported-oauth-password-worker", Address: "user@outlook.com"},
+		Config: map[string]string{
+			"oauth_protocol": "imap",
+			"client_id":      "source-client",
+			"refresh_token":  "source-refresh",
+			"access_token":   "oauth-access",
+			"expires_at":     time.Now().Add(time.Hour).Format(time.RFC3339),
+			"password":       "working-password",
+		},
+	}}}
+	connector := &credentialMessageConnector{messageErrs: []error{errors.New("OAuth 收件失败"), nil}}
+	worker := NewWorker(repository, codeReceiverStub{}, NewMicrosoftClient(MicrosoftConfig{}), time.Minute)
+	worker.imap = connector
+	worker.poll(context.Background())
+	if connector.calls != 2 || connector.credential["access_token"] != "" || connector.credential["password"] != "working-password" {
+		t.Fatalf("实时收码未按 OAuth、密码顺序尝试：calls=%d credential=%v", connector.calls, connector.credential)
 	}
 }
 

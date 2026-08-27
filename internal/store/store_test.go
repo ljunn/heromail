@@ -515,3 +515,26 @@ func TestCompactStoredMailboxVerificationError(t *testing.T) {
 		t.Fatalf("组合 Graph/IMAP 错误未保留回退结果：%q", got)
 	}
 }
+
+func TestMicrosoftIMAPPasswordFallbackCredential(t *testing.T) {
+	if !microsoftIMAPPasswordFallbackCredential(map[string]string{
+		"oauth_protocol": "imap",
+		"client_id":      "source-client",
+		"refresh_token":  "source-refresh",
+		"password":       "mailbox-password",
+	}) {
+		t.Fatal("同时含有 IMAP OAuth 和密码的凭证应进入一次性回退重验证")
+	}
+	if microsoftIMAPPasswordFallbackCredential(map[string]string{
+		"oauth_protocol": "imap",
+		"client_id":      "source-client",
+		"refresh_token":  "source-refresh",
+	}) {
+		t.Fatal("纯 IMAP OAuth 凭证不应被密码回退迁移重新排队")
+	}
+	if microsoftIMAPPasswordFallbackCredential(map[string]string{
+		"password": "mailbox-password",
+	}) {
+		t.Fatal("密码登录但没有 Microsoft OAuth 标识的记录不应被该迁移处理")
+	}
+}
