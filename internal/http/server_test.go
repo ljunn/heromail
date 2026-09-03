@@ -143,6 +143,61 @@ func TestAdminOwnsOrderCompletionAndCancellation(t *testing.T) {
 	}
 }
 
+func TestAdminCanRescanMailboxHistory(t *testing.T) {
+	repository := store.New()
+	server := NewServer(repository)
+	server.MailboxVerifier = &mailboxVerificationServiceStub{matched: 3}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/mailboxes/mb-001/rescan-history", nil)
+	request.Header.Set("X-HeroMail-User", "admin-001")
+	request.Header.Set("X-HeroMail-Role", "admin")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("历史重扫返回 %d：%s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			Matched int `json:"matched"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("解析历史重扫响应失败：%v", err)
+	}
+	if payload.Data.Matched != 3 {
+		t.Fatalf("历史重扫匹配数 = %d，期望 3", payload.Data.Matched)
+	}
+}
+
+func TestAdminCanRescanAllMailboxHistory(t *testing.T) {
+	repository := store.New()
+	server := NewServer(repository)
+	server.MailboxVerifier = &mailboxVerificationServiceStub{matched: 1}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/mailboxes/rescan-history", nil)
+	request.Header.Set("X-HeroMail-User", "admin-001")
+	request.Header.Set("X-HeroMail-Role", "admin")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("全量历史重扫返回 %d：%s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			Scanned int `json:"scanned"`
+			Matched int `json:"matched"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("解析全量历史重扫响应失败：%v", err)
+	}
+	if payload.Data.Scanned == 0 || payload.Data.Matched == 0 {
+		t.Fatalf("全量历史重扫结果异常：%+v", payload.Data)
+	}
+}
+
 func TestAdminEndpointRequiresRole(t *testing.T) {
 	server := NewServer(store.New())
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/overview", nil)
@@ -313,7 +368,7 @@ func TestMailboxAdminSupportsNewProvidersAndManualRegistration(t *testing.T) {
 		t.Fatalf("工作台脚本返回 %d，期望 %d", response.Code, http.StatusOK)
 	}
 	script := response.Body.String()
-	for _, marker := range []string{`gmail: "Gmail"`, `icloud: "iCloud"`, `mailcom: "Mail.com"`, `data-action="mailbox-registration"`, `data-action="mark-mailbox-service-registered"`, `/services/${encodeURIComponent(serviceID)}/registered`} {
+	for _, marker := range []string{`gmail: "Gmail"`, `icloud: "iCloud"`, `mailcom: "Mail.com"`, `data-action="mailbox-registration"`, `data-action="rescan-mailbox-history"`, `data-action="rescan-all-mailbox-history"`, `data-action="mark-mailbox-service-registered"`, `/services/${encodeURIComponent(serviceID)}/registered`} {
 		if !strings.Contains(script, marker) {
 			t.Fatalf("邮箱管理页面缺少 %q", marker)
 		}
@@ -668,6 +723,22 @@ func TestAdminImportKeepsSavedMailboxWhenQueueIsTemporarilyUnavailable(t *testin
 
 func (s *mailboxImportRepositoryStub) DequeueMailboxVerification(context.Context, time.Duration) (string, error) {
 	return "", nil
+}
+
+type mailboxVerificationServiceStub struct {
+	matched int
+}
+
+func (s *mailboxVerificationServiceStub) Verify(context.Context, string, string, string) (mail.MailboxVerificationResult, error) {
+	return mail.MailboxVerificationResult{}, nil
+}
+
+func (s *mailboxVerificationServiceStub) ReadMessages(context.Context, string, string, string) ([]mail.Message, error) {
+	return nil, nil
+}
+
+func (s *mailboxVerificationServiceStub) ScanMailboxHistory(context.Context, string, string, string) (int, error) {
+	return s.matched, nil
 }
 
 func TestGoogleOAuthSavesGmailMailboxAndQueuesVerification(t *testing.T) {

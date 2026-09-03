@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"net/http"
@@ -18,6 +19,12 @@ import (
 	"github.com/ljunn/heromail/internal/web"
 )
 
+type mailboxVerificationService interface {
+	Verify(ctx context.Context, actorID, mailboxID, ip string) (mail.MailboxVerificationResult, error)
+	ReadMessages(ctx context.Context, actorID, mailboxID, ip string) ([]mail.Message, error)
+	ScanMailboxHistory(ctx context.Context, actorID, mailboxID, ip string) (int, error)
+}
+
 type Server struct {
 	Store              store.Repository
 	Router             *gin.Engine
@@ -27,7 +34,7 @@ type Server struct {
 	Payment            *payment.Service
 	Microsoft          *mail.MicrosoftClient
 	Google             *mail.GoogleClient
-	MailboxVerifier    *mail.MailboxVerifier
+	MailboxVerifier    mailboxVerificationService
 	PublicURL          string
 	WorkerToken        string
 }
@@ -159,8 +166,10 @@ func (s *Server) routes() {
 	admin.GET("/mailboxes", s.adminMailboxes)
 	admin.POST("/mailboxes", s.adminSaveMailbox)
 	admin.POST("/mailboxes/import", s.adminImportMailboxes)
+	admin.POST("/mailboxes/rescan-history", s.adminRescanAllMailboxHistory)
 	admin.DELETE("/mailboxes/:id", s.adminDeleteMailbox)
 	admin.POST("/mailboxes/:id/verify", s.adminVerifyMailbox)
+	admin.POST("/mailboxes/:id/rescan-history", s.adminRescanMailboxHistory)
 	admin.POST("/mailboxes/:id/services/:service_id/registered", s.adminMarkMailboxServiceRegistered)
 	admin.GET("/mailboxes/:id/messages", s.adminMailboxMessages)
 	admin.GET("/mailbox-pools", s.adminMailboxPools)

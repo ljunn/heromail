@@ -106,6 +106,47 @@ func (s *Server) adminVerifyMailbox(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
+func (s *Server) adminRescanMailboxHistory(c *gin.Context) {
+	if s.MailboxVerifier == nil {
+		writeError(c, http.StatusServiceUnavailable, "mailbox_history_scan_unavailable", "邮箱历史扫描服务不可用")
+		return
+	}
+	matched, err := s.MailboxVerifier.ScanMailboxHistory(c.Request.Context(), demoUser(c), c.Param("id"), c.ClientIP())
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, store.ErrMailboxNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(c, status, "mailbox_history_scan_failed", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"matched": matched}})
+}
+
+func (s *Server) adminRescanAllMailboxHistory(c *gin.Context) {
+	if s.MailboxVerifier == nil {
+		writeError(c, http.StatusServiceUnavailable, "mailbox_history_scan_unavailable", "邮箱历史扫描服务不可用")
+		return
+	}
+	mailboxes := s.Store.Mailboxes()
+	totalMatched := 0
+	scanned := 0
+	for _, mailbox := range mailboxes {
+		matched, err := s.MailboxVerifier.ScanMailboxHistory(c.Request.Context(), demoUser(c), mailbox.ID, c.ClientIP())
+		if err != nil {
+			status := http.StatusBadGateway
+			if errors.Is(err, store.ErrMailboxNotFound) {
+				status = http.StatusNotFound
+			}
+			writeError(c, status, "mailbox_history_scan_failed", err.Error())
+			return
+		}
+		totalMatched += matched
+		scanned++
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"scanned": scanned, "matched": totalMatched}})
+}
+
 func (s *Server) adminMailboxMessages(c *gin.Context) {
 	if s.MailboxVerifier == nil {
 		writeError(c, http.StatusServiceUnavailable, "mailbox_messages_unavailable", "邮箱收件服务不可用")

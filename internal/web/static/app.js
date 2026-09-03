@@ -454,7 +454,7 @@ function showMailboxRegistrationEditor(mailboxID) {
     return `<div class="mailbox-platform-row"><div><strong>${esc(service.name)}</strong><span><code>${esc(service.code)}</code>${service.enabled ? "" : " · 已停用"}</span></div>${done ? `<span class="chip green">已注册</span>` : `<button class="ghost-btn compact-btn" data-action="mark-mailbox-service-registered" data-mailbox="${esc(mailbox.id)}" data-service="${esc(service.id)}">标记已注册</button>`}</div>`;
   }).join("");
   document.querySelector("#secret-modal")?.remove();
-  document.body.insertAdjacentHTML("beforeend", `<div id="secret-modal" class="modal-backdrop"><div class="modal platform-state-modal"><div class="card-head"><div><h2>平台注册状态</h2><div class="modal-subtitle">${esc(mailbox.address)}</div></div><button class="icon-btn" data-action="close-modal" title="关闭">×</button></div><div class="card-body"><div class="notice">导入验证会自动扫描历史邮件；这里用于补充无法从邮件确认的平台注册事实。</div><div class="mailbox-platform-list">${rows || `<div class="empty">暂无目标平台，请先创建平台规则</div>`}</div></div></div></div>`);
+  document.body.insertAdjacentHTML("beforeend", `<div id="secret-modal" class="modal-backdrop"><div class="modal platform-state-modal"><div class="card-head"><div><h2>平台注册状态</h2><div class="modal-subtitle">${esc(mailbox.address)}</div></div><button class="icon-btn" data-action="close-modal" title="关闭">×</button></div><div class="card-body"><div class="notice">导入验证会自动扫描历史邮件；这里用于补充无法从邮件确认的平台注册事实。</div><div class="mailbox-platform-actions"><button class="ghost-btn" data-action="rescan-mailbox-history" data-id="${esc(mailbox.id)}">重新扫描历史</button><button class="ghost-btn" data-action="rescan-all-mailbox-history">全量重扫</button></div><div class="mailbox-platform-list">${rows || `<div class="empty">暂无目标平台，请先创建平台规则</div>`}</div></div></div></div>`);
 }
 
 async function markMailboxServiceRegistered(mailboxID, serviceID) {
@@ -473,6 +473,50 @@ async function markMailboxServiceRegistered(mailboxID, serviceID) {
   } catch (error) {
     toast(error.message);
     if (button) { button.disabled = false; button.textContent = "标记已注册"; }
+  }
+}
+
+async function rescanMailboxHistory(mailboxID) {
+  const button = document.querySelector(`[data-action="rescan-mailbox-history"][data-id="${CSS.escape(mailboxID)}"]`);
+  const originalLabel = button?.textContent || "重新扫描历史";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "扫描中…";
+  }
+  try {
+    const result = await api(`/api/v1/admin/mailboxes/${encodeURIComponent(mailboxID)}/rescan-history`, { method: "POST" });
+    const matched = Number(result.data?.matched || 0);
+    await refresh();
+    showMailboxRegistrationEditor(mailboxID);
+    toast(matched > 0 ? `已回填 ${matched} 条平台注册状态` : "历史扫描完成，未发现新的平台注册状态");
+  } catch (error) {
+    toast(error.message);
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
+  }
+}
+
+async function rescanAllMailboxHistory() {
+  const button = document.querySelector('[data-action="rescan-all-mailbox-history"]');
+  const originalLabel = button?.textContent || "全量重扫";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "扫描中…";
+  }
+  try {
+    const result = await api("/api/v1/admin/mailboxes/rescan-history", { method: "POST" });
+    const scanned = Number(result.data?.scanned || 0);
+    const matched = Number(result.data?.matched || 0);
+    await refresh();
+    toast(`已扫描 ${scanned} 个邮箱，回填 ${matched} 条平台注册状态`);
+  } catch (error) {
+    toast(error.message);
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
   }
 }
 
@@ -569,11 +613,11 @@ function renderAdminMailboxes() {
   const importBusy = state.busyAction === "mailbox-import";
   const total = state.pagination.mailboxes?.total || 0;
   const mailboxQuery = state.mailboxFilters.query;
-  const rows = state.mailboxes.map(mailbox => { const failedMicrosoft = ["outlook", "outlook_de", "hotmail"].includes(mailbox.provider) && ["failed", "auth_error"].includes(mailbox.verification_status || mailbox.state); return `<tr><td>${esc(mailbox.address)}</td><td>${esc(providerLabel(mailbox.provider))}</td><td>${esc(connectionLabel(mailbox.connection_method))}</td><td>${statusChip(mailbox.verification_status || mailbox.state)}${mailbox.verification_error ? `<div class="muted">${esc(mailbox.verification_error)}</div>` : ""}</td><td>${esc((mailbox.registered_platforms || []).join(", ") || "—")}</td><td>${mailbox.health_score}/100</td><td>${time(mailbox.last_verified_at)}</td><td><div class="table-actions"><button class="link-btn" data-action="mailbox-messages" data-id="${esc(mailbox.id)}" data-address="${esc(mailbox.address)}">收件</button><button class="link-btn" data-action="mailbox-registration" data-id="${esc(mailbox.id)}">平台注册</button><button class="link-btn" data-action="verify-mailbox" data-id="${esc(mailbox.id)}">验证</button>${failedMicrosoft ? `<button class="link-btn" data-action="reauthorize-mailbox" data-id="${esc(mailbox.id)}">重新授权</button>` : ""}<button class="link-btn danger-text" data-action="delete-mailbox" data-id="${esc(mailbox.id)}">删除</button></div></td></tr>`; }).join("");
+  const rows = state.mailboxes.map(mailbox => { const failedMicrosoft = ["outlook", "outlook_de", "hotmail"].includes(mailbox.provider) && ["failed", "auth_error"].includes(mailbox.verification_status || mailbox.state); return `<tr><td>${esc(mailbox.address)}</td><td>${esc(providerLabel(mailbox.provider))}</td><td>${esc(connectionLabel(mailbox.connection_method))}</td><td>${statusChip(mailbox.verification_status || mailbox.state)}${mailbox.verification_error ? `<div class="muted">${esc(mailbox.verification_error)}</div>` : ""}</td><td>${esc((mailbox.registered_platforms || []).join(", ") || "—")}</td><td>${mailbox.health_score}/100</td><td>${time(mailbox.last_verified_at)}</td><td><div class="table-actions"><button class="link-btn" data-action="mailbox-messages" data-id="${esc(mailbox.id)}" data-address="${esc(mailbox.address)}">收件</button><button class="link-btn" data-action="mailbox-registration" data-id="${esc(mailbox.id)}">平台注册</button><button class="link-btn" data-action="rescan-mailbox-history" data-id="${esc(mailbox.id)}">重扫历史</button><button class="link-btn" data-action="verify-mailbox" data-id="${esc(mailbox.id)}">验证</button>${failedMicrosoft ? `<button class="link-btn" data-action="reauthorize-mailbox" data-id="${esc(mailbox.id)}">重新授权</button>` : ""}<button class="link-btn danger-text" data-action="delete-mailbox" data-id="${esc(mailbox.id)}">删除</button></div></td></tr>`; }).join("");
   const pendingCount = state.overview?.pending_mailboxes ?? 0;
   const verifiedCount = state.overview?.verified_mailboxes ?? 0;
   const providerMetrics = mailboxProviders.map(([code, label]) => `<div><span>${label}</span><strong>${state.overview?.[`${code}_mailboxes`] ?? 0}</strong><small>邮箱类型</small></div>`).join("");
-  return pageHead("邮箱池", "一个统一资源池，按邮箱渠道分类、验证连接并识别平台注册状态。", `<button class="ghost-btn" data-action="refresh">刷新状态</button>`) + `<section class="mailbox-import-hero"><div class="mailbox-import-copy"><span class="eyebrow">MAILBOX POOL</span><h2>导入邮箱账号</h2><p>系统按行读取大文件并自动识别渠道。Microsoft 邮箱优先 Graph，Gmail、iCloud 和 Mail.com 使用 IMAP；连接成功后扫描全部平台历史邮件。</p><div class="import-capabilities">${mailboxProviders.map(([, label], index) => `<span><i class="cap-dot ${["blue", "green", "purple"][index % 3]}"></i>${label}</span>`).join("")}<span><i class="cap-dot green"></i>自动识别平台注册</span></div></div><div class="mailbox-import-sources"><div class="mailbox-dropzone" data-action="pick-mailbox-file"><input id="mailbox-file" type="file" accept=".txt,.csv,.jsonl,text/plain,text/csv,application/json"><div class="drop-icon">↥</div><strong>拖放 TXT / CSV / JSON Lines</strong><span>或点击选择文件 · 支持大文件逐行导入</span><em id="mailbox-file-name">尚未选择文件</em></div><label class="mailbox-paste"><span><strong>或直接粘贴文本</strong><small>每行一个邮箱账号，导入后仍由服务端逐行读取</small></span><textarea id="mailbox-import-text" class="field" rows="5" placeholder="gmail@gmail.com----密码----https://2fa.live/tok/…\nuser@outlook.com----应用专用密码"></textarea></label></div></section><div class="mailbox-import-actions"><button class="primary-btn" data-action="import-mailboxes" ${importBusy ? "disabled" : ""}>${importBusy ? "正在导入并验证…" : "导入并开始验证"}</button><span>支持邮箱----密码----2FA 地址；凭证会加密保存。Gmail 收件验证仍需应用专用密码或 OAuth。</span></div><div class="mailbox-metrics"><div><span>全部邮箱</span><strong>${total}</strong><small>${mailboxQuery ? `搜索“${esc(mailboxQuery)}”` : "统一资源池"}</small></div>${providerMetrics}<div><span>待验证</span><strong>${pendingCount}</strong><small>后台队列</small></div><div><span>已验证</span><strong>${verifiedCount}</strong><small>可参与分配</small></div></div><div class="card mailbox-table-card"><div class="card-head"><div><h2>邮箱明细</h2><span class="muted">服务端分页 · 导入验证自动扫描，也可手工补充平台注册状态</span></div><span class="pool-singleton">唯一邮箱池</span></div><form class="filter-bar mailbox-filter-bar" data-form="mailbox-filters"><input id="admin-mailbox-query" class="search" aria-label="搜索邮箱" value="${esc(mailboxQuery)}" placeholder="搜索邮箱地址"><button class="primary-btn" type="submit">搜索</button>${mailboxQuery ? `<button class="ghost-btn" type="button" data-action="reset-mailbox-filters">清空</button>` : ""}</form><div class="table-wrap"><table><thead><tr><th>邮箱</th><th>类型</th><th>连接方式</th><th>验证状态</th><th>已注册平台</th><th>健康分</th><th>最近验证</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="8" class="empty">${mailboxQuery ? "没有找到匹配的邮箱" : "还没有邮箱，导入文件后会显示在这里"}</td></tr>`}</tbody></table></div>${renderPager("mailboxes")}</div>`;
+  return pageHead("邮箱池", "一个统一资源池，按邮箱渠道分类、验证连接并识别平台注册状态。", `<div class="head-actions"><button class="ghost-btn" data-action="rescan-all-mailbox-history">全量重扫</button><button class="ghost-btn" data-action="refresh">刷新状态</button></div>`) + `<section class="mailbox-import-hero"><div class="mailbox-import-copy"><span class="eyebrow">MAILBOX POOL</span><h2>导入邮箱账号</h2><p>系统按行读取大文件并自动识别渠道。Microsoft 邮箱优先 Graph，Gmail、iCloud 和 Mail.com 使用 IMAP；连接成功后扫描全部平台历史邮件。</p><div class="import-capabilities">${mailboxProviders.map(([, label], index) => `<span><i class="cap-dot ${["blue", "green", "purple"][index % 3]}"></i>${label}</span>`).join("")}<span><i class="cap-dot green"></i>自动识别平台注册</span></div></div><div class="mailbox-import-sources"><div class="mailbox-dropzone" data-action="pick-mailbox-file"><input id="mailbox-file" type="file" accept=".txt,.csv,.jsonl,text/plain,text/csv,application/json"><div class="drop-icon">↥</div><strong>拖放 TXT / CSV / JSON Lines</strong><span>或点击选择文件 · 支持大文件逐行导入</span><em id="mailbox-file-name">尚未选择文件</em></div><label class="mailbox-paste"><span><strong>或直接粘贴文本</strong><small>每行一个邮箱账号，导入后仍由服务端逐行读取</small></span><textarea id="mailbox-import-text" class="field" rows="5" placeholder="gmail@gmail.com----密码----https://2fa.live/tok/…\nuser@outlook.com----应用专用密码"></textarea></label></div></section><div class="mailbox-import-actions"><button class="primary-btn" data-action="import-mailboxes" ${importBusy ? "disabled" : ""}>${importBusy ? "正在导入并验证…" : "导入并开始验证"}</button><span>支持邮箱----密码----2FA 地址；凭证会加密保存。Gmail 收件验证仍需应用专用密码或 OAuth。</span></div><div class="mailbox-metrics"><div><span>全部邮箱</span><strong>${total}</strong><small>${mailboxQuery ? `搜索“${esc(mailboxQuery)}”` : "统一资源池"}</small></div>${providerMetrics}<div><span>待验证</span><strong>${pendingCount}</strong><small>后台队列</small></div><div><span>已验证</span><strong>${verifiedCount}</strong><small>可参与分配</small></div></div><div class="card mailbox-table-card"><div class="card-head"><div><h2>邮箱明细</h2><span class="muted">服务端分页 · 导入验证自动扫描，也可手工补充平台注册状态</span></div><span class="pool-singleton">唯一邮箱池</span></div><form class="filter-bar mailbox-filter-bar" data-form="mailbox-filters"><input id="admin-mailbox-query" class="search" aria-label="搜索邮箱" value="${esc(mailboxQuery)}" placeholder="搜索邮箱地址"><button class="primary-btn" type="submit">搜索</button>${mailboxQuery ? `<button class="ghost-btn" type="button" data-action="reset-mailbox-filters">清空</button>` : ""}</form><div class="table-wrap"><table><thead><tr><th>邮箱</th><th>类型</th><th>连接方式</th><th>验证状态</th><th>已注册平台</th><th>健康分</th><th>最近验证</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="8" class="empty">${mailboxQuery ? "没有找到匹配的邮箱" : "还没有邮箱，导入文件后会显示在这里"}</td></tr>`}</tbody></table></div>${renderPager("mailboxes")}</div>`;
 }
 
 function renderAdminUsers() {
@@ -1170,6 +1214,8 @@ document.addEventListener("click", async event => {
   if (action === "mailbox-messages") { await showMailboxMessages(target.dataset.id, target.dataset.address); return; }
   if (action === "mailbox-registration") { showMailboxRegistrationEditor(target.dataset.id); return; }
   if (action === "mark-mailbox-service-registered") { await markMailboxServiceRegistered(target.dataset.mailbox, target.dataset.service); return; }
+  if (action === "rescan-mailbox-history") { await rescanMailboxHistory(target.dataset.id); return; }
+  if (action === "rescan-all-mailbox-history") { await rescanAllMailboxHistory(); return; }
   if (action === "mailbox-message-page") { await showMailboxMessages(target.dataset.id, target.dataset.address, Number(target.dataset.page)); return; }
   if (action === "order-messages") { await showOrderMessages(target.dataset.order); return; }
   if (action === "order-message-page") { await showOrderMessages(target.dataset.id, Number(target.dataset.page)); return; }
