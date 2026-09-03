@@ -11,9 +11,11 @@ IMAGE_REPOSITORY="ghcr.io/ljunn/heromail"
 TARGET_VERSION=""
 TARGET_IMAGE=""
 PREVIOUS_IMAGE=""
+TARGET_IMAGE_ID=""
 BACKUP_PATH=""
 TEMP_BACKUP=""
-LOCK_FILE="${APP_HOME}/.heromail-upgrade.lock"
+LOCK_FILE=""
+COMPOSE_PROJECT=""
 
 log() { printf '[HeroMail 升级] %s\n' "$1"; }
 fail() { printf '[HeroMail 升级] 错误：%s\n' "$1" >&2; exit 1; }
@@ -31,14 +33,30 @@ TARGET_VERSION="${TARGET_TAG#v}"
 TARGET_IMAGE="${IMAGE_REPOSITORY}:${TARGET_VERSION}"
 mkdir -p "${BACKUP_DIR}"
 chmod 700 "${BACKUP_DIR}"
-exec 9>"${LOCK_FILE}"
-flock -n 9 || fail "已有另一个升级任务正在执行。"
 
 cd "${APP_HOME}"
 compose=(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
 if ! "${compose[@]}" config --images | grep -Fxq "${IMAGE_REPOSITORY}:latest"; then
   fail "Compose 配置不是官方 HeroMail latest 镜像，已拒绝升级。"
 fi
+COMPOSE_PROJECT="$(read_env COMPOSE_PROJECT_NAME)"
+COMPOSE_PROJECT="${COMPOSE_PROJECT:-$(basename "${APP_HOME}")}"
+
+# 优先把锁放在 Compose 的共享升级卷中，使 SSH 发布和网页升级器互斥。
+upgrade_volume="$(docker volume ls -q \
+  --filter "label=com.docker.compose.project=${COMPOSE_PROJECT}" \
+  --filter "label=com.docker.compose.volume=upgrade-state" 2>/dev/null | head -n 1 || true)"
+upgrade_mount=""
+if [[ -n "${upgrade_volume}" ]]; then
+  upgrade_mount="$(docker volume inspect --format '{{.Mountpoint}}' "${upgrade_volume}" 2>/dev/null || true)"
+fi
+if [[ -n "${upgrade_mount}" && -d "${upgrade_mount}" ]]; then
+  LOCK_FILE="${upgrade_mount}/.heromail-upgrade.lock"
+else
+  LOCK_FILE="${APP_HOME}/.heromail-upgrade.lock"
+fi
+exec 9>"${LOCK_FILE}"
+flock -n 9 || fail "已有另一个升级任务正在执行。"
 
 db_user="$(read_env POSTGRES_USER)"
 db_name="$(read_env POSTGRES_DB)"
@@ -75,12 +93,79 @@ wait_for_health() {
   return 1
 }
 
+# 同时清理 Compose 已知的停止容器和同一项目残留容器，避免 Docker 名称冲突。
+heromail_container_ids() {
+  {
+    "${compose[@]}" ps -aq heromail 2>/dev/null || true
+    docker ps -aq \
+      --filter "label=com.docker.compose.project=${COMPOSE_PROJECT}" \
+      --filter "label=com.docker.compose.service=heromail" 2>/dev/null || true
+    docker ps -aq --filter "name=${COMPOSE_PROJECT}-heromail" 2>/dev/null || true
+  } | awk 'NF && !seen[$0]++'
+}
+
+remove_heromail_containers() {
+  local container_id
+  while IFS= read -r container_id; do
+    [[ -n "${container_id}" ]] || continue
+    docker rm -f "${container_id}" >/dev/null 2>&1 || true
+  done < <(heromail_container_ids)
+}
+
+start_heromail() {
+  # 先释放可能仍被 Docker 占用的服务名，再创建新容器。
+  remove_heromail_containers
+  "${compose[@]}" up -d --no-deps --no-build heromail
+}
+
+find_previous_image() {
+  local container_id image_id image_version image_ref version
+
+  while IFS= read -r container_id; do
+    [[ -n "${container_id}" ]] || continue
+    image_id="$(docker inspect --format '{{.Image}}' "${container_id}" 2>/dev/null || true)"
+    [[ -n "${image_id}" ]] || continue
+    image_version="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${image_id}" 2>/dev/null || true)"
+    if [[ -n "${image_version}" && "${image_version}" != "${TARGET_VERSION}" ]]; then
+      printf '%s\n' "${image_id}"
+      return 0
+    fi
+  done < <(heromail_container_ids)
+
+  # 升级中断后可能没有容器，但之前的正式镜像通常仍保留在本机。
+  while IFS= read -r image_ref; do
+    version="${image_ref##*:}"
+    [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+    [[ "${version}" == "${TARGET_VERSION}" ]] && continue
+    image_id="$(docker image inspect --format '{{.Id}}' "${image_ref}" 2>/dev/null || true)"
+    if [[ -n "${image_id}" ]]; then
+      printf '%s\n' "${image_id}"
+      return 0
+    fi
+  done < <(docker image ls --format '{{.Repository}}:{{.Tag}}' "${IMAGE_REPOSITORY}" | sort -t: -k2,2Vr)
+
+  return 1
+}
+
 rollback() {
   [[ -n "${PREVIOUS_IMAGE}" ]] || return 1
   docker image inspect "${PREVIOUS_IMAGE}" >/dev/null 2>&1 || return 1
   docker tag "${PREVIOUS_IMAGE}" "${IMAGE_REPOSITORY}:latest"
-  "${compose[@]}" up -d --no-deps --no-build --force-recreate heromail >/dev/null
+  if ! start_heromail >/dev/null; then
+    return 1
+  fi
   wait_for_health
+}
+
+upgrade_failed() {
+  local detail="$1"
+  log "${detail}，正在回滚。"
+  if rollback; then
+    audit "system.upgrade.failed" "${detail}，已恢复上一版本" || true
+    fail "${detail}，已恢复上一版本。"
+  fi
+  audit "system.upgrade.failed" "${detail}，升级和自动回滚均失败" || true
+  fail "${detail}，升级和自动回滚均失败，请立即检查 Docker 日志。"
 }
 
 log "开始升级到 ${TARGET_TAG}。"
@@ -106,37 +191,36 @@ previous_container="$("${compose[@]}" ps -q heromail 2>/dev/null || true)"
 if [[ -n "${previous_container}" ]]; then
   PREVIOUS_IMAGE="$(docker inspect --format '{{.Image}}' "${previous_container}" 2>/dev/null || true)"
 fi
+if [[ -z "${PREVIOUS_IMAGE}" ]]; then
+  PREVIOUS_IMAGE="$(find_previous_image || true)"
+fi
 [[ -n "${PREVIOUS_IMAGE}" ]] || fail "无法确定当前 HeroMail 镜像，已取消升级。"
 
 log "正在拉取官方镜像 ${TARGET_IMAGE}。"
-docker pull "${TARGET_IMAGE}" >/dev/null
+if ! docker pull "${TARGET_IMAGE}" >/dev/null; then
+  fail "官方镜像拉取失败，升级已取消。"
+fi
+TARGET_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "${TARGET_IMAGE}" 2>/dev/null || true)"
+[[ -n "${TARGET_IMAGE_ID}" ]] || fail "无法确定目标镜像，升级已取消。"
 docker tag "${TARGET_IMAGE}" "${IMAGE_REPOSITORY}:latest"
-"${compose[@]}" up -d --no-deps --no-build --force-recreate heromail >/dev/null
+if ! start_heromail >/dev/null; then
+  upgrade_failed "新版本容器启动失败"
+fi
 
 if ! wait_for_health; then
-  log "新版本健康检查失败，正在回滚。"
-  if rollback; then
-    audit "system.upgrade.failed" "升级 ${TARGET_TAG} 健康检查失败，已恢复上一版本" || true
-    fail "升级失败，已恢复上一版本。"
-  fi
-  audit "system.upgrade.failed" "升级 ${TARGET_TAG} 与自动回滚均失败" || true
-  fail "升级和自动回滚均失败，请立即检查 Docker 日志。"
+  upgrade_failed "升级 ${TARGET_TAG} 健康检查失败"
 fi
 
 container_id="$("${compose[@]}" ps -q heromail)"
 running_version="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${container_id}" 2>/dev/null || true)"
 if [[ "${running_version}" != "${TARGET_VERSION}" ]]; then
-  log "镜像标签版本校验失败（实际：${running_version:-未知}），正在回滚。"
-  if rollback; then
-    audit "system.upgrade.failed" "升级 ${TARGET_TAG} 版本标签校验失败，已恢复上一版本" || true
-    fail "升级版本校验失败，已恢复上一版本。"
-  fi
-  audit "system.upgrade.failed" "升级 ${TARGET_TAG} 版本校验和自动回滚均失败" || true
-  fail "升级版本校验和自动回滚均失败。"
+  upgrade_failed "升级 ${TARGET_TAG} 版本标签校验失败（实际：${running_version:-未知}）"
 fi
 
 port="$(read_env PORT)"
 port="${port:-8080}"
-curl --fail --silent --show-error --retry 10 --retry-delay 3 "http://127.0.0.1:${port}/readyz" >/dev/null
+if ! curl --fail --silent --show-error --retry 10 --retry-delay 3 "http://127.0.0.1:${port}/readyz" >/dev/null; then
+  upgrade_failed "升级 ${TARGET_TAG} 就绪检查失败"
+fi
 audit "system.upgrade.success" "升级到 ${TARGET_TAG} 完成，备份文件 ${BACKUP_PATH}，健康检查通过"
 log "线上版本 ${TARGET_TAG} 已通过健康检查，备份：${BACKUP_PATH}。"

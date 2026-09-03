@@ -1,0 +1,64 @@
+name: 线上容器恢复
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "执行受控的线上容器恢复"
+        required: true
+        type: choice
+        options:
+          - recover
+        default: recover
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    name: 恢复线上 HeroMail 容器
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 检查恢复脚本
+        run: |
+          bash -n scripts/recover.sh
+          echo "sha256=$(sha256sum scripts/recover.sh | awk '{print $1}')" >> "${GITHUB_OUTPUT}"
+        id: script
+
+      - name: 通过 SSH 恢复服务
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          REPOSITORY: ${{ github.repository }}
+          RECOVERY_REF: ${{ github.sha }}
+          RECOVERY_SHA256: ${{ steps.script.outputs.sha256 }}
+          APP_HOME: ${{ secrets.SERVER_APP_HOME || '/opt/heromail' }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          envs: REPOSITORY,RECOVERY_REF,RECOVERY_SHA256,APP_HOME
+          command_timeout: 15m
+          script_stop: true
+          script: |
+            set -Eeuo pipefail
+            test -n "${REPOSITORY}"
+            test -n "${RECOVERY_REF}"
+            test -n "${RECOVERY_SHA256}"
+            temp_dir="$(mktemp -d)"
+            trap 'rm -rf "${temp_dir}"' EXIT
+            curl --fail --silent --show-error --location --retry 5 --retry-delay 2 \
+              "https://raw.githubusercontent.com/${REPOSITORY}/${RECOVERY_REF}/scripts/recover.sh" \
+              -o "${temp_dir}/recover.sh"
+            printf '%s  %s\n' "${RECOVERY_SHA256}" "${temp_dir}/recover.sh" | sha256sum -c -
+            install -d -m 0750 "${APP_HOME}/scripts"
+            install -m 0750 "${temp_dir}/recover.sh" "${APP_HOME}/scripts/recover.sh"
+            if [[ "$(id -u)" == "0" ]]; then
+              APP_HOME="${APP_HOME}" "${APP_HOME}/scripts/recover.sh"
+            else
+              sudo -n env APP_HOME="${APP_HOME}" "${APP_HOME}/scripts/recover.sh"
+            fi
