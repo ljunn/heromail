@@ -36,11 +36,46 @@ type InvalidMailboxOrderRepository interface {
 // MailboxFilter 是管理员邮箱资源列表的服务端筛选条件。
 type MailboxFilter struct {
 	Query string
+	// Status 只接受管理员列表使用的有限筛选值，避免把内部凭证或规则
+	// 暴露成任意查询条件。
+	Status string
 }
 
 // MailboxSearchRepository 为邮箱列表提供服务端搜索，避免前端只在当前页筛选。
 type MailboxSearchRepository interface {
 	ListMailboxesPage(filter MailboxFilter, page, pageSize int) ([]domain.Mailbox, int64)
+}
+
+// InvalidMailboxSummary 描述认证失败邮箱的可操作范围。
+// Deletable 只包含没有活跃订单、同时满足 failed/auth_error 的邮箱；
+// 其余状态始终不会被批量删除。
+type InvalidMailboxSummary struct {
+	AuthErrors      int64 `json:"auth_errors"`
+	Deletable       int64 `json:"deletable"`
+	ProtectedActive int64 `json:"protected_active"`
+	Pending         int64 `json:"pending"`
+	Verified        int64 `json:"verified"`
+}
+
+// MailboxMaintenanceRepository 提供带预览和数量校验的失效邮箱维护能力。
+// 这是可选接口，避免影响只实现基础邮箱资源的测试适配器。
+type MailboxMaintenanceRepository interface {
+	InvalidMailboxSummary() (InvalidMailboxSummary, error)
+	DeleteInvalidMailboxes(actorID, ip string, expected int64) (int64, error)
+}
+
+// MailboxHistoryScanResult 是批量历史扫描入队结果。扫描由后台 Worker
+// 异步执行，接口只负责把符合条件的邮箱安全地提交到去重队列。
+type MailboxHistoryScanResult struct {
+	ServiceCode string `json:"service_code"`
+	Eligible    int64  `json:"eligible"`
+	Queued      int64  `json:"queued"`
+	Async       bool   `json:"async"`
+}
+
+// MailboxHistoryScanAdminRepository 用于按目标平台批量提交历史扫描。
+type MailboxHistoryScanAdminRepository interface {
+	QueueMailboxHistoryScans(ctx context.Context, serviceCode string) (MailboxHistoryScanResult, error)
 }
 
 type ServiceUsage struct {

@@ -66,6 +66,8 @@ type MailboxHistoryScanQueue interface {
 }
 
 var (
-	ErrMailboxPoolNotFound = errors.New("邮箱池不存在")
-	ErrMailboxNotFound     = errors.New("邮箱不存在")
+	ErrMailboxPoolNotFound        = errors.New("邮箱池不存在")
+	ErrMailboxNotFound            = errors.New("邮箱不存在")
+	ErrInvalidMailboxCountChanged = errors.New("失效邮箱数量已变化，请刷新后重试")
+	ErrNoInvalidMailboxes         = errors.New("没有可删除的失效邮箱")
 )

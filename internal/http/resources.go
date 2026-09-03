@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -18,6 +19,53 @@ import (
 )
 
 const maxMailboxImportBytes = 100 << 20
+
+const invalidMailboxDeleteConfirmation = "DELETE_INVALID_MAILBOXES"
+
+func (s *Server) adminInvalidMailboxSummary(c *gin.Context) {
+	repository, ok := s.Store.(store.MailboxMaintenanceRepository)
+	if !ok {
+		writeError(c, http.StatusServiceUnavailable, "mailbox_maintenance_unavailable", "邮箱维护服务不可用")
+		return
+	}
+	summary, err := repository.InvalidMailboxSummary()
+	if err != nil {
+		writeError(c, http.StatusBadGateway, "mailbox_summary_failed", "读取失效邮箱统计失败")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": summary})
+}
+
+func (s *Server) adminDeleteInvalidMailboxes(c *gin.Context) {
+	repository, ok := s.Store.(store.MailboxMaintenanceRepository)
+	if !ok {
+		writeError(c, http.StatusServiceUnavailable, "mailbox_maintenance_unavailable", "邮箱维护服务不可用")
+		return
+	}
+	var request struct {
+		Confirmation string `json:"confirmation"`
+		Expected     *int64 `json:"expected_count"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil || request.Confirmation != invalidMailboxDeleteConfirmation || request.Expected == nil || *request.Expected < 0 {
+		writeError(c, http.StatusBadRequest, "invalid_confirmation", fmt.Sprintf("请输入确认短语 %s，并提供 expected_count", invalidMailboxDeleteConfirmation))
+		return
+	}
+	deleted, err := repository.DeleteInvalidMailboxes(demoUser(c), c.ClientIP(), *request.Expected)
+	if err != nil {
+		status := http.StatusConflict
+		code := "mailbox_delete_failed"
+		switch {
+		case errors.Is(err, store.ErrInvalidMailboxCountChanged):
+			code = "mailbox_count_changed"
+		case errors.Is(err, store.ErrNoInvalidMailboxes):
+			status = http.StatusNotFound
+			code = "no_invalid_mailboxes"
+		}
+		writeError(c, status, code, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"deleted": deleted, "criterion": "verification_status=failed,state=auth_error,active_order_id为空"}})
+}
 
 func (s *Server) adminMailboxPools(c *gin.Context) {
 	repository, ok := s.Store.(store.ResourceRepository)
@@ -126,6 +174,26 @@ func (s *Server) adminRescanMailboxHistory(c *gin.Context) {
 func (s *Server) adminRescanAllMailboxHistory(c *gin.Context) {
 	if s.MailboxVerifier == nil {
 		writeError(c, http.StatusServiceUnavailable, "mailbox_history_scan_unavailable", "邮箱历史扫描服务不可用")
+		return
+	}
+	if repository, ok := s.Store.(store.MailboxHistoryScanAdminRepository); ok {
+		serviceCode := strings.ToLower(strings.TrimSpace(c.Query("service")))
+		if serviceCode == "" {
+			serviceCode = "openai"
+		}
+		result, err := repository.QueueMailboxHistoryScans(c.Request.Context(), serviceCode)
+		if err != nil {
+			status := http.StatusBadGateway
+			if errors.Is(err, store.ErrServiceNotFound) {
+				status = http.StatusNotFound
+			}
+			writeError(c, status, "mailbox_history_scan_queue_failed", "提交历史扫描队列失败")
+			return
+		}
+		if audit, ok := s.Store.(store.AuditRepository); ok {
+			_ = audit.WriteAudit(demoUser(c), "mailbox.history.bulk_queue", "mailbox", "all", fmt.Sprintf("提交 %s 历史扫描：符合 %d 个，已排队 %d 个", result.ServiceCode, result.Eligible, result.Queued), c.ClientIP())
+		}
+		c.JSON(http.StatusAccepted, gin.H{"data": result})
 		return
 	}
 	mailboxes := s.Store.Mailboxes()

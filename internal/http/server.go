@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
@@ -164,6 +165,8 @@ func (s *Server) routes() {
 	admin := protected.Group("/admin", requireAdmin())
 	admin.GET("/overview", s.adminOverview)
 	admin.GET("/mailboxes", s.adminMailboxes)
+	admin.GET("/mailboxes/invalid-summary", s.adminInvalidMailboxSummary)
+	admin.POST("/mailboxes/delete-invalid", s.adminDeleteInvalidMailboxes)
 	admin.POST("/mailboxes", s.adminSaveMailbox)
 	admin.POST("/mailboxes/import", s.adminImportMailboxes)
 	admin.POST("/mailboxes/rescan-history", s.adminRescanAllMailboxHistory)
@@ -374,7 +377,7 @@ func (s *Server) adminOverview(c *gin.Context) {
 
 func (s *Server) adminMailboxes(c *gin.Context) {
 	page, pageSize := pageRequest(c)
-	filter := store.MailboxFilter{Query: strings.TrimSpace(c.Query("query"))}
+	filter := store.MailboxFilter{Query: strings.TrimSpace(c.Query("query")), Status: strings.TrimSpace(c.Query("status"))}
 	if repository, ok := s.Store.(store.MailboxSearchRepository); ok {
 		items, total := repository.ListMailboxesPage(filter, page, pageSize)
 		writePage(c, items, page, pageSize, total)
@@ -473,7 +476,11 @@ func writePage(c *gin.Context, data any, page, pageSize int, total int64) {
 }
 
 func (s *Server) adminReap(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"reaped": s.Store.ReapExpired()})
+	reaped := s.Store.ReapExpired()
+	if audit, ok := s.Store.(store.AuditRepository); ok {
+		_ = audit.WriteAudit(demoUser(c), "order.reap", "registration_order", "expired", fmt.Sprintf("管理员回收 %d 个超时订单", reaped), c.ClientIP())
+	}
+	c.JSON(http.StatusOK, gin.H{"reaped": reaped})
 }
 
 func requireAdmin() gin.HandlerFunc {
@@ -513,7 +520,7 @@ func demoRole(c *gin.Context) string {
 func cors() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-HeroMail-Role, X-HeroMail-User, X-HeroMail-Target-Version")
+		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key, X-HeroMail-Role, X-HeroMail-User, X-HeroMail-Target-Version")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)

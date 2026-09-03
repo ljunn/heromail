@@ -33,7 +33,9 @@ const state = {
   health: null,
   adminTabs: { users: "accounts", payments: "orders", operations: "alerts" },
   orderFilters: { status: "", service: "", query: "" },
-  mailboxFilters: { query: "" },
+  mailboxFilters: { query: "", status: "" },
+  invalidMailboxSummary: null,
+  historyScan: { active: false, service: "openai", eligible: 0, queued: 0, baselineConsumed: 0 },
   userOrderFilters: { status: "", service: "", query: "" },
   ledgerUserID: "",
   busy: false,
@@ -501,22 +503,74 @@ async function rescanMailboxHistory(mailboxID) {
 async function rescanAllMailboxHistory() {
   const button = document.querySelector('[data-action="rescan-all-mailbox-history"]');
   const originalLabel = button?.textContent || "全量重扫";
+  const baselineConsumed = Number(state.services.find(service => service.code === "openai")?.consumed_mailboxes || 0);
   if (button) {
     button.disabled = true;
     button.textContent = "扫描中…";
   }
   try {
-    const result = await api("/api/v1/admin/mailboxes/rescan-history", { method: "POST" });
+    const result = await api("/api/v1/admin/mailboxes/rescan-history?service=openai", { method: "POST" });
     const scanned = Number(result.data?.scanned || 0);
+    const queued = Number(result.data?.queued || 0);
     const matched = Number(result.data?.matched || 0);
-    await refresh();
-    toast(`已扫描 ${scanned} 个邮箱，回填 ${matched} 条平台注册状态`);
+    if (result.data?.async) {
+      state.historyScan = { active: true, service: result.data.service_code || "openai", eligible: Number(result.data.eligible || 0), queued, baselineConsumed };
+      await refresh();
+      toast(`已提交 ${queued} 个 OpenAI 邮箱到后台扫描队列`);
+    } else {
+      await refresh();
+      toast(`已扫描 ${scanned} 个邮箱，回填 ${matched} 条平台注册状态`);
+    }
   } catch (error) {
     toast(error.message);
     if (button) {
       button.disabled = false;
       button.textContent = originalLabel;
     }
+  }
+}
+
+async function deleteInvalidMailboxes() {
+  try {
+    // 打开确认框前重新取数，避免长时间停留页面后把旧数量提交给服务端。
+    state.invalidMailboxSummary = (await api("/api/v1/admin/mailboxes/invalid-summary")).data || null;
+  } catch (error) {
+    toast(error.message || "无法读取失效邮箱统计");
+    return;
+  }
+  showInvalidMailboxDeleteConfirmation();
+}
+
+function showInvalidMailboxDeleteConfirmation() {
+  const summary = state.invalidMailboxSummary || {};
+  const count = Number(summary.deletable || 0);
+  if (!count) {
+    toast("当前没有符合条件的失效邮箱");
+    return;
+  }
+  document.querySelector("#secret-modal")?.remove();
+  document.body.insertAdjacentHTML("beforeend", `<div id="secret-modal" class="modal-backdrop"><div class="modal destructive-modal"><div class="card-head"><div><span class="eyebrow danger-eyebrow">DANGEROUS ACTION</span><h2>删除失效邮箱</h2><div class="modal-subtitle">将删除 ${count.toLocaleString("zh-CN")} 个认证失败邮箱</div></div><button class="icon-btn" data-action="close-modal" title="关闭">×</button></div><div class="card-body"><div class="destructive-summary"><div><span>可删除</span><strong>${count.toLocaleString("zh-CN")}</strong></div><div><span>活跃订单保护</span><strong>${Number(summary.protected_active || 0).toLocaleString("zh-CN")}</strong></div></div><div class="notice warning">仅删除 verification_status=failed、state=auth_error 且没有活跃订单的邮箱；已验证、待验证和有活跃订单的邮箱不会删除。删除后凭证及邮箱×平台状态不可恢复。</div><label class="confirm-field">输入确认短语 <code>DELETE_INVALID_MAILBOXES</code><input id="invalid-delete-confirmation" class="field" autocomplete="off" placeholder="请输入确认短语"></label></div><div class="modal-footer"><button class="ghost-btn" data-action="close-modal">取消</button><button class="danger-btn" data-action="confirm-delete-invalid" data-count="${count}">确认删除 ${count.toLocaleString("zh-CN")} 个</button></div></div></div>`);
+  document.querySelector("#invalid-delete-confirmation")?.focus();
+}
+
+async function confirmDeleteInvalidMailboxes(button) {
+  const confirmation = document.querySelector("#invalid-delete-confirmation")?.value.trim();
+  if (confirmation !== "DELETE_INVALID_MAILBOXES") {
+    toast("确认短语不正确");
+    document.querySelector("#invalid-delete-confirmation")?.focus();
+    return;
+  }
+  const expected = Number(button?.dataset.count || 0);
+  if (!Number.isFinite(expected) || expected < 0) return toast("失效邮箱数量无效，请刷新页面");
+  if (button) { button.disabled = true; button.textContent = "正在删除…"; }
+  try {
+    const result = await api("/api/v1/admin/mailboxes/delete-invalid", { method: "POST", body: JSON.stringify({ confirmation, expected_count: expected }) });
+    document.querySelector("#secret-modal")?.remove();
+    await refresh();
+    toast(`已删除 ${Number(result.data?.deleted || 0).toLocaleString("zh-CN")} 个失效邮箱`);
+  } catch (error) {
+    toast(error.message || "删除失败，请刷新统计后重试");
+    if (button) { button.disabled = false; button.textContent = `确认删除 ${expected.toLocaleString("zh-CN")} 个`; }
   }
 }
 
@@ -609,15 +663,43 @@ async function importMailboxes() {
   }
 }
 
+function mailboxIsInvalid(mailbox) {
+  return mailbox?.verification_status === "failed" && mailbox?.state === "auth_error";
+}
+
 function renderAdminMailboxes() {
   const importBusy = state.busyAction === "mailbox-import";
   const total = state.pagination.mailboxes?.total || 0;
   const mailboxQuery = state.mailboxFilters.query;
-  const rows = state.mailboxes.map(mailbox => { const failedMicrosoft = ["outlook", "outlook_de", "hotmail"].includes(mailbox.provider) && ["failed", "auth_error"].includes(mailbox.verification_status || mailbox.state); return `<tr><td>${esc(mailbox.address)}</td><td>${esc(providerLabel(mailbox.provider))}</td><td>${esc(connectionLabel(mailbox.connection_method))}</td><td>${statusChip(mailbox.verification_status || mailbox.state)}${mailbox.verification_error ? `<div class="muted">${esc(mailbox.verification_error)}</div>` : ""}</td><td>${esc((mailbox.registered_platforms || []).join(", ") || "—")}</td><td>${mailbox.health_score}/100</td><td>${time(mailbox.last_verified_at)}</td><td><div class="table-actions"><button class="link-btn" data-action="mailbox-messages" data-id="${esc(mailbox.id)}" data-address="${esc(mailbox.address)}">收件</button><button class="link-btn" data-action="mailbox-registration" data-id="${esc(mailbox.id)}">平台注册</button><button class="link-btn" data-action="rescan-mailbox-history" data-id="${esc(mailbox.id)}">重扫历史</button><button class="link-btn" data-action="verify-mailbox" data-id="${esc(mailbox.id)}">验证</button>${failedMicrosoft ? `<button class="link-btn" data-action="reauthorize-mailbox" data-id="${esc(mailbox.id)}">重新授权</button>` : ""}<button class="link-btn danger-text" data-action="delete-mailbox" data-id="${esc(mailbox.id)}">删除</button></div></td></tr>`; }).join("");
-  const pendingCount = state.overview?.pending_mailboxes ?? 0;
-  const verifiedCount = state.overview?.verified_mailboxes ?? 0;
+  const mailboxStatus = state.mailboxFilters.status;
+  const summary = state.invalidMailboxSummary || {};
+  const summaryAvailable = state.invalidMailboxSummary !== null;
+  const invalidCount = summaryAvailable ? Number(summary.deletable || 0) : 0;
+  const protectedCount = Number(summary.protected_active || 0);
+  const rows = state.mailboxes.map(mailbox => {
+    const invalid = mailboxIsInvalid(mailbox);
+    const failedMicrosoft = ["outlook", "outlook_de", "hotmail"].includes(mailbox.provider) && invalid;
+    const actions = [
+      `<button class="link-btn" data-action="mailbox-messages" data-id="${esc(mailbox.id)}" data-address="${esc(mailbox.address)}">收件</button>`,
+      `<button class="link-btn" data-action="mailbox-registration" data-id="${esc(mailbox.id)}">平台注册</button>`,
+      `<button class="link-btn" data-action="rescan-mailbox-history" data-id="${esc(mailbox.id)}">重扫历史</button>`,
+      `<button class="link-btn" data-action="verify-mailbox" data-id="${esc(mailbox.id)}">验证</button>`,
+      failedMicrosoft ? `<button class="link-btn" data-action="reauthorize-mailbox" data-id="${esc(mailbox.id)}">重新授权</button>` : "",
+      invalid ? `<button class="link-btn danger-text" data-action="delete-mailbox" data-id="${esc(mailbox.id)}">删除失效</button>` : `<button class="link-btn danger-text" data-action="delete-mailbox" data-id="${esc(mailbox.id)}">删除</button>`
+    ].join("");
+    return `<tr class="${invalid ? "mailbox-invalid-row" : ""}"><td data-label="邮箱"><strong>${esc(mailbox.address)}</strong></td><td data-label="类型">${esc(providerLabel(mailbox.provider))}</td><td data-label="连接方式">${esc(connectionLabel(mailbox.connection_method))}</td><td data-label="验证状态">${statusChip(mailbox.verification_status || mailbox.state)}${mailbox.verification_error ? `<div class="muted mailbox-error-text">${esc(mailbox.verification_error)}</div>` : ""}</td><td data-label="已注册平台">${esc((mailbox.registered_platforms || []).join(", ") || "—")}</td><td data-label="健康分">${mailbox.health_score}/100</td><td data-label="最近验证">${time(mailbox.last_verified_at)}</td><td data-label="操作"><div class="table-actions">${actions}</div></td></tr>`;
+  }).join("");
+  const pendingCount = state.overview?.pending_mailboxes ?? summary.pending ?? 0;
+  const verifiedCount = state.overview?.verified_mailboxes ?? summary.verified ?? 0;
   const providerMetrics = mailboxProviders.map(([code, label]) => `<div><span>${label}</span><strong>${state.overview?.[`${code}_mailboxes`] ?? 0}</strong><small>邮箱类型</small></div>`).join("");
-  return pageHead("邮箱池", "一个统一资源池，按邮箱渠道分类、验证连接并识别平台注册状态。", `<div class="head-actions"><button class="ghost-btn" data-action="rescan-all-mailbox-history">全量重扫</button><button class="ghost-btn" data-action="refresh">刷新状态</button></div>`) + `<section class="mailbox-import-hero"><div class="mailbox-import-copy"><span class="eyebrow">MAILBOX POOL</span><h2>导入邮箱账号</h2><p>系统按行读取大文件并自动识别渠道。Microsoft 邮箱优先 Graph，Gmail、iCloud 和 Mail.com 使用 IMAP；连接成功后扫描全部平台历史邮件。</p><div class="import-capabilities">${mailboxProviders.map(([, label], index) => `<span><i class="cap-dot ${["blue", "green", "purple"][index % 3]}"></i>${label}</span>`).join("")}<span><i class="cap-dot green"></i>自动识别平台注册</span></div></div><div class="mailbox-import-sources"><div class="mailbox-dropzone" data-action="pick-mailbox-file"><input id="mailbox-file" type="file" accept=".txt,.csv,.jsonl,text/plain,text/csv,application/json"><div class="drop-icon">↥</div><strong>拖放 TXT / CSV / JSON Lines</strong><span>或点击选择文件 · 支持大文件逐行导入</span><em id="mailbox-file-name">尚未选择文件</em></div><label class="mailbox-paste"><span><strong>或直接粘贴文本</strong><small>每行一个邮箱账号，导入后仍由服务端逐行读取</small></span><textarea id="mailbox-import-text" class="field" rows="5" placeholder="gmail@gmail.com----密码----https://2fa.live/tok/…\nuser@outlook.com----应用专用密码"></textarea></label></div></section><div class="mailbox-import-actions"><button class="primary-btn" data-action="import-mailboxes" ${importBusy ? "disabled" : ""}>${importBusy ? "正在导入并验证…" : "导入并开始验证"}</button><span>支持邮箱----密码----2FA 地址；凭证会加密保存。Gmail 收件验证仍需应用专用密码或 OAuth。</span></div><div class="mailbox-metrics"><div><span>全部邮箱</span><strong>${total}</strong><small>${mailboxQuery ? `搜索“${esc(mailboxQuery)}”` : "统一资源池"}</small></div>${providerMetrics}<div><span>待验证</span><strong>${pendingCount}</strong><small>后台队列</small></div><div><span>已验证</span><strong>${verifiedCount}</strong><small>可参与分配</small></div></div><div class="card mailbox-table-card"><div class="card-head"><div><h2>邮箱明细</h2><span class="muted">服务端分页 · 导入验证自动扫描，也可手工补充平台注册状态</span></div><span class="pool-singleton">唯一邮箱池</span></div><form class="filter-bar mailbox-filter-bar" data-form="mailbox-filters"><input id="admin-mailbox-query" class="search" aria-label="搜索邮箱" value="${esc(mailboxQuery)}" placeholder="搜索邮箱地址"><button class="primary-btn" type="submit">搜索</button>${mailboxQuery ? `<button class="ghost-btn" type="button" data-action="reset-mailbox-filters">清空</button>` : ""}</form><div class="table-wrap"><table><thead><tr><th>邮箱</th><th>类型</th><th>连接方式</th><th>验证状态</th><th>已注册平台</th><th>健康分</th><th>最近验证</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="8" class="empty">${mailboxQuery ? "没有找到匹配的邮箱" : "还没有邮箱，导入文件后会显示在这里"}</td></tr>`}</tbody></table></div>${renderPager("mailboxes")}</div>`;
+  const statusOptions = [["", "全部状态"], ["invalid", "认证失效"], ["pending", "待验证"], ["verified", "已验证"], ["available", "可用"], ["leased", "租用中"]];
+  const scanButton = `<button class="ghost-btn" data-action="rescan-all-mailbox-history">扫描 OpenAI 历史</button>`;
+  const deleteButton = `<button class="danger-btn" data-action="delete-invalid-mailboxes" ${summaryAvailable && invalidCount ? "" : "disabled"}>删除失效邮箱 <span class="button-count">${invalidCount.toLocaleString("zh-CN")}</span></button>`;
+  const openai = state.services.find(service => service.code === "openai");
+  const consumedNow = Number(openai?.consumed_mailboxes || 0);
+  const scanDelta = state.historyScan.active ? Math.max(0, consumedNow - state.historyScan.baselineConsumed) : 0;
+  const scanNote = state.historyScan.active ? `OpenAI 历史扫描已排队 ${state.historyScan.queued.toLocaleString("zh-CN")} 个，当前新增识别 ${scanDelta.toLocaleString("zh-CN")} 个；后台仍在处理，可点击刷新状态。` : "历史扫描只处理已验证、无活跃订单且 OpenAI 状态可用的邮箱。";
+  return pageHead("邮箱池", "统一管理邮箱连接、平台注册识别和可回收资产。批量动作均有数量校验与审计记录。", `<div class="head-actions mailbox-head-actions">${scanButton}${deleteButton}<button class="ghost-btn" data-action="refresh">刷新状态</button></div>`) + `<section class="mailbox-import-hero"><div class="mailbox-import-copy"><span class="eyebrow">MAILBOX POOL</span><h2>导入邮箱账号</h2><p>系统按行读取大文件并自动识别渠道。连接成功后由后台队列扫描历史邮件，识别 OpenAI 等平台注册状态。</p><div class="import-capabilities">${mailboxProviders.map(([, label], index) => `<span><i class="cap-dot ${["blue", "green", "purple"][index % 3]}"></i>${label}</span>`).join("")}<span><i class="cap-dot green"></i>后台历史扫描</span></div></div><div class="mailbox-import-sources"><div class="mailbox-dropzone" data-action="pick-mailbox-file"><input id="mailbox-file" type="file" accept=".txt,.csv,.jsonl,text/plain,text/csv,application/json"><div class="drop-icon">↥</div><strong>拖放 TXT / CSV / JSON Lines</strong><span>或点击选择文件 · 支持大文件逐行导入</span><em id="mailbox-file-name">尚未选择文件</em></div><label class="mailbox-paste"><span><strong>或直接粘贴文本</strong><small>每行一个邮箱账号，导入后仍由服务端逐行读取</small></span><textarea id="mailbox-import-text" class="field" rows="5" placeholder="gmail@gmail.com----密码----https://2fa.live/tok/…\nuser@outlook.com----应用专用密码"></textarea></label></div></section><div class="mailbox-import-actions"><button class="primary-btn" data-action="import-mailboxes" ${importBusy ? "disabled" : ""}>${importBusy ? "正在导入并验证…" : "导入并开始验证"}</button><span>凭证会加密保存；验证与历史扫描在后台执行，页面不会展示密码或 Token。</span></div><section class="mailbox-health-strip ${invalidCount ? "has-invalid" : "is-clean"}"><div><span>可回收失效邮箱</span><strong>${invalidCount.toLocaleString("zh-CN")}</strong><small>认证失败且无活跃订单</small></div><div><span>活跃订单保护</span><strong>${protectedCount.toLocaleString("zh-CN")}</strong><small>不会被批量删除</small></div><p>${invalidCount ? "建议先确认异常原因，再执行批量删除；删除动作不可恢复。" : "当前没有符合批量删除条件的失效邮箱。"}<br>${esc(scanNote)}</p></section><div class="mailbox-metrics"><div><span>当前结果</span><strong>${total.toLocaleString("zh-CN")}</strong><small>${mailboxQuery || mailboxStatus ? "按筛选条件统计" : "统一资源池"}</small></div>${providerMetrics}<div><span>待验证</span><strong>${Number(pendingCount).toLocaleString("zh-CN")}</strong><small>后台队列</small></div><div><span>已验证</span><strong>${Number(verifiedCount).toLocaleString("zh-CN")}</strong><small>可参与分配</small></div></div><div class="card mailbox-table-card"><div class="card-head"><div><h2>邮箱明细</h2><span class="muted">服务端分页 · 认证失效可单独筛选，平台注册状态来自历史邮件扫描</span></div><span class="pool-singleton">唯一邮箱池</span></div><form class="filter-bar mailbox-filter-bar" data-form="mailbox-filters"><select id="admin-mailbox-status" class="select" aria-label="验证状态">${statusOptions.map(([value, label]) => `<option value="${value}" ${mailboxStatus === value ? "selected" : ""}>${label}</option>`).join("")}</select><input id="admin-mailbox-query" class="search" aria-label="搜索邮箱" value="${esc(mailboxQuery)}" placeholder="搜索邮箱地址"><button class="primary-btn" type="submit">查询</button>${mailboxQuery || mailboxStatus ? `<button class="ghost-btn" type="button" data-action="reset-mailbox-filters">清空</button>` : ""}</form><div class="table-wrap responsive-admin-table"><table><thead><tr><th>邮箱</th><th>类型</th><th>连接方式</th><th>验证状态</th><th>已注册平台</th><th>健康分</th><th>最近验证</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="8" class="empty">${mailboxQuery || mailboxStatus ? "没有找到匹配的邮箱" : "还没有邮箱，导入文件后会显示在这里"}</td></tr>`}</tbody></table></div>${renderPager("mailboxes")}</div>`;
 }
 
 function renderAdminUsers() {
@@ -815,12 +897,17 @@ async function loadAdmin() {
   if (state.view === "admin-mailboxes") {
     const mailboxParams = new URLSearchParams({ page: String(requestedPage("mailboxes")), page_size: "20" });
     if (state.mailboxFilters.query) mailboxParams.set("query", state.mailboxFilters.query);
-    const [mailboxes, services] = await Promise.all([
+    if (state.mailboxFilters.status) mailboxParams.set("status", state.mailboxFilters.status);
+    // 维护统计是增强能力；老的适配器暂时没有该接口时，邮箱列表仍应可用。
+    const invalidSummaryRequest = api("/api/v1/admin/mailboxes/invalid-summary").catch(() => ({ data: null }));
+    const [mailboxes, services, invalidSummary] = await Promise.all([
       api(`/api/v1/admin/mailboxes?${mailboxParams}`),
-      api("/api/v1/admin/services?page=1&page_size=100")
+      api("/api/v1/admin/services?page=1&page_size=100"),
+      invalidSummaryRequest
     ]);
     state.mailboxes = rememberPage("mailboxes", mailboxes);
     state.services = services.data || [];
+    state.invalidMailboxSummary = invalidSummary.data || null;
   }
   if (state.view === "admin-channels") state.googleOAuth = (await api("/api/v1/admin/settings/google-oauth")).data;
   if (state.view === "admin-overview") state.orders = rememberPage("admin-orders", await api("/api/v1/admin/orders?page=1&page_size=6"));
@@ -1195,7 +1282,7 @@ document.addEventListener("click", async event => {
   if (action === "select-order") { await selectOrder(target.dataset.order); return; }
   if (action === "close-order-detail") { state.currentOrder = null; await render(); return; }
   if (action === "reset-order-filters") { state.orderFilters = { status: "", service: "", query: "" }; state.pagination["admin-orders"] = { page: 1 }; await refresh(); return; }
-  if (action === "reset-mailbox-filters") { state.mailboxFilters = { query: "" }; state.pagination.mailboxes = { page: 1 }; await refresh(); return; }
+  if (action === "reset-mailbox-filters") { state.mailboxFilters = { query: "", status: "" }; state.pagination.mailboxes = { page: 1 }; await refresh(); return; }
   if (action === "reset-user-order-filters") { state.userOrderFilters = { status: "", service: "", query: "" }; state.pagination.orders = { page: 1 }; await refresh(); return; }
   if (action === "refresh") { await refresh(); return; }
   if (action === "copy") { await copyText(target.dataset.copy || "", target.dataset.copyLabel || "内容"); return; }
@@ -1216,6 +1303,8 @@ document.addEventListener("click", async event => {
   if (action === "mark-mailbox-service-registered") { await markMailboxServiceRegistered(target.dataset.mailbox, target.dataset.service); return; }
   if (action === "rescan-mailbox-history") { await rescanMailboxHistory(target.dataset.id); return; }
   if (action === "rescan-all-mailbox-history") { await rescanAllMailboxHistory(); return; }
+  if (action === "delete-invalid-mailboxes") { await deleteInvalidMailboxes(); return; }
+  if (action === "confirm-delete-invalid") { await confirmDeleteInvalidMailboxes(target); return; }
   if (action === "mailbox-message-page") { await showMailboxMessages(target.dataset.id, target.dataset.address, Number(target.dataset.page)); return; }
   if (action === "order-messages") { await showOrderMessages(target.dataset.order); return; }
   if (action === "order-message-page") { await showOrderMessages(target.dataset.id, Number(target.dataset.page)); return; }
@@ -1277,7 +1366,7 @@ document.addEventListener("submit", async event => {
   if (!["order-filters", "user-order-filters", "mailbox-filters"].includes(event.target.dataset.form)) return;
   event.preventDefault();
   if (event.target.dataset.form === "mailbox-filters") {
-    state.mailboxFilters = { query: document.querySelector("#admin-mailbox-query")?.value.trim() || "" };
+    state.mailboxFilters = { query: document.querySelector("#admin-mailbox-query")?.value.trim() || "", status: document.querySelector("#admin-mailbox-status")?.value || "" };
     state.pagination.mailboxes = { page: 1 }; await refresh(); return;
   }
   if (event.target.dataset.form === "user-order-filters") {

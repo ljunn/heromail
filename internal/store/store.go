@@ -579,7 +579,78 @@ func (s *Store) ListMailboxesPage(filter MailboxFilter, page, pageSize int) ([]d
 		}
 		items = filtered
 	}
+	status := strings.ToLower(strings.TrimSpace(filter.Status))
+	if status != "" {
+		filtered := make([]domain.Mailbox, 0, len(items))
+		for _, item := range items {
+			isInvalid := item.VerificationStatus == domain.MailboxVerificationFailed || item.State == domain.MailboxError
+			matches := (status == "invalid" && isInvalid) ||
+				(status == "pending" && item.VerificationStatus == domain.MailboxVerificationPending) ||
+				(status == "verified" && item.VerificationStatus == domain.MailboxVerificationVerified) ||
+				(status == "available" && item.State == domain.MailboxAvailable) ||
+				(status == "leased" && item.State == domain.MailboxLeased)
+			if matches {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
 	return paginate(items, page, pageSize), int64(len(items))
+}
+
+// InvalidMailboxSummary 返回认证失败邮箱的安全预览，批量操作只针对
+// failed + auth_error 且没有活跃订单的记录。
+func (s *Store) InvalidMailboxSummary() (InvalidMailboxSummary, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var result InvalidMailboxSummary
+	for _, mailbox := range s.mailboxes {
+		switch mailbox.VerificationStatus {
+		case domain.MailboxVerificationPending:
+			result.Pending++
+		case domain.MailboxVerificationVerified:
+			result.Verified++
+		}
+		if mailbox.State != domain.MailboxError {
+			continue
+		}
+		result.AuthErrors++
+		if mailbox.VerificationStatus == domain.MailboxVerificationFailed {
+			if mailbox.ActiveOrderID == "" {
+				result.Deletable++
+			} else {
+				result.ProtectedActive++
+			}
+		}
+	}
+	return result, nil
+}
+
+// DeleteInvalidMailboxes 在内存开发模式中提供与生产相同的确认语义。
+// 生产审计由 PostgresStore 在同一事务中写入；内存模式不用于生产数据。
+func (s *Store) DeleteInvalidMailboxes(_ string, _ string, expected int64) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var deletable int64
+	for _, mailbox := range s.mailboxes {
+		if mailbox.State == domain.MailboxError && mailbox.VerificationStatus == domain.MailboxVerificationFailed && mailbox.ActiveOrderID == "" {
+			deletable++
+		}
+	}
+	if expected >= 0 && expected != deletable {
+		return 0, ErrInvalidMailboxCountChanged
+	}
+	if deletable == 0 {
+		return 0, ErrNoInvalidMailboxes
+	}
+	var deleted int64
+	for id, mailbox := range s.mailboxes {
+		if mailbox.State == domain.MailboxError && mailbox.VerificationStatus == domain.MailboxVerificationFailed && mailbox.ActiveOrderID == "" {
+			delete(s.mailboxes, id)
+			deleted++
+		}
+	}
+	return deleted, nil
 }
 
 func (s *Store) MarkMailboxServiceConsumed(mailboxID, serviceID string, changedAt time.Time) error {

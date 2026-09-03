@@ -46,6 +46,8 @@ const microsoftIMAPPasswordFallbackReverifyKey = "microsoft-imap-password-fallba
 
 const microsoftIMAPPasswordOnlyReverifyKey = "microsoft-imap-password-only-reverify-v1"
 
+const openAIHistoryRuleKey = "openai-history-rule-v1"
+
 func shouldSeedDefaultServices(serviceCount int64, markerExists bool) bool {
 	return !markerExists && serviceCount == 0
 }
@@ -508,6 +510,9 @@ func (s *PostgresStore) seed(config PostgresConfig) error {
 	if err := s.ensureDefaultServices(services); err != nil {
 		return err
 	}
+	if err := s.migrateOpenAIHistoryRule(); err != nil {
+		return err
+	}
 	if err := s.ensureDefaultMailboxPool(); err != nil {
 		return err
 	}
@@ -518,6 +523,54 @@ func (s *PostgresStore) seed(config PostgresConfig) error {
 		return s.seedDemoMailboxes(services)
 	}
 	return nil
+}
+
+// migrateOpenAIHistoryRule 为存量 OpenAI 平台补充常见的验证主题写法。
+// 只追加缺失关键词，不覆盖管理员已经配置的发件人、正则和其他规则。
+func (s *PostgresStore) migrateOpenAIHistoryRule() error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var marker sqlSeedState
+		if err := tx.First(&marker, "key = ?", openAIHistoryRuleKey).Error; err == nil {
+			return nil
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		var service sqlService
+		if err := tx.Where("LOWER(code) = ?", "openai").First(&service).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+			return tx.Create(&sqlSeedState{Key: openAIHistoryRuleKey, CreatedAt: time.Now().UTC()}).Error
+		} else if err != nil {
+			return err
+		}
+		keywords := append([]string(nil), service.SubjectKeywords...)
+		for _, keyword := range []string{"email verification", "confirmation code", "verification", "code"} {
+			if !containsFold(keywords, keyword) {
+				keywords = append(keywords, keyword)
+			}
+		}
+		changed := len(keywords) != len(service.SubjectKeywords)
+		if changed {
+			encoded, err := json.Marshal(keywords)
+			if err != nil {
+				return err
+			}
+			if err := tx.Model(&service).Update("subject_keywords", gorm.Expr("CAST(? AS jsonb)", string(encoded))).Error; err != nil {
+				return err
+			}
+			if err := tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: "system", Action: "target_service.rule.migrate", ResourceType: "target_service", ResourceID: service.ID, Detail: "补充 OpenAI 历史验证邮件主题匹配规则"}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(&sqlSeedState{Key: openAIHistoryRuleKey, CreatedAt: time.Now().UTC()}).Error
+	})
+}
+
+func containsFold(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), target) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *PostgresStore) ensureDefaultServices(services []sqlService) error {
@@ -1189,6 +1242,18 @@ func (s *PostgresStore) mailboxesPage(pool string, filter MailboxFilter, page, p
 	}
 	if search := strings.TrimSpace(filter.Query); search != "" {
 		query = query.Where("LOWER(address) LIKE ?", "%"+strings.ToLower(search)+"%")
+	}
+	switch strings.ToLower(strings.TrimSpace(filter.Status)) {
+	case "invalid":
+		query = query.Where("(verification_status = ? OR state = ?)", domain.MailboxVerificationFailed, domain.MailboxError)
+	case "pending":
+		query = query.Where("verification_status = ?", domain.MailboxVerificationPending)
+	case "verified":
+		query = query.Where("verification_status = ?", domain.MailboxVerificationVerified)
+	case "available":
+		query = query.Where("state = ?", domain.MailboxAvailable)
+	case "leased":
+		query = query.Where("state = ?", domain.MailboxLeased)
 	}
 	query.Count(&total)
 	var rows []sqlMailbox

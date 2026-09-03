@@ -501,6 +501,66 @@ func TestListMailboxesPageFiltersByAddress(t *testing.T) {
 	}
 }
 
+func TestInvalidMailboxMaintenanceProtectsActiveOrders(t *testing.T) {
+	repository := New()
+	repository.mu.Lock()
+	repository.mailboxes["invalid-1"] = &domain.Mailbox{
+		ID: "invalid-1", Address: "invalid-1@outlook.com", Provider: domain.MailboxProviderOutlook,
+		Pool: domain.DefaultMailboxPoolName, State: domain.MailboxError,
+		VerificationStatus: domain.MailboxVerificationFailed,
+	}
+	repository.mailboxes["invalid-active"] = &domain.Mailbox{
+		ID: "invalid-active", Address: "invalid-active@outlook.com", Provider: domain.MailboxProviderOutlook,
+		Pool: domain.DefaultMailboxPoolName, State: domain.MailboxError,
+		VerificationStatus: domain.MailboxVerificationFailed, ActiveOrderID: "order-1",
+	}
+	repository.mailboxes["pending-1"] = &domain.Mailbox{
+		ID: "pending-1", Address: "pending-1@outlook.com", Provider: domain.MailboxProviderOutlook,
+		Pool: domain.DefaultMailboxPoolName, State: domain.MailboxPending,
+		VerificationStatus: domain.MailboxVerificationPending,
+	}
+	repository.mu.Unlock()
+
+	preview, err := repository.InvalidMailboxSummary()
+	if err != nil {
+		t.Fatalf("读取失效邮箱统计失败：%v", err)
+	}
+	if preview.AuthErrors != 2 || preview.Deletable != 1 || preview.ProtectedActive != 1 || preview.Pending != 1 {
+		t.Fatalf("失效邮箱统计错误：%+v", preview)
+	}
+	if _, err := repository.DeleteInvalidMailboxes("admin-001", "127.0.0.1", 2); err != ErrInvalidMailboxCountChanged {
+		t.Fatalf("数量变化保护错误：%v", err)
+	}
+	deleted, err := repository.DeleteInvalidMailboxes("admin-001", "127.0.0.1", 1)
+	if err != nil || deleted != 1 {
+		t.Fatalf("删除失效邮箱失败：deleted=%d err=%v", deleted, err)
+	}
+	if _, ok := repository.mailboxes["invalid-1"]; ok {
+		t.Fatal("可删除失效邮箱仍然存在")
+	}
+	if _, ok := repository.mailboxes["invalid-active"]; !ok {
+		t.Fatal("活跃订单邮箱不应被删除")
+	}
+	if _, ok := repository.mailboxes["pending-1"]; !ok {
+		t.Fatal("待验证邮箱不应被删除")
+	}
+}
+
+func TestListMailboxesPageFiltersByStatus(t *testing.T) {
+	repository := New()
+	repository.mu.Lock()
+	repository.mailboxes["invalid-filter"] = &domain.Mailbox{
+		ID: "invalid-filter", Address: "invalid-filter@outlook.com", Provider: domain.MailboxProviderOutlook,
+		Pool: domain.DefaultMailboxPoolName, State: domain.MailboxError,
+		VerificationStatus: domain.MailboxVerificationFailed,
+	}
+	repository.mu.Unlock()
+	items, total := repository.ListMailboxesPage(MailboxFilter{Status: "invalid"}, 1, 20)
+	if total != 1 || len(items) != 1 || items[0].ID != "invalid-filter" {
+		t.Fatalf("状态筛选结果错误：total=%d items=%+v", total, items)
+	}
+}
+
 func TestCompactStoredMailboxVerificationError(t *testing.T) {
 	message := `Graph：Microsoft Token 接口返回 400：{"error":"invalid_grant","error_description":"AADSTS70000"}`
 	got := compactStoredMailboxVerificationError(message)

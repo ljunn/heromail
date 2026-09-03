@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -170,6 +171,102 @@ func (s *PostgresStore) DeleteMailbox(actorID, mailboxID, ip string) error {
 		}
 		return tx.Create(&sqlAuditLog{ID: uuid.NewString(), ActorID: actorID, Action: "mailbox.delete", ResourceType: "mailbox", ResourceID: mailboxID, Detail: "删除邮箱资源", IP: ip}).Error
 	})
+}
+
+// InvalidMailboxSummary 返回认证异常邮箱的可操作预览。批量删除的候选
+// 必须同时满足 verification_status=failed、state=auth_error 且没有活跃订单。
+func (s *PostgresStore) InvalidMailboxSummary() (InvalidMailboxSummary, error) {
+	var result InvalidMailboxSummary
+	queries := []struct {
+		target *int64
+		query  *gorm.DB
+	}{
+		{&result.AuthErrors, s.db.Model(&sqlMailbox{}).Where("state = ?", domain.MailboxError)},
+		{&result.Deletable, s.db.Model(&sqlMailbox{}).Where("state = ? AND verification_status = ? AND COALESCE(active_order_id, '') = ''", domain.MailboxError, domain.MailboxVerificationFailed)},
+		{&result.ProtectedActive, s.db.Model(&sqlMailbox{}).Where("state = ? AND verification_status = ? AND COALESCE(active_order_id, '') <> ''", domain.MailboxError, domain.MailboxVerificationFailed)},
+		{&result.Pending, s.db.Model(&sqlMailbox{}).Where("verification_status = ?", domain.MailboxVerificationPending)},
+		{&result.Verified, s.db.Model(&sqlMailbox{}).Where("verification_status = ?", domain.MailboxVerificationVerified)},
+	}
+	for _, item := range queries {
+		if err := item.query.Count(item.target).Error; err != nil {
+			return InvalidMailboxSummary{}, err
+		}
+	}
+	return result, nil
+}
+
+// DeleteInvalidMailboxes 分批、加锁删除失效邮箱，避免一次性锁住整个邮箱表。
+// 每个批次都同时清理邮箱×平台状态和历史邮件去重记录，并写入审计日志。
+func (s *PostgresStore) DeleteInvalidMailboxes(actorID, ip string, expected int64) (int64, error) {
+	if expected < 0 {
+		return 0, ErrInvalidMailboxCountChanged
+	}
+	preview, err := s.InvalidMailboxSummary()
+	if err != nil {
+		return 0, err
+	}
+	if preview.Deletable != expected {
+		return 0, ErrInvalidMailboxCountChanged
+	}
+	if expected == 0 {
+		return 0, ErrNoInvalidMailboxes
+	}
+
+	const batchSize = 500
+	var deleted int64
+	for deleted < expected {
+		limit := batchSize
+		if remaining := expected - deleted; remaining < int64(limit) {
+			limit = int(remaining)
+		}
+		var batch int64
+		err := s.db.Transaction(func(tx *gorm.DB) error {
+			var ids []string
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+				Model(&sqlMailbox{}).
+				Where("state = ? AND verification_status = ? AND COALESCE(active_order_id, '') = ''", domain.MailboxError, domain.MailboxVerificationFailed).
+				Order("id ASC").Limit(limit).Pluck("id", &ids).Error; err != nil {
+				return err
+			}
+			if len(ids) == 0 {
+				return nil
+			}
+			if err := tx.Where("mailbox_id IN ?", ids).Delete(&sqlMailboxService{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("mailbox_id IN ?", ids).Delete(&sqlMailEvent{}).Error; err != nil {
+				return err
+			}
+			result := tx.Model(&sqlMailbox{}).
+				Where("id IN ? AND state = ? AND verification_status = ? AND COALESCE(active_order_id, '') = ''", ids, domain.MailboxError, domain.MailboxVerificationFailed).
+				Delete(&sqlMailbox{})
+			if result.Error != nil {
+				return result.Error
+			}
+			batch = result.RowsAffected
+			if batch == 0 {
+				return nil
+			}
+			return tx.Create(&sqlAuditLog{
+				ID:           uuid.NewString(),
+				ActorID:      actorID,
+				Action:       "mailbox.invalid.bulk_delete",
+				ResourceType: "mailbox",
+				ResourceID:   "invalid",
+				Detail:       fmt.Sprintf("按认证失败且无活跃订单条件批量删除 %d 个邮箱", batch),
+				IP:           ip,
+			}).Error
+		})
+		if err != nil {
+			return deleted, err
+		}
+		if batch == 0 {
+			// 候选在并发操作中发生变化时，不继续扩大删除范围。
+			return deleted, ErrInvalidMailboxCountChanged
+		}
+		deleted += batch
+	}
+	return deleted, nil
 }
 
 func (s *PostgresStore) GetMailboxCredential(mailboxID string) (MailboxCredential, error) {
@@ -341,6 +438,78 @@ func (s *PostgresStore) DequeueMailboxVerification(ctx context.Context, timeout 
 
 func (s *PostgresStore) EnqueueMailboxHistoryScan(ctx context.Context, mailboxID string) error {
 	return s.enqueueMailboxJob(ctx, mailboxID, mailboxHistoryQueueKey, mailboxHistorySetKey)
+}
+
+// QueueMailboxHistoryScans 只将已验证、没有活跃订单且 OpenAI 状态仍为
+// available 的邮箱提交到历史扫描队列。读取邮件由后台 Worker 完成，避免
+// 管理员请求长时间占用 HTTP 连接；Redis Set 负责幂等去重。
+func (s *PostgresStore) QueueMailboxHistoryScans(ctx context.Context, serviceCode string) (MailboxHistoryScanResult, error) {
+	serviceCode = strings.ToLower(strings.TrimSpace(serviceCode))
+	if serviceCode == "" {
+		serviceCode = "openai"
+	}
+	var service sqlService
+	if err := s.db.Where("LOWER(code) = ?", serviceCode).First(&service).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return MailboxHistoryScanResult{}, ErrServiceNotFound
+		}
+		return MailboxHistoryScanResult{}, err
+	}
+	result := MailboxHistoryScanResult{ServiceCode: service.Code, Async: true}
+	const batchSize = 500
+	lastID := ""
+	for {
+		var ids []string
+		query := s.db.Table("mailboxes AS m").
+			Joins("JOIN mailbox_service_states AS mss ON mss.mailbox_id = m.id AND mss.service_id = ?", service.ID).
+			Where("m.verification_status = ? AND m.state NOT IN ? AND COALESCE(m.active_order_id, '') = '' AND m.encrypted_credential <> '' AND mss.state = ?", domain.MailboxVerificationVerified, []string{string(domain.MailboxBlocked), string(domain.MailboxError)}, domain.ServiceAvailable).
+			Order("m.id ASC").Limit(batchSize)
+		if lastID != "" {
+			query = query.Where("m.id > ?", lastID)
+		}
+		if err := query.Pluck("m.id", &ids).Error; err != nil {
+			return result, err
+		}
+		if len(ids) == 0 {
+			break
+		}
+		result.Eligible += int64(len(ids))
+		queued, err := s.enqueueMailboxHistoryBatch(ctx, ids)
+		if err != nil {
+			return result, err
+		}
+		result.Queued += queued
+		lastID = ids[len(ids)-1]
+		select {
+		case <-ctx.Done():
+			return result, ctx.Err()
+		default:
+		}
+	}
+	return result, nil
+}
+
+// enqueueMailboxHistoryBatch 用一次 Lua 调用提交一页任务，避免为数万
+// 个邮箱逐条往返 Redis，降低管理员请求和 Redis 连接的压力。
+func (s *PostgresStore) enqueueMailboxHistoryBatch(ctx context.Context, mailboxIDs []string) (int64, error) {
+	if len(mailboxIDs) == 0 {
+		return 0, nil
+	}
+	args := make([]interface{}, len(mailboxIDs))
+	for index, mailboxID := range mailboxIDs {
+		args[index] = mailboxID
+	}
+	const script = `
+local added = 0
+for index = 1, #ARGV do
+  if redis.call("SADD", KEYS[1], ARGV[index]) == 1 then
+    redis.call("LPUSH", KEYS[2], ARGV[index])
+    added = added + 1
+  end
+end
+return added`
+	queued, err := s.redis.Eval(ctx, script, []string{mailboxHistorySetKey, mailboxHistoryQueueKey}, args...).Int64()
+	return queued, err
 }
 
 func (s *PostgresStore) DequeueMailboxHistoryScan(ctx context.Context, timeout time.Duration) (string, error) {

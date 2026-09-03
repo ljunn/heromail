@@ -198,6 +198,28 @@ func TestAdminCanRescanAllMailboxHistory(t *testing.T) {
 	}
 }
 
+type mailboxHistoryQueueAdminStub struct {
+	store.Repository
+	result store.MailboxHistoryScanResult
+}
+
+func (s *mailboxHistoryQueueAdminStub) QueueMailboxHistoryScans(context.Context, string) (store.MailboxHistoryScanResult, error) {
+	return s.result, nil
+}
+
+func TestAdminHistoryRescanUsesAsyncQueueWhenAvailable(t *testing.T) {
+	repository := &mailboxHistoryQueueAdminStub{Repository: store.New(), result: store.MailboxHistoryScanResult{ServiceCode: "openai", Eligible: 240, Queued: 240, Async: true}}
+	server := NewServer(repository)
+	server.MailboxVerifier = &mailboxVerificationServiceStub{}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/mailboxes/rescan-history?service=openai", nil)
+	request.Header.Set("X-HeroMail-Role", "admin")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), `"async":true`) || !strings.Contains(response.Body.String(), `"queued":240`) {
+		t.Fatalf("异步历史扫描响应错误：status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestAdminEndpointRequiresRole(t *testing.T) {
 	server := NewServer(store.New())
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/overview", nil)
@@ -938,6 +960,56 @@ func TestAdminMailboxSearchFiltersServerSide(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), `"total":1`) || !strings.Contains(response.Body.String(), "hero_01@outlook.com") {
 		t.Fatalf("邮箱搜索未按服务端过滤：%s", response.Body.String())
+	}
+}
+
+type mailboxMaintenanceStub struct {
+	store.Repository
+	summary      store.InvalidMailboxSummary
+	deleted      int64
+	deleteCalled bool
+}
+
+func (s *mailboxMaintenanceStub) InvalidMailboxSummary() (store.InvalidMailboxSummary, error) {
+	return s.summary, nil
+}
+
+func (s *mailboxMaintenanceStub) DeleteInvalidMailboxes(_ string, _ string, expected int64) (int64, error) {
+	s.deleteCalled = true
+	if expected != s.summary.Deletable {
+		return 0, store.ErrInvalidMailboxCountChanged
+	}
+	s.deleted = expected
+	return expected, nil
+}
+
+func TestAdminInvalidMailboxMaintenanceRequiresExplicitConfirmation(t *testing.T) {
+	repository := &mailboxMaintenanceStub{Repository: store.New(), summary: store.InvalidMailboxSummary{AuthErrors: 4, Deletable: 3, ProtectedActive: 1, Pending: 2, Verified: 8}}
+	server := NewServer(repository)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/mailboxes/invalid-summary", nil)
+	request.Header.Set("X-HeroMail-Role", "admin")
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"deletable":3`) {
+		t.Fatalf("失效邮箱统计响应错误：status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	bad := httptest.NewRequest(http.MethodPost, "/api/v1/admin/mailboxes/delete-invalid", strings.NewReader(`{"confirmation":"yes","expected_count":3}`))
+	bad.Header.Set("Content-Type", "application/json")
+	bad.Header.Set("X-HeroMail-Role", "admin")
+	badResponse := httptest.NewRecorder()
+	server.Router.ServeHTTP(badResponse, bad)
+	if badResponse.Code != http.StatusBadRequest || repository.deleteCalled {
+		t.Fatalf("错误确认不应删除：status=%d called=%v body=%s", badResponse.Code, repository.deleteCalled, badResponse.Body.String())
+	}
+
+	good := httptest.NewRequest(http.MethodPost, "/api/v1/admin/mailboxes/delete-invalid", strings.NewReader(`{"confirmation":"DELETE_INVALID_MAILBOXES","expected_count":3}`))
+	good.Header.Set("Content-Type", "application/json")
+	good.Header.Set("X-HeroMail-Role", "admin")
+	goodResponse := httptest.NewRecorder()
+	server.Router.ServeHTTP(goodResponse, good)
+	if goodResponse.Code != http.StatusOK || repository.deleted != 3 {
+		t.Fatalf("正确确认删除响应错误：status=%d deleted=%d body=%s", goodResponse.Code, repository.deleted, goodResponse.Body.String())
 	}
 }
 
